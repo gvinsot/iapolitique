@@ -52,6 +52,13 @@ sociale, collectivités territoriales).
   `chore(devops): add test service`. Corps du message : le *pourquoi* si ce n'est pas évident.
 - Ne jamais réécrire l'historique de `main` (pas de `push --force`, pas d'`amend` sur un commit
   poussé).
+- Plusieurs agents peuvent travailler en même temps dans le même dépôt : ne committer que ses
+  propres chemins (`git add <chemins>` puis `git commit -m "…" -- <chemins>`), réessayer si
+  `index.lock` est pris, ne jamais faire `git add -A`, `git stash`, `git reset` ou `git checkout`
+  sur des fichiers d'un autre agent.
+- Sur le poste de développement, le push SSH peut échouer (clé absente) : pousser alors en HTTPS
+  avec les identifiants de `gh` :
+  `git -c credential.helper= -c "credential.helper=!gh auth git-credential" push https://github.com/gvinsot/iapolitique.git main`.
 - Ne jamais désactiver un hook, un test ou un lint pour faire passer un commit.
 
 ### 2.2 Autres règles
@@ -110,7 +117,6 @@ iapolitique/
 │   ├── Cargo.toml
 │   ├── Dockerfile          # stages: build, test, runtime
 │   ├── migrations/         # migrations sqlx (NNNN_description.sql)
-│   ├── .sqlx/              # cache sqlx offline (committé)
 │   └── src/
 │       ├── main.rs         # sous-commandes: api | worker | migrate
 │       ├── config.rs       # lecture env + /run/secrets
@@ -146,8 +152,9 @@ iapolitique/
 
 ### 4.1 Backend (Rust)
 
-- Rust stable, édition 2024. `axum` + `tokio`, `sqlx` (PostgreSQL, migrations, requêtes
-  vérifiées à la compilation, mode offline avec `.sqlx/` committé), `serde`, `reqwest` (rustls),
+- Rust stable, édition 2024. `axum` + `tokio`, `sqlx` (PostgreSQL, migrations ; requêtes
+  à l'exécution avec `query_as` + `FromRow`, **pas** de macros `query!`, donc pas de cache
+  `.sqlx/` ; tests d'intégration avec `#[sqlx::test]`), `serde`, `reqwest` (rustls),
   `tracing` (logs JSON), `thiserror` pour les erreurs de domaine, `utoipa` pour l'OpenAPI.
 - `domain/` ne fait aucune I/O : machine à états, scoring, validation. C'est là que se
   concentrent les tests unitaires.
@@ -438,7 +445,8 @@ décidée par l'humain.
 - Réseaux externes : `proxy` (api, frontend), `postgresqlcluster_internal` (api, worker), et le
   réseau LLM `${LLM_NETWORK:-llm-net}` (api, worker ; `qa-llm-net` en QA via `.env.qa`).
 - Traefik : routeurs HTTPS avec `global@file` **obligatoire** sur tout ce qui est public ;
-  redirection HTTP→HTTPS ; `/api` vers l'api avec strip prefix ; routeur admin sur `ADMIN_HOST`
+  redirection HTTP→HTTPS ; `PathPrefix(/api)` vers l'api **sans** strip prefix (le backend
+  sert ses routes sous `/api`, voir [§13](#13-contrats-techniques)) ; routeur admin sur `ADMIN_HOST`
   avec `dashboard-allowlist@file`. Hosts lus depuis `TRAEFIK_HOST` et `ADMIN_HOST` (le préfixe
   `qa.` est ajouté automatiquement en QA).
 - Domaine : `TRAEFIK_HOST=iapolitique.fr`, `ADMIN_HOST=admin.iapolitique.fr`. `www.iapolitique.fr`
@@ -493,3 +501,86 @@ Toute décision structurante (nouveau service, nouvelle variable, changement de 
 de pipeline, de formule) se reflète ici **dans le même commit** que le code concerné. Un agent
 qui constate un écart entre ce fichier et le code le signale et corrige l'un ou l'autre dans un
 commit dédié (`docs: …`).
+
+---
+
+## 13. Contrats techniques
+
+Contrats partagés par tous les modules. Les modifier = mettre à jour cette section dans le même
+commit.
+
+### 13.1 Processus et ports
+
+| Processus | Commande | Ports |
+|---|---|---|
+| api | `iapolitique api` | 8080 API publique, 8081 API admin |
+| worker | `iapolitique worker` | 8082 `/health` interne |
+| migrations | `iapolitique migrate` (aussi exécutées au démarrage de l'api) | — |
+| openapi | `iapolitique openapi` : écrit la spec OpenAPI sur stdout | — |
+| frontend | nginx | 80 |
+
+Variables de test : `DATABASE_URL` (utilisée **uniquement** par `#[sqlx::test]` en test). En
+déploiement, la base est lue depuis `DATABASE_CONNECTION_STRING`.
+
+### 13.2 Routes HTTP
+
+Toutes les routes sont servies sous `/api` (pas de strip prefix chez Traefik).
+
+API publique (port 8080) :
+
+| Méthode | Route | Rôle |
+|---|---|---|
+| GET | `/api/health`, `/api/ready` | vivacité, base joignable |
+| GET | `/api/altcha/challenge` | défi proof-of-work |
+| POST | `/api/ideas` | dépôt d'une idée → statut du filtrage + jeton de suivi |
+| GET | `/api/track/{token}` | suivi d'une idée, contribution ou signalement |
+| GET | `/api/ideas` | liste publiée : `sort` (`score`, `gain`, `feasibility`, `delay`, `recent`), filtres `admin_level`, `category`, `kind`, `territory`, `q`, pagination `page`/`per_page` |
+| GET | `/api/ideas/{slug}` | détail : idée, analyse courante, contributions intégrées, compteur de propositions |
+| POST | `/api/ideas/{slug}/contributions` | amélioration ou objection |
+| POST | `/api/ideas/{slug}/reports` | signalement |
+| GET | `/api/methodology` | prompts, grilles, taxonomie, formule de score et leurs versions |
+| GET | `/api/taxonomy` | niveaux, catégories, publics, motifs |
+| GET | `/api/stats` | compteurs publics |
+| GET | `/api/exports/ideas.json`, `/api/exports/ideas.csv` | exports open data |
+| GET | `/api/openapi.json` | spec OpenAPI |
+
+API admin (port 8081, `Authorization: Bearer $ADMIN_API_TOKEN`), sous `/api/admin/…` :
+tableau de bord, file de jobs, coûts IA, idées masquées et signalements, masquer/republier,
+relancer une analyse, décisions de filtrage avec étiquetage, réglages des seuils.
+
+Le frontend appelle toujours des chemins relatifs `/api/...`. En dev, Vite proxifie `/api` vers
+`localhost:8080` (et vers `8081` pour `/api/admin`).
+
+### 13.3 Types d'API partagés
+
+`backend` génère la spec (`utoipa`) ; elle est committée dans `frontend/src/api/openapi.json`
+et les types TS sont générés par `npm run gen:api` (`openapi-typescript`) vers
+`frontend/src/api/schema.d.ts`. Un test backend échoue si la spec committée diffère de la spec
+générée : toute modification d'API régénère les deux fichiers dans le même commit.
+
+### 13.4 Fichiers `prompts/`
+
+Embarqués dans l'image (`/app/prompts`, chemin configurable `PROMPTS_DIR`), chargés et validés
+au démarrage (un fichier invalide empêche le démarrage).
+
+| Fichier | Format |
+|---|---|
+| `screening.yaml` | `version` + trois sections `idea`, `contribution`, `report`. Chaque section : liste ordonnée de critères `{ key, type: noul\|score, instructions, criteria?, pass_when (true/false pour noul, niveau minimal pour score), reject_below, accept_above, reason_code, reason_message }`. Les seuils portent sur la probabilité de **réussir** le critère ; entre `reject_below` et `accept_above` = zone grise. |
+| `second_opinion.md`, `analysis.md`, `report_review.md` | En-tête YAML (`version`, `model_hint`), corps en français avec des variables `{{nom}}`. |
+| `analysis.schema.json` | JSON Schema de la sortie d'analyse (§6.2), utilisé tel quel en `response_format` Mistral et pour valider la réponse. |
+| `second_opinion.schema.json`, `report_review.schema.json` | Idem pour le second avis (`decision: accept\|reject`, `reason_code`, `explanation`) et la revue de signalement (`outcome: maintain\|update\|hide`, `explanation`). |
+| `taxonomy.yaml` | `version`, `admin_levels`, `categories` (par niveau), `impact_publics`, `legal_vehicles`, `report_reasons`, `contribution_kinds`, libellés français. |
+
+### 13.5 Tests en CI
+
+Le service `test` du compose construit `devops/Dockerfile.test` (contexte `..`) :
+1. stage `frontend-check` (node 22) : `npm ci`, lint, typecheck, Vitest, build ;
+2. stage `backend-test` (rust) : `cargo fmt --check`, `cargo clippy -D warnings`, compilation des
+   tests ; il copie un fichier témoin produit par `frontend-check` (sinon BuildKit saute ce
+   stage) ;
+3. à l'exécution : `cargo test` avec `DATABASE_URL` vers le service `test-db`
+   (`pgvector/pgvector:pg18`, `replicas: 0`, réseau interne au compose).
+
+En local, sans Node installé : `docker run --rm -v "<repo>/frontend:/app" -v iapolitique_node_modules:/app/node_modules -w /app node:22-alpine npm …`.
+Postgres local de test : `docker run -d --name iapolitique-test-pg -e POSTGRES_PASSWORD=postgres -p 55432:5432 pgvector/pgvector:pg18`
+puis `DATABASE_URL=postgres://postgres:postgres@localhost:55432/postgres cargo test`.

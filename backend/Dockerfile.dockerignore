@@ -1,0 +1,9 @@
+# Build context of backend/Dockerfile is the repository root: only the backend sources and the
+# prompts go in.
+*
+!backend/
+!prompts/
+backend/target
+backend/**/*.rs.bk
+**/.env
+**/.env.qa

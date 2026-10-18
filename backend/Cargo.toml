@@ -27,3 +27,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 [dev-dependencies]
 tempfile = "3"
 http-body-util = "0.1"
+
+[profile.release]
+# Keep symbol names (readable panic backtraces), drop the bulky debug info.
+strip = "debuginfo"

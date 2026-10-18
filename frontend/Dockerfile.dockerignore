@@ -1,0 +1,9 @@
+# Build context of frontend/Dockerfile is the repository root: only the frontend sources go in.
+*
+!frontend/
+frontend/node_modules
+frontend/dist
+frontend/coverage
+frontend/.vite
+frontend/**/*.tsbuildinfo
+frontend/**/*.local

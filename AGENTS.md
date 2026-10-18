@@ -530,7 +530,7 @@ commit.
 | migrations | `iapolitique migrate` (aussi exécutées au démarrage de l'api) | — |
 | openapi | `iapolitique openapi` : écrit la spec OpenAPI sur stdout | — |
 | healthcheck | `iapolitique healthcheck [--url URL] [--timeout-secs N]` : GET HTTP, code de sortie 0 si 2xx (URL par défaut `http://127.0.0.1:8080/api/health` ; worker : `--url http://127.0.0.1:8082/health`). L'image runtime n'a ni curl ni wget. | — |
-| frontend | nginx | 80 |
+| frontend | nginx (image `nginx:alpine`, workers non root) | 80 (`/health` : sonde de vivacité) |
 
 Variables de test : `DATABASE_URL` (utilisée **uniquement** par `#[sqlx::test]` en test). En
 déploiement, la base est lue depuis `DATABASE_CONNECTION_STRING`.

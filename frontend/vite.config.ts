@@ -1,5 +1,6 @@
 import { fileURLToPath, URL } from "node:url";
 
+import tailwindcss from "@tailwindcss/vite";
 import react from "@vitejs/plugin-react";
 import { defineConfig } from "vitest/config";
 
@@ -9,7 +10,7 @@ const API_PUBLIC_TARGET = "http://localhost:8080";
 const API_ADMIN_TARGET = "http://localhost:8081";
 
 export default defineConfig({
-  plugins: [react()],
+  plugins: [react(), tailwindcss()],
   resolve: {
     alias: {
       "@": fileURLToPath(new URL("./src", import.meta.url)),
@@ -31,6 +32,24 @@ export default defineConfig({
     target: "es2022",
     sourcemap: false,
     assetsInlineLimit: 0,
+    rolldownOptions: {
+      output: {
+        // Vendor code changes far less often than the app: separate chunks stay cached
+        // (immutable hashed assets) across deployments.
+        codeSplitting: {
+          groups: [
+            {
+              name: "react",
+              test: /node_modules[\\/](react|react-dom|scheduler|react-router|cookie|set-cookie-parser)[\\/]/,
+            },
+            {
+              name: "ui",
+              test: /node_modules[\\/](radix-ui|@radix-ui|@floating-ui|react-remove-scroll[^\\/]*|react-style-singleton|use-callback-ref|use-sidecar|aria-hidden|tslib|get-nonce|detect-node-es|sonner|lucide-react|tailwind-merge|clsx|class-variance-authority)[\\/]/,
+            },
+          ],
+        },
+      },
+    },
   },
   test: {
     environment: "jsdom",

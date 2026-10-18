@@ -781,3 +781,125 @@ le défaut s'applique.
 | Clé | Valeur | Rôle |
 |---|---|---|
 | `screening.thresholds` | `{ "<section>": { "<clé du critère>": { "reject_below"?: nombre, "accept_above"?: nombre } } }`, sections `idea`, `contribution`, `report` | Surcharge, critère par critère, des seuils de `screening.yaml` (§5.3). Un seuil omis garde la valeur du fichier ; il faut `0 ≤ reject_below ≤ accept_above ≤ 1`. Les seuils appliqués sont enregistrés avec chaque décision (`screenings.thresholds`). |
+
+---
+
+## 14. Sécurité
+
+Exigences **bloquantes** : tout code nouveau ou modifié les respecte, et chacune est couverte par
+un test automatisé. En cas de conflit avec une autre section, la plus restrictive s'applique.
+Défense en profondeur : le WAF Coraza/OWASP CRS et le rate limit de Traefik (`global@file`) ne
+dispensent d'aucune des mesures ci-dessous.
+
+### 14.1 Injections
+
+- **SQL** : uniquement des requêtes paramétrées (`bind`). Jamais de `format!` ni de concaténation
+  pour construire du SQL. Les parties dynamiques (tri, filtres) passent par des `enum` Rust
+  convertis en fragments SQL **constants** (liste blanche). `q` (recherche) passe par
+  `websearch_to_tsquery` / paramètres, jamais interpolé ; `LIKE` avec échappement de `%`, `_`, `\`.
+- **Prompt injection** : le texte des visiteurs n'est jamais placé dans la partie système d'un
+  prompt ; il est encadré de balises, les balises fermantes identiques sont neutralisées
+  (§13.4), le critère `injection` du modèle de décision s'applique à tout texte entrant, la
+  sortie de Mistral est validée par schéma strict puis par des contrôles sémantiques, et elle
+  n'est **jamais** exécutée ni interprétée comme instruction : seul l'outil `web_search` est
+  autorisé, aucun autre outil ni appel de fonction. Un texte qui tente de modifier les règles
+  de l'analyse est refusé, et une analyse dont le contenu contredit le schéma est rejetée.
+- **XSS** : React échappe tout ; `dangerouslySetInnerHTML` est interdit (règle ESLint
+  `react/no-danger` en erreur), sauf le JSON-LD sérialisé par une fonction unique qui échappe
+  `<`, `>`, `&`, U+2028 et U+2029. Aucun rendu Markdown ou HTML de contenu venant des visiteurs ou
+  de l'IA : texte brut uniquement (les prompts de la page Méthodologie sont affichés en `<pre>`).
+  Les URL de sources ne sont rendues en lien que si leur schéma est `https:` (ou `http:`), avec
+  `rel="noopener noreferrer nofollow ugc"` et `target="_blank"` ; `javascript:`, `data:` et
+  autres sont affichées en texte.
+- **CSV / formules** : dans les exports CSV, toute cellule commençant par `=`, `+`, `-`, `@`,
+  tabulation ou retour chariot est préfixée par `'` ; encodage UTF-8 avec BOM, séparateur
+  documenté, guillemets RFC 4180.
+- **En-têtes et chemins** : aucune valeur venant d'un visiteur dans un en-tête de réponse (y
+  compris `Content-Disposition`, construit à partir de noms fixes), aucun chemin de fichier
+  construit à partir d'une entrée.
+- **SSRF** : le backend n'appelle que les URL configurées (`DECISION_SERVICE_URL`,
+  `MISTRAL_API_BASE_URL`) ; il ne télécharge jamais une URL fournie par un visiteur ou par l'IA.
+- **Désérialisation** : structures d'entrée avec `#[serde(deny_unknown_fields)]`, longueur
+  maximale sur **chaque** chaîne, énumérations fermées, bornes sur les nombres et la pagination
+  (`per_page ≤ 50`), format du jeton vérifié (base64url, longueur exacte) avant hachage, slugs
+  validés par `is_valid_slug`.
+
+### 14.2 En-têtes HTTP
+
+Posés par nginx (frontend) **et** par l'api (réponses JSON), testés automatiquement :
+
+| En-tête | Valeur |
+|---|---|
+| `Content-Security-Policy` (frontend) | `default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests` (ajuster `worker-src` au strict besoin d'ALTCHA, vérifié dans un navigateur ; aucun `'unsafe-inline'` ni `'unsafe-eval'` pour les scripts) |
+| `Content-Security-Policy` (api) | `default-src 'none'; frame-ancestors 'none'; base-uri 'none'` |
+| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains` |
+| `X-Content-Type-Options` | `nosniff` |
+| `X-Frame-Options` | `DENY` |
+| `Referrer-Policy` | `no-referrer` |
+| `Permissions-Policy` | tout désactivé (`camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=(), browsing-topics=()`, etc.) |
+| `Cross-Origin-Opener-Policy` | `same-origin` |
+| `Cross-Origin-Resource-Policy` | `same-origin` |
+| `Cross-Origin-Embedder-Policy` | `require-corp` si compatible (vérifié dans un navigateur), sinon `credentialless` |
+| `Cache-Control` | `no-store` sur toute réponse contenant un jeton, sur `/api/track*` et sur l'API admin ; `max-age` court sur les GET publics |
+| `X-Robots-Tag` | `noindex, nofollow` sur l'admin, `/suivi` et l'API |
+| `Server` / `X-Powered-By` | absents ou neutres |
+
+`/.well-known/security.txt` (RFC 9116) publié avec `LEGAL_CONTACT_EMAIL` (généré à partir d'un
+gabarit et de la configuration, sans donnée personnelle dans le dépôt) et une date d'expiration.
+
+### 14.3 CORS et CSRF
+
+- **Aucun CORS** : l'API est same-origin uniquement. Elle n'émet jamais
+  `Access-Control-Allow-*` ; une pré-requête `OPTIONS` est refusée. Pas de couche CORS
+  permissive, même en dev (le proxy Vite rend tout same-origin).
+- **Anti-CSRF** sur toute requête non `GET`/`HEAD` : `Content-Type: application/json` exigé
+  (`415` sinon : bloque les formulaires cross-site) ; en-tête `Origin` (ou à défaut
+  `Sec-Fetch-Site`) vérifié : seule l'origine `https://TRAEFIK_HOST` (resp. `https://ADMIN_HOST`
+  sur le port admin, plus les origines de dev configurées explicitement) est acceptée,
+  `Sec-Fetch-Site: cross-site` refusé (`403`, message français).
+- Aucun cookie n'existe ; s'il en apparaissait un, il serait `Secure; HttpOnly; SameSite=Strict`.
+
+### 14.4 Authentification et autorisation (admin)
+
+- Port 8081 jamais routé depuis Internet (routeur admin uniquement sur `ADMIN_HOST`, filtré par
+  `dashboard-allowlist@file`) ; un test de configuration vérifie les labels du compose.
+- Jeton `ADMIN_API_TOKEN` ≥ 32 caractères, comparaison en temps constant, jamais dans une URL ni
+  un log ; échecs comptés et limités (verrouillage temporaire après N échecs, sans stocker
+  d'IP en clair) ; côté navigateur, conservé en mémoire ou en `sessionStorage`, jamais en
+  `localStorage`.
+- Le port public ne connaît aucune route admin (404) ; test dédié.
+
+### 14.5 Abus et déni de service
+
+ALTCHA, rate limits (§7.2), `HTTP_BODY_LIMIT_BYTES`, `HTTP_REQUEST_TIMEOUT_SECS`, sémaphore du
+modèle de décision, budget Mistral (§6.4), `statement_timeout` PostgreSQL côté application,
+concurrence du worker bornée, pagination bornée, regex à temps linéaire uniquement (crate
+`regex`), taille maximale des réponses IA acceptées, exports servis depuis la base (pas de
+génération à la demande).
+
+### 14.6 Secrets, erreurs et journaux
+
+Secrets uniquement via `/run/secrets` / environnement, type `Secret` à `Debug` masqué, jamais
+dans une erreur, un log, une réponse ou un `ARG` Docker. Les erreurs 500 renvoient un message
+générique (détail seulement dans les logs, sans donnée sensible). Journaliser les événements de
+sécurité (échec d'auth admin, CSRF refusé, rate limit atteint, ALTCHA invalide) **sans** IP, jeton
+ni texte.
+
+### 14.7 Conteneurs et chaîne d'approvisionnement
+
+- Images non root, système de fichiers en lecture seule là où Swarm le permet (sinon
+  documenter), capacités minimales, aucun outil inutile dans l'image runtime, images de base
+  épinglées.
+- CI (`devops/Dockerfile.test`) : `cargo deny check advisories bans` (ou `cargo audit`) et
+  `npm audit --omit=dev --audit-level=high` bloquants ; `Cargo.lock` et `package-lock.json`
+  committés ; `npm ci` uniquement.
+- Le worker n'est pas sur le réseau `proxy` ; seuls api et frontend y sont.
+
+### 14.8 Vérification
+
+Tests d'intégration de sécurité obligatoires : en-têtes (§14.2) sur toutes les familles de
+réponses, absence de CORS, refus CSRF (Origin étranger, mauvais Content-Type), charges
+d'injection SQL dans `q`, filtres, tri et slug (aucune erreur 500, aucun résultat anormal),
+XSS stocké rendu échappé (test front), injection de formule CSV, corps trop gros, JSON avec
+champs inconnus, jeton mal formé, routes admin absentes du port public, auth admin. Un scan
+dynamique OWASP ZAP (baseline) sur la stack locale est rejoué avant chaque mise en production.

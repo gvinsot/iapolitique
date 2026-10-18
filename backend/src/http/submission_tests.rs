@@ -467,3 +467,291 @@ async fn ideas_are_rate_limited(pool: PgPool) {
     assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(body["error"]["code"], "rate_limited");
 }
+
+// ---------------------------------------------------------------------------------------------
+// Contributions and reports
+// ---------------------------------------------------------------------------------------------
+
+const CONTRIBUTION_TEXT: &str = "Le gain est surestimé : les communes achètent déjà via \
+    l'UGAP. Appelez-moi au 06 12 34 56 78.";
+
+fn contribution_body(app: &TestApp) -> Value {
+    json!({
+        "kind": "objection",
+        "text": CONTRIBUTION_TEXT,
+        "accept_licence": true,
+        "accept_publication": true,
+        "altcha": app.altcha(),
+    })
+}
+
+fn report_body(app: &TestApp) -> Value {
+    json!({
+        "reason": "erreur_chiffrage",
+        "details": "Le chiffre de 2 M€ ne correspond pas à la source citée.",
+        "reporter_name": "Camille Martin",
+        "reporter_email": "camille@exemple.fr",
+        "good_faith": true,
+        "altcha": app.altcha(),
+    })
+}
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn accepted_contribution_is_masked_and_triggers_a_reanalysis(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), false, &[]).await;
+    app.decision_answers(TargetKind::Contribution, &[]).await;
+    let idea = crate::test_support::published_idea(&pool, "mutualiser-achats").await;
+
+    let (status, body) = app
+        .post(
+            "/api/ideas/mutualiser-achats/contributions",
+            &contribution_body(&app),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{body}");
+    assert_eq!(body["status"], "accepted");
+    let token = assert_token(&body);
+
+    let row: Value = sqlx::query_scalar("SELECT to_jsonb(c) FROM contributions c")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(row["idea_id"], idea.to_string());
+    assert_eq!(row["kind"], "objection");
+    assert_eq!(row["status"], "accepted");
+    assert!(!row["text"].as_str().unwrap().contains("06 12"));
+    assert_eq!(row["cgu_version"], crate::domain::rules::CGU_VERSION);
+    assert!(row["cgu_accepted_at"].is_string());
+    let id: Uuid = row["id"].as_str().unwrap().parse().unwrap();
+    assert_eq!(
+        app.history("contribution_events", "contribution_id", id)
+            .await,
+        ["submitted", "screening", "accepted"]
+    );
+    let (kind, target): (String, Uuid) =
+        sqlx::query_as("SELECT target_kind, target_id FROM tracking_tokens WHERE token_hash = $1")
+            .bind(&token_hash(&token).unwrap()[..])
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((kind.as_str(), target), ("contribution", id));
+    assert_eq!(
+        app.jobs().await,
+        [(
+            "analyze_idea".to_owned(),
+            Some(format!("analyze_idea:{idea}")),
+            false
+        )]
+    );
+}
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn contributions_need_a_published_idea_and_a_valid_body(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), false, &[]).await;
+    app.decision_answers(TargetKind::Contribution, &[("relevant", 0.1)])
+        .await;
+    crate::test_support::published_idea(&pool, "mutualiser-achats").await;
+    sqlx::query(
+        "INSERT INTO ideas (original_text, slug) VALUES ('Texte en attente.', 'pas-publiee')",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    for slug in ["inconnue", "pas-publiee", "Majuscules%20et%20espaces"] {
+        let (status, body) = app
+            .post(
+                &format!("/api/ideas/{slug}/contributions"),
+                &contribution_body(&app),
+            )
+            .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{slug}");
+        assert_eq!(body["error"]["code"], "idea_not_found");
+    }
+    for (patch, code) in [
+        (json!({ "kind": "doublon" }), "invalid_body"),
+        (json!({ "text": "Trop court." }), "text_too_short"),
+        (json!({ "text": "x".repeat(2_001) }), "text_too_long"),
+        (json!({ "accept_publication": false }), "consent_required"),
+    ] {
+        let mut body = contribution_body(&app);
+        for (key, value) in patch.as_object().unwrap() {
+            body[key] = value.clone();
+        }
+        let (_, response) = app
+            .post("/api/ideas/mutualiser-achats/contributions", &body)
+            .await;
+        assert_eq!(response["error"]["code"], code, "{patch}");
+    }
+
+    // Irrelevant contribution: refused with its rule.
+    let (status, body) = app
+        .post(
+            "/api/ideas/mutualiser-achats/contributions",
+            &contribution_body(&app),
+        )
+        .await;
+    assert_eq!(status, StatusCode::CREATED);
+    assert_eq!(body["status"], "rejected");
+    assert_eq!(body["reason_code"], "irrelevant");
+    assert_eq!(
+        body["statement"]["rule"]["url"],
+        "/regles#critere-pertinence"
+    );
+    assert!(app.jobs().await.is_empty());
+}
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn contributions_are_rate_limited(pool: PgPool) {
+    let app = TestApp::new(
+        pool.clone(),
+        false,
+        &[("RATE_LIMIT_CONTRIBUTIONS_PER_DAY", "1")],
+    )
+    .await;
+    app.decision_answers(TargetKind::Contribution, &[]).await;
+    crate::test_support::published_idea(&pool, "mutualiser-achats").await;
+    let uri = "/api/ideas/mutualiser-achats/contributions";
+    assert_eq!(
+        app.post(uri, &contribution_body(&app)).await.0,
+        StatusCode::CREATED
+    );
+    let (status, body) = app.post(uri, &contribution_body(&app)).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS);
+    assert!(
+        body["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("1 contribution par jour")
+    );
+}
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn report_is_screened_and_keeps_the_optional_contact(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), false, &[]).await;
+    app.decision_answers(TargetKind::Report, &[]).await;
+    let idea = crate::test_support::published_idea(&pool, "mutualiser-achats").await;
+
+    let mut body = report_body(&app);
+    body["details"] = json!("Erreur de calcul, me joindre : camille.martin@exemple.fr");
+    let (status, response) = app
+        .post("/api/ideas/mutualiser-achats/reports", &body)
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{response}");
+    assert_eq!(response["status"], "accepted");
+    assert_token(&response);
+
+    let row: Value = sqlx::query_scalar("SELECT to_jsonb(r) FROM reports r")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(row["reason"], "erreur_chiffrage");
+    assert_eq!(row["status"], "accepted");
+    assert!(!row["details"].as_str().unwrap().contains("camille.martin"));
+    assert_eq!(row["reporter_name"], "Camille Martin");
+    assert_eq!(row["reporter_email"], "camille@exemple.fr");
+    assert_eq!(row["good_faith"], true);
+    // The decision model sees the idea summary, the reason label and the masked details, never
+    // the reporter's contact.
+    let requests = app.decision.received_requests().await.unwrap();
+    let sent: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(sent["state"]["motif"], "Erreur de chiffrage");
+    assert!(!requests[0].body.windows(7).any(|w| w == b"Camille"));
+    assert_eq!(
+        app.jobs().await,
+        [(
+            "review_reports".to_owned(),
+            Some(format!("review_reports:{idea}")),
+            false
+        )]
+    );
+}
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn report_without_details_skips_the_screening(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), false, &[]).await;
+    crate::test_support::published_idea(&pool, "mutualiser-achats").await;
+    let body = json!({
+        "reason": "doublon",
+        "precision": "  ",
+        "good_faith": true,
+        "altcha": app.altcha(),
+    });
+    let (status, response) = app
+        .post("/api/ideas/mutualiser-achats/reports", &body)
+        .await;
+    assert_eq!(status, StatusCode::CREATED, "{response}");
+    assert_eq!(response["status"], "accepted");
+    assert!(app.decision.received_requests().await.unwrap().is_empty());
+    let (details, name): (Option<String>, Option<String>) =
+        sqlx::query_as("SELECT details, reporter_name FROM reports")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((details, name), (None, None));
+}
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn invalid_reports_are_refused(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), false, &[]).await;
+    app.decision_answers(TargetKind::Report, &[("relevant", 0.05)])
+        .await;
+    crate::test_support::published_idea(&pool, "mutualiser-achats").await;
+    let uri = "/api/ideas/mutualiser-achats/reports";
+    for (patch, status, code) in [
+        (
+            json!({ "good_faith": false }),
+            StatusCode::BAD_REQUEST,
+            "good_faith_required",
+        ),
+        (
+            json!({ "reason": "opinion" }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_body",
+        ),
+        (
+            json!({ "details": "x".repeat(1_001) }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "text_too_long",
+        ),
+        (
+            json!({ "reporter_name": "n".repeat(101) }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "field_too_long",
+        ),
+        (
+            json!({ "reporter_email": "camille" }),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_email",
+        ),
+        (
+            json!({ "altcha": "" }),
+            StatusCode::BAD_REQUEST,
+            "altcha_missing",
+        ),
+    ] {
+        let mut body = report_body(&app);
+        for (key, value) in patch.as_object().unwrap() {
+            body[key] = value.clone();
+        }
+        let (actual, response) = app.post(uri, &body).await;
+        assert_eq!(actual, status, "{patch}: {response}");
+        assert_eq!(response["error"]["code"], code, "{patch}");
+    }
+    let (count,): (i64,) = sqlx::query_as("SELECT count(*) FROM reports")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(count, 0);
+
+    // An irrelevant report is refused with its statement.
+    let (_, response) = app.post(uri, &report_body(&app)).await;
+    assert_eq!(response["status"], "rejected");
+    assert_eq!(response["reason_code"], "irrelevant");
+    assert!(
+        response["reason_message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Votre signalement")
+    );
+}

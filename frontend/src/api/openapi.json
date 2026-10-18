@@ -158,6 +158,190 @@
         }
       }
     },
+    "/api/ideas/{slug}/contributions": {
+      "post": {
+        "tags": [
+          "submissions"
+        ],
+        "summary": "Submits an improvement or an objection to a published idea; once accepted, it triggers a\nre-analysis of the idea.",
+        "operationId": "submitContribution",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "description": "Slug of the published idea.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ContributionSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Contribution enregistrée et filtrée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Consentements manquants ou vérification anti-robot invalide (`consent_required`, `altcha_*`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Idée inconnue ou non publiée (`idea_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Texte ou type invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite d'envois atteinte (`rate_limited`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service momentanément surchargé.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ideas/{slug}/reports": {
+      "post": {
+        "tags": [
+          "submissions"
+        ],
+        "summary": "Reports a problem about a published idea. The report is screened, then reviewed by AI with\nthe other reports of the idea (at most once a day, at once for problematic content).",
+        "operationId": "submitReport",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "description": "Slug of the published idea.",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReportSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Signalement enregistré.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Déclaration de bonne foi manquante ou vérification anti-robot invalide (`good_faith_required`, `altcha_*`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Idée inconnue ou non publiée (`idea_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Champ invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite d'envois atteinte (`rate_limited`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service momentanément surchargé.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/openapi.json": {
       "get": {
         "tags": [
@@ -271,6 +455,46 @@
           }
         }
       },
+      "ContributionSubmission": {
+        "type": "object",
+        "description": "An improvement or an objection to a published idea (§5.5).",
+        "required": [
+          "kind",
+          "text",
+          "accept_licence",
+          "accept_publication",
+          "altcha"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ContributionSubmissionKind"
+          },
+          "text": {
+            "type": "string",
+            "description": "Text of the contribution, 30 to 2 000 characters. Personal data is masked before\nstorage; the text itself is never published (only its neutral summary)."
+          },
+          "accept_licence": {
+            "type": "boolean",
+            "description": "Acceptance of the licence clause of the rules (box never pre-checked)."
+          },
+          "accept_publication": {
+            "type": "boolean",
+            "description": "« Je comprends que mon texte sera publié s'il est accepté » (box never pre-checked)."
+          },
+          "altcha": {
+            "type": "string",
+            "description": "Solution of the ALTCHA widget (base64), accepted once."
+          }
+        }
+      },
+      "ContributionSubmissionKind": {
+        "type": "string",
+        "description": "Kind of contribution a visitor may send (§5.5); duplicates are created by the pipeline.",
+        "enum": [
+          "Improvement",
+          "Objection"
+        ]
+      },
       "ErrorBody": {
         "type": "object",
         "description": "Body of every error response.",
@@ -368,6 +592,60 @@
           "Rejected",
           "Hidden"
         ]
+      },
+      "ReportReason": {
+        "type": "string",
+        "description": "Reason selected by the author of a report (§5.6): keys of `report_reasons` in\n`prompts/taxonomy.yaml`.",
+        "enum": [
+          "CalculationError",
+          "WrongSource",
+          "ProblematicContent",
+          "Duplicate",
+          "Other"
+        ]
+      },
+      "ReportSubmission": {
+        "type": "object",
+        "description": "A report about a published idea (§5.6, §7.5).",
+        "required": [
+          "reason",
+          "good_faith",
+          "altcha"
+        ],
+        "properties": {
+          "reason": {
+            "$ref": "#/components/schemas/ReportReason"
+          },
+          "details": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional details, 1 000 characters at most (personal data masked). Also accepted as\n`precision`."
+          },
+          "reporter_name": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional name of the reporter (100 characters), kept 6 months, never published."
+          },
+          "reporter_email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional e-mail of the reporter, kept 6 months, never published."
+          },
+          "good_faith": {
+            "type": "boolean",
+            "description": "Declaration of good faith (abusive reports are punished, LCEN art. 6 VII)."
+          },
+          "altcha": {
+            "type": "string",
+            "description": "Solution of the ALTCHA widget (base64), accepted once."
+          }
+        }
       },
       "RuleReference": {
         "type": "object",

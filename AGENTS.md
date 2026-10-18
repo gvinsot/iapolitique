@@ -276,8 +276,10 @@ n'appeler que `/v1/systemone`.
 ### 5.5 Contributions (améliorations et objections)
 
 Pas de commentaires libres. Sur une idée publiée, un visiteur peut soumettre une amélioration ou
-une objection (même protection anti-abus que le dépôt). Elle est filtrée, puis, si acceptée,
-déclenche une **ré-analyse** de l'idée qui l'intègre. Le portail affiche le nombre de
+une objection (même protection anti-abus que le dépôt, 30 à 2 000 caractères, mêmes deux
+consentements). Elle est filtrée, puis, si acceptée, déclenche une **ré-analyse** de l'idée
+qui l'intègre (job `analyze_idea`, déclencheur `contribution` ; un job déjà en file pour l'idée
+absorbe les contributions suivantes). Le portail affiche le nombre de
 contributions et le résumé neutre de celles qui ont été prises en compte, jamais le texte brut.
 
 ### 5.6 Signalements
@@ -289,6 +291,10 @@ conclut `maintain`, `update` (nouvelle analyse) ou `hide` (masquée, visible dan
 un drapeau `escalate` pour les contenus graves (masquage immédiat et file d'escalade humaine,
 §7.5). Les signalements d'une même idée sont regroupés : au plus une réévaluation par idée et
 par 24 h, sauf `contenu_problematique`, traité sans délai. Formulaire et obligations : §7.5.
+Mise en œuvre : un seul job `review_reports` par idée (clé `review_reports:<idée>`), dû 24 h
+après `ideas.last_report_review_at`, avancé à l'instant par un signalement
+`contenu_problematique`. Un signalement sans précision n'a pas de texte à filtrer : il est
+accepté sans appel au modèle de décision.
 
 ### 5.7 Déclencheurs de ré-analyse
 
@@ -434,7 +440,8 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
   sans le texte).
 - Idées publiées : conservées avec leur texte original (version masquée, voir §7.5).
 - Contenus masqués (`hidden`) : texte purgé après 12 mois.
-- Signalements traités : purgés après 6 mois (coordonnées facultatives du signalant comprises).
+- Signalements : nom et e-mail facultatifs du signalant effacés 6 mois après le signalement ;
+  précision et jeton d'un signalement traité (`reviewed`) effacés 6 mois après la revue.
 - Contribution supprimée par son auteur : effacement immédiat.
 - Job de purge quotidien dans le worker, testé.
 
@@ -505,7 +512,10 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
   visuels des sites .gouv.fr, vocabulaire administratif trompeur (« dossier », « validé par »).
 - **Signalement** (DSA « léger », LCEN art. 6) : motif, précision, nom et e-mail **facultatifs**,
   déclaration de bonne foi, rappel de la sanction des signalements abusifs (LCEN art. 6 VII),
-  accusé de réception sur la page de suivi, mention du traitement automatisé.
+  accusé de réception sur la page de suivi, mention du traitement automatisé. Sans déclaration
+  de bonne foi : `400 good_faith_required`. Le nom et l'e-mail ne sont stockés qu'avec le
+  signalement (`reports.reporter_name`, `reporter_email`), jamais publiés, exportés, journalisés
+  ni transmis à une IA ; la précision est masquée comme les autres textes.
 - **Escalade humaine** : la revue de signalement marque `escalate` les contenus graves
   (diffamation, menace, haine, terrorisme, pédocriminalité) : masquage immédiat et file admin
   « escalade » (transmission manuelle à PHAROS, cible 24 h).
@@ -706,8 +716,8 @@ API publique (port 8080) :
 | GET | `/api/legal` | coordonnées de l'éditeur (`LEGAL_*`) et versions/dates des pages légales et des CGU |
 | GET | `/api/ideas` | liste publiée : `sort` (`score`, `gain`, `feasibility`, `delay`, `recent`), filtres `admin_level`, `category`, `kind`, `territory`, `q`, pagination `page`/`per_page` |
 | GET | `/api/ideas/{slug}` | détail : idée, analyse courante, contributions intégrées, compteur de propositions |
-| POST | `/api/ideas/{slug}/contributions` | amélioration ou objection |
-| POST | `/api/ideas/{slug}/reports` | signalement |
+| POST | `/api/ideas/{slug}/contributions` | amélioration ou objection `{ kind: amelioration\|objection, text, accept_licence, accept_publication, altcha }` → `201` comme `/api/ideas` ; `404 idea_not_found` si l'idée n'est pas publiée |
+| POST | `/api/ideas/{slug}/reports` | signalement `{ reason, details? (alias precision), reporter_name?, reporter_email?, good_faith, altcha }` → `201` comme `/api/ideas` ; erreurs `good_faith_required`, `invalid_email`, `idea_not_found` |
 | GET | `/api/methodology` | prompts, grilles, taxonomie, formule de score et leurs versions |
 | GET | `/api/taxonomy` | niveaux, catégories, publics, motifs |
 | GET | `/api/stats` | compteurs publics |

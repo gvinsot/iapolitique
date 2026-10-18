@@ -4,6 +4,8 @@
 //!   ideas) is erased 30 days after the rejection, their tracking tokens are deleted, the second
 //!   opinion explanation (which may paraphrase the text) is erased, and the status becomes
 //!   `purged`. Aggregated data stays: date, reason, level, decision model scores.
+//! - Reports: the optional name and e-mail of the reporter are erased 6 months after the report;
+//!   reviewed reports lose their details and their tracking token 6 months after the review.
 //! - Expired tracking tokens are deleted.
 //! - Rate limit salts and counters of previous days are destroyed (§7.2).
 //! - Finished jobs and superseded exports are removed after a while.
@@ -18,6 +20,8 @@ use crate::domain::status::{ContributionStatus, IdeaStatus, ReportStatus, StateM
 
 /// Days a rejected text is kept before being purged.
 pub const REJECTED_TEXT_RETENTION_DAYS: i32 = 30;
+/// Months the contact of a reporter and the details of a reviewed report are kept (§7.3).
+pub const REPORT_RETENTION_MONTHS: i32 = 6;
 /// Days a succeeded job is kept (debugging).
 pub const SUCCEEDED_JOB_RETENTION_DAYS: i32 = 7;
 /// Days a dead job is kept (investigation from the admin).
@@ -33,6 +37,10 @@ pub struct PurgeReport {
     pub ideas: i64,
     pub contributions: i64,
     pub reports: i64,
+    /// Reports whose reporter contact was erased.
+    pub report_contacts: i64,
+    /// Reviewed reports whose details were erased.
+    pub reviewed_reports: i64,
     pub tracking_tokens: i64,
     pub expired_tracking_tokens: i64,
     pub rate_limit_salts: i64,
@@ -140,6 +148,36 @@ pub async fn run(pool: &PgPool) -> Result<PurgeReport, sqlx::Error> {
     report.reports = reports;
     report.tracking_tokens += tokens;
 
+    report.report_contacts = sqlx::query(
+        "UPDATE reports SET reporter_name = NULL, reporter_email = NULL,
+             reporter_purged_at = now()
+         WHERE (reporter_name IS NOT NULL OR reporter_email IS NOT NULL)
+           AND created_at < now() - make_interval(months => $1)",
+    )
+    .bind(REPORT_RETENTION_MONTHS)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected() as i64;
+
+    let (reviewed, tokens): (i64, i64) = sqlx::query_as(
+        "WITH purged AS (
+             UPDATE reports SET details = NULL, details_purged_at = now()
+             WHERE status = 'reviewed' AND details_purged_at IS NULL
+               AND status_changed_at < now() - make_interval(months => $1)
+             RETURNING id
+         ), tokens AS (
+             DELETE FROM tracking_tokens t USING purged p
+             WHERE t.target_kind = 'report' AND t.target_id = p.id
+             RETURNING 1
+         )
+         SELECT (SELECT count(*) FROM purged), (SELECT count(*) FROM tokens)",
+    )
+    .bind(REPORT_RETENTION_MONTHS)
+    .fetch_one(&mut *tx)
+    .await?;
+    report.reviewed_reports = reviewed;
+    report.tracking_tokens += tokens;
+
     report.expired_tracking_tokens =
         sqlx::query("DELETE FROM tracking_tokens WHERE expires_at < now()")
             .execute(&mut *tx)
@@ -207,6 +245,8 @@ impl JobHandler for PurgeHandler {
                 ideas = report.ideas,
                 contributions = report.contributions,
                 reports = report.reports,
+                report_contacts = report.report_contacts,
+                reviewed_reports = report.reviewed_reports,
                 tracking_tokens = report.tracking_tokens,
                 expired_tracking_tokens = report.expired_tracking_tokens,
                 rate_limit_salts = report.rate_limit_salts,
@@ -403,6 +443,81 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!((status.as_str(), details), ("purged", None));
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn erases_report_contacts_and_reviewed_reports_after_six_months(pool: PgPool) {
+        let idea: Uuid =
+            sqlx::query_scalar("INSERT INTO ideas (original_text) VALUES ('idée') RETURNING id")
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        let review: Uuid = sqlx::query_scalar(
+            "INSERT INTO report_reviews (idea_id, outcome, explanation, model, prompt_version)
+             VALUES ($1, 'maintain', 'RAS', 'm', '1') RETURNING id",
+        )
+        .bind(idea)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let insert = |age: &'static str, status: &'static str| {
+            let pool = pool.clone();
+            async move {
+                sqlx::query_scalar::<_, Uuid>(
+                    "INSERT INTO reports (idea_id, reason, details, status, review_id,
+                         reporter_name, reporter_email, good_faith, created_at, status_changed_at)
+                     VALUES ($1, 'erreur_chiffrage', 'précision', $2,
+                             CASE WHEN $2 = 'reviewed' THEN $3 END, 'Camille', 'c@exemple.fr',
+                             true, now() - $4::interval, now() - $4::interval)
+                     RETURNING id",
+                )
+                .bind(idea)
+                .bind(status)
+                .bind(review)
+                .bind(age)
+                .fetch_one(&pool)
+                .await
+                .unwrap()
+            }
+        };
+        let old_reviewed = insert("7 months", "reviewed").await;
+        let old_accepted = insert("7 months", "accepted").await;
+        let recent_reviewed = insert("5 months", "reviewed").await;
+        sqlx::query(
+            "INSERT INTO tracking_tokens (token_hash, target_kind, target_id)
+             VALUES (sha256('old'::bytea), 'report', $1), (sha256('new'::bytea), 'report', $2)",
+        )
+        .bind(old_reviewed)
+        .bind(recent_reviewed)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let report = run(&pool).await.unwrap();
+        assert_eq!(report.report_contacts, 2);
+        assert_eq!(report.reviewed_reports, 1);
+        assert_eq!(report.tracking_tokens, 1);
+
+        type Row = (Uuid, Option<String>, Option<String>, Option<String>);
+        let rows: Vec<Row> = sqlx::query_as(
+            "SELECT id, details, reporter_name, reporter_email FROM reports ORDER BY created_at, id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        for (id, details, name, email) in rows {
+            if id == recent_reviewed {
+                assert_eq!(
+                    (details.as_deref(), name.as_deref(), email.as_deref()),
+                    (Some("précision"), Some("Camille"), Some("c@exemple.fr"))
+                );
+            } else {
+                assert_eq!((name, email), (None, None));
+                // Details of a report waiting for its review are kept.
+                assert_eq!(details.is_some(), id == old_accepted);
+            }
+        }
+        assert_eq!(run(&pool).await.unwrap(), PurgeReport::default());
     }
 
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]

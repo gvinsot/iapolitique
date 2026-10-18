@@ -76,6 +76,14 @@ pub fn public_router(state: AppState) -> Router {
         .route("/api/openapi.json", get(openapi::openapi_json))
         .route("/api/altcha/challenge", get(antispam::altcha_challenge))
         .route("/api/ideas", post(submissions::submit_idea))
+        .route(
+            "/api/ideas/{slug}/contributions",
+            post(submissions::submit_contribution),
+        )
+        .route(
+            "/api/ideas/{slug}/reports",
+            post(submissions::submit_report),
+        )
         .fallback(not_found)
         .with_state(state.clone());
     middleware::with_common_layers(router, &state.config.http)

@@ -25,15 +25,18 @@ use utoipa::ToSchema;
 use super::AppState;
 use super::client_ip::ClientIp;
 use super::error::{ApiError, ErrorBody};
-use super::extract::ApiJson;
+use super::extract::{ApiJson, ApiPath};
 use crate::antispam::rate_limit::RateAction;
-use crate::db::submissions::{self, NewIdea};
+use crate::db::submissions::{self, NewContribution, NewIdea, NewReport};
 use crate::db::tracking::TrackingToken;
 use crate::domain::redaction::redact;
-use crate::domain::types::{Actor, AdminLevel, TargetKind};
+use crate::domain::text_enum;
+use crate::domain::types::{Actor, AdminLevel, ContributionKind, ReportReason, TargetKind};
 use crate::domain::validation::{
-    FieldError, IDEA_TEXT_LIMITS, TERRITORY_MAX_CHARS, TextError, TextLimits, validate_idea_text,
-    validate_line,
+    CONTRIBUTION_TEXT_LIMITS, FieldError, IDEA_TEXT_LIMITS, REPORT_DETAILS_LIMITS,
+    REPORTER_NAME_MAX_CHARS, TERRITORY_MAX_CHARS, TextError, TextLimits,
+    validate_contribution_text, validate_email, validate_idea_text, validate_line,
+    validate_optional_text,
 };
 use crate::moderation::second_opinion::{self, FALLBACK_DELAY};
 use crate::moderation::statement::{self, StatementOfReasons};
@@ -70,6 +73,70 @@ pub struct IdeaSubmission {
     pub altcha: String,
 }
 
+text_enum! {
+    /// Kind of contribution a visitor may send (§5.5); duplicates are created by the pipeline.
+    pub enum ContributionSubmissionKind {
+        /// Specifies, completes or corrects the idea.
+        Improvement => "amelioration",
+        /// Points out a drawback, a risk or an obstacle.
+        Objection => "objection",
+    }
+}
+
+impl From<ContributionSubmissionKind> for ContributionKind {
+    fn from(kind: ContributionSubmissionKind) -> Self {
+        match kind {
+            ContributionSubmissionKind::Improvement => Self::Improvement,
+            ContributionSubmissionKind::Objection => Self::Objection,
+        }
+    }
+}
+
+/// An improvement or an objection to a published idea (§5.5).
+#[derive(Deserialize, ToSchema)]
+pub struct ContributionSubmission {
+    pub kind: ContributionSubmissionKind,
+    /// Text of the contribution, 30 to 2 000 characters. Personal data is masked before
+    /// storage; the text itself is never published (only its neutral summary).
+    pub text: String,
+    /// Acceptance of the licence clause of the rules (box never pre-checked).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub accept_licence: bool,
+    /// « Je comprends que mon texte sera publié s'il est accepté » (box never pre-checked).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub accept_publication: bool,
+    /// Solution of the ALTCHA widget (base64), accepted once.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub altcha: String,
+}
+
+/// A report about a published idea (§5.6, §7.5).
+#[derive(Deserialize, ToSchema)]
+pub struct ReportSubmission {
+    pub reason: ReportReason,
+    /// Optional details, 1 000 characters at most (personal data masked). Also accepted as
+    /// `precision`.
+    #[serde(default, alias = "precision")]
+    pub details: Option<String>,
+    /// Optional name of the reporter (100 characters), kept 6 months, never published.
+    #[serde(default)]
+    pub reporter_name: Option<String>,
+    /// Optional e-mail of the reporter, kept 6 months, never published.
+    #[serde(default)]
+    pub reporter_email: Option<String>,
+    /// Declaration of good faith (abusive reports are punished, LCEN art. 6 VII).
+    #[serde(default)]
+    #[schema(required = true)]
+    pub good_faith: bool,
+    /// Solution of the ALTCHA widget (base64), accepted once.
+    #[serde(default)]
+    #[schema(required = true)]
+    pub altcha: String,
+}
+
 /// Immediate answer to a submission.
 #[derive(Serialize, ToSchema)]
 pub struct SubmissionResponse {
@@ -90,6 +157,19 @@ pub struct SubmissionResponse {
     /// Statement of reasons of a refusal (DSA art. 17).
     #[schema(required = true)]
     pub statement: Option<StatementOfReasons>,
+}
+
+/// The published idea behind a slug.
+async fn published_idea(state: &AppState, slug: &str) -> Result<uuid::Uuid, ApiError> {
+    submissions::published_idea_id(&state.pool, slug)
+        .await?
+        .ok_or_else(|| {
+            ApiError::new(
+                StatusCode::NOT_FOUND,
+                "idea_not_found",
+                "Cette idée n'existe pas ou n'est plus publiée.",
+            )
+        })
 }
 
 pub(crate) fn require_consents(licence: bool, publication: bool) -> Result<(), ApiError> {
@@ -262,4 +342,99 @@ pub async fn submit_idea(
     let (id, token) = submissions::insert_idea(&state.pool, &idea).await?;
     tracing::info!(idea_id = %id, "idea submitted");
     screen_and_respond(&state, Target::new(TargetKind::Idea, id), token).await
+}
+
+/// Submits an improvement or an objection to a published idea; once accepted, it triggers a
+/// re-analysis of the idea.
+#[utoipa::path(
+    post,
+    path = "/api/ideas/{slug}/contributions",
+    tag = "submissions",
+    operation_id = "submitContribution",
+    params(("slug" = String, Path, description = "Slug of the published idea.")),
+    request_body = ContributionSubmission,
+    responses(
+        (status = 201, description = "Contribution enregistrée et filtrée.", body = SubmissionResponse),
+        (status = 400, description = "Consentements manquants ou vérification anti-robot \
+            invalide (`consent_required`, `altcha_*`).", body = ErrorBody),
+        (status = 404, description = "Idée inconnue ou non publiée (`idea_not_found`).", body = ErrorBody),
+        (status = 422, description = "Texte ou type invalide.", body = ErrorBody),
+        (status = 429, description = "Limite d'envois atteinte (`rate_limited`).", body = ErrorBody),
+        (status = 503, description = "Service momentanément surchargé.", body = ErrorBody)
+    )
+)]
+pub async fn submit_contribution(
+    State(state): State<AppState>,
+    ApiPath(slug): ApiPath<String>,
+    ip: ClientIp,
+    ApiJson(body): ApiJson<ContributionSubmission>,
+) -> Result<(StatusCode, Json<SubmissionResponse>), ApiError> {
+    require_consents(body.accept_licence, body.accept_publication)?;
+    let text = validate_contribution_text(&body.text)?;
+    let idea_id = published_idea(&state, &slug).await?;
+    check_abuse(&state, ip, RateAction::Contribution, &body.altcha)?;
+
+    let contribution = NewContribution {
+        idea_id,
+        kind: body.kind.into(),
+        text: masked(&text, CONTRIBUTION_TEXT_LIMITS)?,
+    };
+    let (id, token) = submissions::insert_contribution(&state.pool, &contribution).await?;
+    tracing::info!(contribution_id = %id, %idea_id, "contribution submitted");
+    screen_and_respond(&state, Target::new(TargetKind::Contribution, id), token).await
+}
+
+/// Reports a problem about a published idea. The report is screened, then reviewed by AI with
+/// the other reports of the idea (at most once a day, at once for problematic content).
+#[utoipa::path(
+    post,
+    path = "/api/ideas/{slug}/reports",
+    tag = "submissions",
+    operation_id = "submitReport",
+    params(("slug" = String, Path, description = "Slug of the published idea.")),
+    request_body = ReportSubmission,
+    responses(
+        (status = 201, description = "Signalement enregistré.", body = SubmissionResponse),
+        (status = 400, description = "Déclaration de bonne foi manquante ou vérification \
+            anti-robot invalide (`good_faith_required`, `altcha_*`).", body = ErrorBody),
+        (status = 404, description = "Idée inconnue ou non publiée (`idea_not_found`).", body = ErrorBody),
+        (status = 422, description = "Champ invalide.", body = ErrorBody),
+        (status = 429, description = "Limite d'envois atteinte (`rate_limited`).", body = ErrorBody),
+        (status = 503, description = "Service momentanément surchargé.", body = ErrorBody)
+    )
+)]
+pub async fn submit_report(
+    State(state): State<AppState>,
+    ApiPath(slug): ApiPath<String>,
+    ip: ClientIp,
+    ApiJson(body): ApiJson<ReportSubmission>,
+) -> Result<(StatusCode, Json<SubmissionResponse>), ApiError> {
+    if !body.good_faith {
+        return Err(ApiError::bad_request(
+            "good_faith_required",
+            "Cochez la déclaration de bonne foi pour envoyer votre signalement.",
+        ));
+    }
+    let details = validate_optional_text(body.details.as_deref(), REPORT_DETAILS_LIMITS)?;
+    let reporter_name = validate_line(
+        body.reporter_name.as_deref(),
+        "Le nom",
+        REPORTER_NAME_MAX_CHARS,
+    )?;
+    let reporter_email = validate_email(body.reporter_email.as_deref())?;
+    let idea_id = published_idea(&state, &slug).await?;
+    check_abuse(&state, ip, RateAction::Report, &body.altcha)?;
+
+    let report = NewReport {
+        idea_id,
+        reason: body.reason,
+        details: details
+            .map(|details| masked(&details, REPORT_DETAILS_LIMITS))
+            .transpose()?,
+        reporter_name,
+        reporter_email,
+    };
+    let (id, token) = submissions::insert_report(&state.pool, &report).await?;
+    tracing::info!(report_id = %id, %idea_id, reason = %report.reason, "report submitted");
+    screen_and_respond(&state, Target::new(TargetKind::Report, id), token).await
 }

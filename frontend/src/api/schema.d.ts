@@ -75,6 +75,46 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ideas/{slug}/contributions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submits an improvement or an objection to a published idea; once accepted, it triggers a
+         *     re-analysis of the idea.
+         */
+        post: operations["submitContribution"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ideas/{slug}/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Reports a problem about a published idea. The report is screened, then reviewed by AI with
+         *     the other reports of the idea (at most once a day, at once for problematic content).
+         */
+        post: operations["submitReport"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/openapi.json": {
         parameters: {
             query?: never;
@@ -140,6 +180,26 @@ export interface components {
             /** @description Hex HMAC-SHA-256 of `challenge`. */
             signature: string;
         };
+        /** @description An improvement or an objection to a published idea (§5.5). */
+        ContributionSubmission: {
+            kind: components["schemas"]["ContributionSubmissionKind"];
+            /**
+             * @description Text of the contribution, 30 to 2 000 characters. Personal data is masked before
+             *     storage; the text itself is never published (only its neutral summary).
+             */
+            text: string;
+            /** @description Acceptance of the licence clause of the rules (box never pre-checked). */
+            accept_licence: boolean;
+            /** @description « Je comprends que mon texte sera publié s'il est accepté » (box never pre-checked). */
+            accept_publication: boolean;
+            /** @description Solution of the ALTCHA widget (base64), accepted once. */
+            altcha: string;
+        };
+        /**
+         * @description Kind of contribution a visitor may send (§5.5); duplicates are created by the pipeline.
+         * @enum {string}
+         */
+        ContributionSubmissionKind: "Improvement" | "Objection";
         /** @description Body of every error response. */
         ErrorBody: {
             error: components["schemas"]["ErrorDetail"];
@@ -185,6 +245,29 @@ export interface components {
          * @enum {string}
          */
         Measure: "Rejected" | "Hidden";
+        /**
+         * @description Reason selected by the author of a report (§5.6): keys of `report_reasons` in
+         *     `prompts/taxonomy.yaml`.
+         * @enum {string}
+         */
+        ReportReason: "CalculationError" | "WrongSource" | "ProblematicContent" | "Duplicate" | "Other";
+        /** @description A report about a published idea (§5.6, §7.5). */
+        ReportSubmission: {
+            reason: components["schemas"]["ReportReason"];
+            /**
+             * @description Optional details, 1 000 characters at most (personal data masked). Also accepted as
+             *     `precision`.
+             */
+            details?: string | null;
+            /** @description Optional name of the reporter (100 characters), kept 6 months, never published. */
+            reporter_name?: string | null;
+            /** @description Optional e-mail of the reporter, kept 6 months, never published. */
+            reporter_email?: string | null;
+            /** @description Declaration of good faith (abusive reports are punished, LCEN art. 6 VII). */
+            good_faith: boolean;
+            /** @description Solution of the ALTCHA widget (base64), accepted once. */
+            altcha: string;
+        };
         /** @description Rule at stake in a decision, as sent to the author. */
         RuleReference: {
             /**
@@ -257,11 +340,15 @@ export interface components {
 export type SchemaAdminLevel = components['schemas']['AdminLevel'];
 export type SchemaAdminSession = components['schemas']['AdminSession'];
 export type SchemaAltchaChallenge = components['schemas']['AltchaChallenge'];
+export type SchemaContributionSubmission = components['schemas']['ContributionSubmission'];
+export type SchemaContributionSubmissionKind = components['schemas']['ContributionSubmissionKind'];
 export type SchemaErrorBody = components['schemas']['ErrorBody'];
 export type SchemaErrorDetail = components['schemas']['ErrorDetail'];
 export type SchemaHealthResponse = components['schemas']['HealthResponse'];
 export type SchemaIdeaSubmission = components['schemas']['IdeaSubmission'];
 export type SchemaMeasure = components['schemas']['Measure'];
+export type SchemaReportReason = components['schemas']['ReportReason'];
+export type SchemaReportSubmission = components['schemas']['ReportSubmission'];
 export type SchemaRuleReference = components['schemas']['RuleReference'];
 export type SchemaStatementOfReasons = components['schemas']['StatementOfReasons'];
 export type SchemaSubmissionResponse = components['schemas']['SubmissionResponse'];
@@ -368,6 +455,150 @@ export interface operations {
                 };
             };
             /** @description Texte ou champ invalide. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Limite d'envois atteinte (`rate_limited`). */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service momentanément surchargé. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    submitContribution: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Slug of the published idea. */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ContributionSubmission"];
+            };
+        };
+        responses: {
+            /** @description Contribution enregistrée et filtrée. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionResponse"];
+                };
+            };
+            /** @description Consentements manquants ou vérification anti-robot invalide (`consent_required`, `altcha_*`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Idée inconnue ou non publiée (`idea_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Texte ou type invalide. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Limite d'envois atteinte (`rate_limited`). */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service momentanément surchargé. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    submitReport: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Slug of the published idea. */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReportSubmission"];
+            };
+        };
+        responses: {
+            /** @description Signalement enregistré. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionResponse"];
+                };
+            };
+            /** @description Déclaration de bonne foi manquante ou vérification anti-robot invalide (`good_faith_required`, `altcha_*`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Idée inconnue ou non publiée (`idea_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Champ invalide. */
             422: {
                 headers: {
                     [name: string]: unknown;

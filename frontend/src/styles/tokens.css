@@ -1,0 +1,96 @@
+/*
+ * iapolitique design tokens. See src/styles/README.md for the rationale.
+ *
+ * Neutral warm-grey ("stone") surfaces with a single petrol-teal accent. The palette
+ * deliberately avoids the colours associated with French political parties: no dominant
+ * red, pink, blue-white-red, green, orange, purple or navy-and-gold.
+ *
+ * Every text/surface pair listed in src/styles/contrast.test.ts is checked against
+ * WCAG 2.2 AA (4.5:1 for text, 3:1 for UI boundaries and focus rings) in both themes.
+ * Values are OKLCH: oklch(lightness chroma hue).
+ */
+
+:root {
+  color-scheme: light;
+
+  --radius: 0.5rem;
+
+  --background: oklch(0.985 0.002 85);
+  --foreground: oklch(0.216 0.006 56);
+
+  --card: oklch(1 0 0);
+  --card-foreground: oklch(0.216 0.006 56);
+  --popover: oklch(1 0 0);
+  --popover-foreground: oklch(0.216 0.006 56);
+
+  /* Petrol teal ("bleu canard"): the only saturated hue, used for actions and links. */
+  --primary: oklch(0.46 0.075 210);
+  --primary-foreground: oklch(0.985 0.002 85);
+
+  --secondary: oklch(0.95 0.004 85);
+  --secondary-foreground: oklch(0.268 0.007 34);
+
+  --muted: oklch(0.95 0.004 85);
+  --muted-foreground: oklch(0.444 0.011 74);
+
+  --accent: oklch(0.945 0.016 210);
+  --accent-foreground: oklch(0.32 0.05 215);
+
+  /* Reserved for errors and destructive actions, never decorative. */
+  --destructive: oklch(0.505 0.19 27);
+  --destructive-foreground: oklch(0.985 0.002 85);
+
+  /* Ochre, for "pending review" / grey-zone states. */
+  --warning: oklch(0.47 0.1 70);
+  --warning-surface: oklch(0.97 0.03 90);
+
+  --border: oklch(0.9 0.005 85);
+  --input: oklch(0.6 0.01 70);
+  --ring: oklch(0.46 0.075 210);
+
+  --chart-1: oklch(0.46 0.075 210);
+  --chart-2: oklch(0.6 0.06 210);
+  --chart-3: oklch(0.55 0.01 70);
+  --chart-4: oklch(0.72 0.1 80);
+  --chart-5: oklch(0.35 0.01 60);
+}
+
+:root.dark {
+  color-scheme: dark;
+
+  --background: oklch(0.17 0.004 50);
+  --foreground: oklch(0.97 0.002 85);
+
+  --card: oklch(0.21 0.005 50);
+  --card-foreground: oklch(0.97 0.002 85);
+  --popover: oklch(0.21 0.005 50);
+  --popover-foreground: oklch(0.97 0.002 85);
+
+  --primary: oklch(0.79 0.085 205);
+  --primary-foreground: oklch(0.2 0.03 215);
+
+  --secondary: oklch(0.27 0.006 50);
+  --secondary-foreground: oklch(0.97 0.002 85);
+
+  --muted: oklch(0.27 0.006 50);
+  --muted-foreground: oklch(0.74 0.01 70);
+
+  --accent: oklch(0.29 0.03 210);
+  --accent-foreground: oklch(0.95 0.015 205);
+
+  --destructive: oklch(0.71 0.16 25);
+  --destructive-foreground: oklch(0.2 0.03 25);
+
+  --warning: oklch(0.83 0.11 85);
+  --warning-surface: oklch(0.25 0.035 80);
+
+  --border: oklch(0.3 0.006 50);
+  --input: oklch(0.56 0.01 70);
+  --ring: oklch(0.79 0.085 205);
+
+  --chart-1: oklch(0.79 0.085 205);
+  --chart-2: oklch(0.62 0.07 210);
+  --chart-3: oklch(0.65 0.01 70);
+  --chart-4: oklch(0.83 0.11 85);
+  --chart-5: oklch(0.9 0.005 85);
+}

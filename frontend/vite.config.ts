@@ -38,6 +38,7 @@ export default defineConfig({
     include: ["src/**/*.test.{ts,tsx}"],
     restoreMocks: true,
     unstubGlobals: true,
-    css: false,
+    // CSS is not processed in tests, except the design tokens read by the contrast test.
+    css: { include: [/tokens\.css/] },
   },
 });

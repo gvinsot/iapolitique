@@ -190,6 +190,16 @@ text_enum! {
 }
 
 text_enum! {
+    /// State of a human review requested by an author (§7.1).
+    pub enum ReviewRequestStatus {
+        /// Waiting in the admin queue.
+        Pending => "pending",
+        /// Handled by the administrator.
+        Done => "done",
+    }
+}
+
+text_enum! {
     /// Format of a generated open data export (§7.4).
     pub enum ExportFormat {
         Json => "json",

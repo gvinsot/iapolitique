@@ -74,8 +74,9 @@ pub fn reason_message(prompts: &Prompts, kind: TargetKind, reason_code: &str) ->
 
 /// Refusal of a text of `$table`: reason, day of the decision, first day the daily purge erases
 /// the text (the next purge run, Paris time, after `rejected_at + retention`), and whether a
-/// second opinion took part. `$1` id, `$2` retention days, `$3`/`$4` purge hour and minute,
-/// `$5` target kind. Compile-time constant SQL (AGENTS.md §14.1).
+/// second opinion took part, and whether a human review is pending (the purge then waits).
+/// `$1` id, `$2` retention days, `$3`/`$4` purge hour and minute, `$5` target kind.
+/// Compile-time constant SQL (AGENTS.md §14.1).
 macro_rules! rejected_sql {
     ($table:literal) => {
         concat!(
@@ -86,7 +87,10 @@ macro_rules! rejected_sql {
                            THEN 1 ELSE 0 END,
                     EXISTS (SELECT 1 FROM screenings s
                             WHERE s.target_kind = $5 AND s.target_id = t.id
-                              AND s.second_opinion_decision = 'reject')
+                              AND s.second_opinion_decision = 'reject'),
+                    EXISTS (SELECT 1 FROM review_requests q
+                            WHERE q.target_kind = $5 AND q.target_id = t.id
+                              AND q.status = 'pending')
              FROM ",
             $table,
             " t WHERE t.id = $1 AND t.status = 'rejected' AND t.rejected_at IS NOT NULL"
@@ -109,7 +113,7 @@ pub async fn load(
     prompts: &Prompts,
     target: Target,
 ) -> sqlx::Result<Option<StatementOfReasons>> {
-    let rejected: Option<(Option<String>, NaiveDate, NaiveDate, bool)> =
+    let rejected: Option<(Option<String>, NaiveDate, NaiveDate, bool, bool)> =
         sqlx::query_as(rejected_sql(target.kind))
             .bind(target.id)
             .bind(REJECTED_TEXT_RETENTION_DAYS)
@@ -118,7 +122,7 @@ pub async fn load(
             .bind(target.kind.as_str())
             .fetch_optional(pool)
             .await?;
-    if let Some((reason_code, decided_on, purge_on, second_opinion)) = rejected {
+    if let Some((reason_code, decided_on, purge_on, second_opinion, review_pending)) = rejected {
         let reason_code = reason_code.unwrap_or_else(|| "rejected".to_owned());
         let rule = rules::article_for_reason(&reason_code).unwrap_or(rules::CRITERIA_ARTICLE);
         return Ok(Some(StatementOfReasons {
@@ -129,7 +133,8 @@ pub async fn load(
             automated: true,
             second_opinion,
             decided_on,
-            purge_on: Some(purge_on),
+            // A pending human review keeps the text until the administrator handles it.
+            purge_on: (!review_pending).then_some(purge_on),
         }));
     }
     if target.kind != TargetKind::Idea {

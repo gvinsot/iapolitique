@@ -1,9 +1,11 @@
 //! Daily retention purge (AGENTS.md §7.3), run by the worker at 03:30 Europe/Paris.
 //!
 //! - Rejected ideas, contributions and reports: their text (and the free-text territory of
-//!   ideas) is erased 30 days after the rejection, their tracking tokens are deleted, the second
-//!   opinion explanation (which may paraphrase the text) is erased, and the status becomes
-//!   `purged`. Aggregated data stays: date, reason, level, decision model scores.
+//!   ideas) is erased 30 days after the rejection, their tracking tokens and review requests
+//!   are deleted, the second opinion explanation (which may paraphrase the text) is erased, and
+//!   the status becomes `purged`. Aggregated data stays: date, reason, level, decision model
+//!   scores. A text whose human review is still pending waits for the administrator.
+//! - Handled review requests are deleted one year after their handling.
 //! - Reports: the optional name and e-mail of the reporter are erased 6 months after the report;
 //!   reviewed reports lose their details and their tracking token 6 months after the review.
 //! - Expired tracking tokens are deleted.
@@ -22,6 +24,8 @@ use crate::domain::status::{ContributionStatus, IdeaStatus, ReportStatus, StateM
 pub const REJECTED_TEXT_RETENTION_DAYS: i32 = 30;
 /// Months the contact of a reporter and the details of a reviewed report are kept (§7.3).
 pub const REPORT_RETENTION_MONTHS: i32 = 6;
+/// Months a handled review request is kept (requests about rights: one year).
+pub const REVIEW_REQUEST_RETENTION_MONTHS: i32 = 12;
 /// Days a succeeded job is kept (debugging).
 pub const SUCCEEDED_JOB_RETENTION_DAYS: i32 = 7;
 /// Days a dead job is kept (investigation from the admin).
@@ -43,6 +47,8 @@ pub struct PurgeReport {
     pub reviewed_reports: i64,
     pub tracking_tokens: i64,
     pub expired_tracking_tokens: i64,
+    /// Review requests of purged texts and handled requests past their retention.
+    pub review_requests: i64,
     pub rate_limit_salts: i64,
     pub rate_limit_counters: i64,
     pub jobs: i64,
@@ -72,13 +78,16 @@ pub async fn run(pool: &PgPool) -> Result<PurgeReport, sqlx::Error> {
     let mut tx = pool.begin().await?;
     let mut report = PurgeReport::default();
 
-    let (ideas, tokens): (i64, i64) = sqlx::query_as(
+    let (ideas, tokens, requests): (i64, i64, i64) = sqlx::query_as(
         "WITH purged AS (
              UPDATE ideas SET status = 'purged', status_changed_at = now(),
                  original_text = NULL, submitted_territory = NULL,
                  original_text_purged_at = now()
              WHERE status = 'rejected'
                AND coalesce(rejected_at, status_changed_at) < now() - make_interval(days => $1)
+               AND NOT EXISTS (SELECT 1 FROM review_requests q
+                               WHERE q.target_kind = 'idea' AND q.target_id = ideas.id
+                                 AND q.status = 'pending')
              RETURNING id
          ), events AS (
              INSERT INTO idea_events (idea_id, from_status, to_status, actor, reason_code)
@@ -87,66 +96,90 @@ pub async fn run(pool: &PgPool) -> Result<PurgeReport, sqlx::Error> {
              DELETE FROM tracking_tokens t USING purged p
              WHERE t.target_kind = 'idea' AND t.target_id = p.id
              RETURNING 1
+         ), requests AS (
+             DELETE FROM review_requests q USING purged p
+             WHERE q.target_kind = 'idea' AND q.target_id = p.id
+             RETURNING 1
          ), explanations AS (
              UPDATE screenings s SET second_opinion_explanation = NULL FROM purged p
              WHERE s.target_kind = 'idea' AND s.target_id = p.id
                AND s.second_opinion_explanation IS NOT NULL
          )
-         SELECT (SELECT count(*) FROM purged), (SELECT count(*) FROM tokens)",
+         SELECT (SELECT count(*) FROM purged), (SELECT count(*) FROM tokens),
+                (SELECT count(*) FROM requests)",
     )
     .bind(REJECTED_TEXT_RETENTION_DAYS)
     .fetch_one(&mut *tx)
     .await?;
     report.ideas = ideas;
     report.tracking_tokens += tokens;
+    report.review_requests += requests;
 
-    let (contributions, tokens): (i64, i64) = sqlx::query_as(
+    let (contributions, tokens, requests): (i64, i64, i64) = sqlx::query_as(
         "WITH purged AS (
              UPDATE contributions SET status = 'purged', status_changed_at = now(),
                  text = NULL, text_purged_at = now()
              WHERE status = 'rejected'
                AND coalesce(rejected_at, status_changed_at) < now() - make_interval(days => $1)
+               AND NOT EXISTS (SELECT 1 FROM review_requests q
+                               WHERE q.target_kind = 'contribution' AND q.target_id = contributions.id
+                                 AND q.status = 'pending')
              RETURNING id
          ), tokens AS (
              DELETE FROM tracking_tokens t USING purged p
              WHERE t.target_kind = 'contribution' AND t.target_id = p.id
+             RETURNING 1
+         ), requests AS (
+             DELETE FROM review_requests q USING purged p
+             WHERE q.target_kind = 'contribution' AND q.target_id = p.id
              RETURNING 1
          ), explanations AS (
              UPDATE screenings s SET second_opinion_explanation = NULL FROM purged p
              WHERE s.target_kind = 'contribution' AND s.target_id = p.id
                AND s.second_opinion_explanation IS NOT NULL
          )
-         SELECT (SELECT count(*) FROM purged), (SELECT count(*) FROM tokens)",
+         SELECT (SELECT count(*) FROM purged), (SELECT count(*) FROM tokens),
+                (SELECT count(*) FROM requests)",
     )
     .bind(REJECTED_TEXT_RETENTION_DAYS)
     .fetch_one(&mut *tx)
     .await?;
     report.contributions = contributions;
     report.tracking_tokens += tokens;
+    report.review_requests += requests;
 
-    let (reports, tokens): (i64, i64) = sqlx::query_as(
+    let (reports, tokens, requests): (i64, i64, i64) = sqlx::query_as(
         "WITH purged AS (
              UPDATE reports SET status = 'purged', status_changed_at = now(),
                  details = NULL, details_purged_at = now()
              WHERE status = 'rejected'
                AND coalesce(rejected_at, status_changed_at) < now() - make_interval(days => $1)
+               AND NOT EXISTS (SELECT 1 FROM review_requests q
+                               WHERE q.target_kind = 'report' AND q.target_id = reports.id
+                                 AND q.status = 'pending')
              RETURNING id
          ), tokens AS (
              DELETE FROM tracking_tokens t USING purged p
              WHERE t.target_kind = 'report' AND t.target_id = p.id
+             RETURNING 1
+         ), requests AS (
+             DELETE FROM review_requests q USING purged p
+             WHERE q.target_kind = 'report' AND q.target_id = p.id
              RETURNING 1
          ), explanations AS (
              UPDATE screenings s SET second_opinion_explanation = NULL FROM purged p
              WHERE s.target_kind = 'report' AND s.target_id = p.id
                AND s.second_opinion_explanation IS NOT NULL
          )
-         SELECT (SELECT count(*) FROM purged), (SELECT count(*) FROM tokens)",
+         SELECT (SELECT count(*) FROM purged), (SELECT count(*) FROM tokens),
+                (SELECT count(*) FROM requests)",
     )
     .bind(REJECTED_TEXT_RETENTION_DAYS)
     .fetch_one(&mut *tx)
     .await?;
     report.reports = reports;
     report.tracking_tokens += tokens;
+    report.review_requests += requests;
 
     report.report_contacts = sqlx::query(
         "UPDATE reports SET reporter_name = NULL, reporter_email = NULL,
@@ -177,6 +210,15 @@ pub async fn run(pool: &PgPool) -> Result<PurgeReport, sqlx::Error> {
     .await?;
     report.reviewed_reports = reviewed;
     report.tracking_tokens += tokens;
+
+    report.review_requests += sqlx::query(
+        "DELETE FROM review_requests
+         WHERE status = 'done' AND handled_at < now() - make_interval(months => $1)",
+    )
+    .bind(REVIEW_REQUEST_RETENTION_MONTHS)
+    .execute(&mut *tx)
+    .await?
+    .rows_affected() as i64;
 
     report.expired_tracking_tokens =
         sqlx::query("DELETE FROM tracking_tokens WHERE expires_at < now()")
@@ -249,6 +291,7 @@ impl JobHandler for PurgeHandler {
                 reviewed_reports = report.reviewed_reports,
                 tracking_tokens = report.tracking_tokens,
                 expired_tracking_tokens = report.expired_tracking_tokens,
+                review_requests = report.review_requests,
                 rate_limit_salts = report.rate_limit_salts,
                 rate_limit_counters = report.rate_limit_counters,
                 jobs = report.jobs,
@@ -518,6 +561,48 @@ mod tests {
             }
         }
         assert_eq!(run(&pool).await.unwrap(), PurgeReport::default());
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn pending_human_reviews_hold_the_purge(pool: PgPool) {
+        let waiting = rejected_idea(&pool, 40).await;
+        let handled = rejected_idea(&pool, 40).await;
+        sqlx::query(
+            "INSERT INTO review_requests (target_kind, target_id, message, status, handled_at)
+             VALUES ('idea', $1, 'Merci de relire.', 'pending', NULL),
+                    ('idea', $2, NULL, 'done', now() - interval '1 day'),
+                    ('report', gen_random_uuid(), NULL, 'done', now() - interval '13 months')",
+        )
+        .bind(waiting)
+        .bind(handled)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+        let report = run(&pool).await.unwrap();
+        assert_eq!(report.ideas, 1);
+        // The request of the purged idea and the old handled one.
+        assert_eq!(report.review_requests, 2);
+        let statuses: Vec<(Uuid, String)> =
+            sqlx::query_as("SELECT id, status FROM ideas ORDER BY created_at, id")
+                .fetch_all(&pool)
+                .await
+                .unwrap();
+        for (id, status) in statuses {
+            assert_eq!(status, if id == waiting { "rejected" } else { "purged" });
+        }
+        let (left,): (i64,) = sqlx::query_as("SELECT count(*) FROM review_requests")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(left, 1);
+
+        // Once handled, the text goes at the next run.
+        sqlx::query("UPDATE review_requests SET status = 'done', handled_at = now()")
+            .execute(&pool)
+            .await
+            .unwrap();
+        assert_eq!(run(&pool).await.unwrap().ideas, 1);
     }
 
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]

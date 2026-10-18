@@ -149,6 +149,63 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/track": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** State of the idea, contribution or report behind a tracking token. */
+        post: operations["track"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/track/delete": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Deletes the text at once at its author's request (with what refers to it; see
+         *     `db::tracked`). Idempotent: a second call confirms the deletion.
+         */
+        post: operations["deleteTracked"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/track/review-request": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Asks for a human review of an automated decision against the text (refusal or masking),
+         *     queued for the administrator. One request per text.
+         */
+        post: operations["requestHumanReview"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -200,6 +257,14 @@ export interface components {
          * @enum {string}
          */
         ContributionSubmissionKind: "Improvement" | "Objection";
+        /** @description Confirmation of a deletion. */
+        DeletionResponse: {
+            /**
+             * @description Always `deleted`.
+             * @example deleted
+             */
+            status: string;
+        };
         /** @description Body of every error response. */
         ErrorBody: {
             error: components["schemas"]["ErrorDetail"];
@@ -268,6 +333,25 @@ export interface components {
             /** @description Solution of the ALTCHA widget (base64), accepted once. */
             altcha: string;
         };
+        /**
+         * @description Conclusion of the AI review of the reports of an idea (§5.6).
+         * @enum {string}
+         */
+        ReviewOutcome: "Maintain" | "Update" | "Hide";
+        /** @description Body of a human review request. */
+        ReviewRequestBody: {
+            token: string;
+            /**
+             * @description Optional message for the administrator, 1 000 characters at most (personal data
+             *     masked).
+             */
+            message?: string | null;
+        };
+        /**
+         * @description State of a human review requested by an author (§7.1).
+         * @enum {string}
+         */
+        ReviewRequestStatus: "Pending" | "Done";
         /** @description Rule at stake in a decision, as sent to the author. */
         RuleReference: {
             /**
@@ -330,6 +414,49 @@ export interface components {
             reason_message: string | null;
             statement: components["schemas"]["StatementOfReasons"] | null;
         };
+        /**
+         * @description Kind of entity screened by the decision model or reachable through a tracking link.
+         * @enum {string}
+         */
+        TargetKind: "Idea" | "Contribution" | "Report";
+        /** @description Published idea concerned by the tracked text. */
+        TrackedIdea: {
+            slug: string;
+            title: string;
+        };
+        /** @description What the tracking page shows. */
+        TrackedItem: {
+            kind: components["schemas"]["TargetKind"];
+            /**
+             * @description Status of the text (`domain::status`: `submitted`, `second_opinion`, `accepted`,
+             *     `published`, `rejected`…), or `deleted` once erased by its author.
+             * @example accepted
+             */
+            status: string;
+            /**
+             * Format: date
+             * @description Day of the submission (Europe/Paris).
+             */
+            submitted_on: string;
+            idea: components["schemas"]["TrackedIdea"] | null;
+            decision: components["schemas"]["StatementOfReasons"] | null;
+            report_outcome: components["schemas"]["ReviewOutcome"] | null;
+            review_request: components["schemas"]["TrackedReviewRequest"] | null;
+        };
+        /** @description Human review requested by the author. */
+        TrackedReviewRequest: {
+            /**
+             * Format: date
+             * @description Day of the request (Europe/Paris).
+             */
+            requested_on: string;
+            status: components["schemas"]["ReviewRequestStatus"];
+        };
+        /** @description Body of the tracking requests. */
+        TrackingRequest: {
+            /** @description Tracking token (43 base64url characters), from the fragment of the tracking link. */
+            token: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -342,6 +469,7 @@ export type SchemaAdminSession = components['schemas']['AdminSession'];
 export type SchemaAltchaChallenge = components['schemas']['AltchaChallenge'];
 export type SchemaContributionSubmission = components['schemas']['ContributionSubmission'];
 export type SchemaContributionSubmissionKind = components['schemas']['ContributionSubmissionKind'];
+export type SchemaDeletionResponse = components['schemas']['DeletionResponse'];
 export type SchemaErrorBody = components['schemas']['ErrorBody'];
 export type SchemaErrorDetail = components['schemas']['ErrorDetail'];
 export type SchemaHealthResponse = components['schemas']['HealthResponse'];
@@ -349,9 +477,17 @@ export type SchemaIdeaSubmission = components['schemas']['IdeaSubmission'];
 export type SchemaMeasure = components['schemas']['Measure'];
 export type SchemaReportReason = components['schemas']['ReportReason'];
 export type SchemaReportSubmission = components['schemas']['ReportSubmission'];
+export type SchemaReviewOutcome = components['schemas']['ReviewOutcome'];
+export type SchemaReviewRequestBody = components['schemas']['ReviewRequestBody'];
+export type SchemaReviewRequestStatus = components['schemas']['ReviewRequestStatus'];
 export type SchemaRuleReference = components['schemas']['RuleReference'];
 export type SchemaStatementOfReasons = components['schemas']['StatementOfReasons'];
 export type SchemaSubmissionResponse = components['schemas']['SubmissionResponse'];
+export type SchemaTargetKind = components['schemas']['TargetKind'];
+export type SchemaTrackedIdea = components['schemas']['TrackedIdea'];
+export type SchemaTrackedItem = components['schemas']['TrackedItem'];
+export type SchemaTrackedReviewRequest = components['schemas']['TrackedReviewRequest'];
+export type SchemaTrackingRequest = components['schemas']['TrackingRequest'];
 export type $defs = Record<string, never>;
 export interface operations {
     getAdminSession: {
@@ -667,6 +803,168 @@ export interface operations {
             };
             /** @description Base de données injoignable. */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    track: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrackingRequest"];
+            };
+        };
+        responses: {
+            /** @description État du texte suivi. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackedItem"];
+                };
+            };
+            /** @description Jeton inconnu, expiré ou mal formé (`tracking_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Corps invalide. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Limite de requêtes atteinte (`rate_limited`). */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    deleteTracked: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["TrackingRequest"];
+            };
+        };
+        responses: {
+            /** @description Texte supprimé. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["DeletionResponse"];
+                };
+            };
+            /** @description Jeton inconnu, expiré ou mal formé (`tracking_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Corps invalide. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Limite de requêtes atteinte (`rate_limited`). */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    requestHumanReview: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["ReviewRequestBody"];
+            };
+        };
+        responses: {
+            /** @description Demande enregistrée. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TrackedReviewRequest"];
+                };
+            };
+            /** @description Jeton inconnu, expiré ou mal formé (`tracking_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Aucune décision automatique à réexaminer (`review_not_available`) ou demande déjà faite (`review_already_requested`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Message invalide. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Limite de requêtes atteinte (`rate_limited`). */
+            429: {
                 headers: {
                     [name: string]: unknown;
                 };

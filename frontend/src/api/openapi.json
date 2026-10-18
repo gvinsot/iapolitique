@@ -391,6 +391,199 @@
           }
         }
       }
+    },
+    "/api/track": {
+      "post": {
+        "tags": [
+          "tracking"
+        ],
+        "summary": "State of the idea, contribution or report behind a tracking token.",
+        "operationId": "track",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrackingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "État du texte suivi.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackedItem"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Jeton inconnu, expiré ou mal formé (`tracking_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Corps invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requêtes atteinte (`rate_limited`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/track/delete": {
+      "post": {
+        "tags": [
+          "tracking"
+        ],
+        "summary": "Deletes the text at once at its author's request (with what refers to it; see\n`db::tracked`). Idempotent: a second call confirms the deletion.",
+        "operationId": "deleteTracked",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/TrackingRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Texte supprimé.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/DeletionResponse"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Jeton inconnu, expiré ou mal formé (`tracking_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Corps invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requêtes atteinte (`rate_limited`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/track/review-request": {
+      "post": {
+        "tags": [
+          "tracking"
+        ],
+        "summary": "Asks for a human review of an automated decision against the text (refusal or masking),\nqueued for the administrator. One request per text.",
+        "operationId": "requestHumanReview",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ReviewRequestBody"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Demande enregistrée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TrackedReviewRequest"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Jeton inconnu, expiré ou mal formé (`tracking_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Aucune décision automatique à réexaminer (`review_not_available`) ou demande déjà faite (`review_already_requested`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Message invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite de requêtes atteinte (`rate_limited`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
     }
   },
   "components": {
@@ -495,6 +688,20 @@
           "Improvement",
           "Objection"
         ]
+      },
+      "DeletionResponse": {
+        "type": "object",
+        "description": "Confirmation of a deletion.",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Always `deleted`.",
+            "example": "deleted"
+          }
+        }
       },
       "ErrorBody": {
         "type": "object",
@@ -650,6 +857,43 @@
         },
         "additionalProperties": false
       },
+      "ReviewOutcome": {
+        "type": "string",
+        "description": "Conclusion of the AI review of the reports of an idea (§5.6).",
+        "enum": [
+          "Maintain",
+          "Update",
+          "Hide"
+        ]
+      },
+      "ReviewRequestBody": {
+        "type": "object",
+        "description": "Body of a human review request.",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string"
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Optional message for the administrator, 1 000 characters at most (personal data\nmasked)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "ReviewRequestStatus": {
+        "type": "string",
+        "description": "State of a human review requested by an author (§7.1).",
+        "enum": [
+          "Pending",
+          "Done"
+        ]
+      },
       "RuleReference": {
         "type": "object",
         "description": "Rule at stake in a decision, as sent to the author.",
@@ -774,6 +1018,134 @@
             ]
           }
         }
+      },
+      "TargetKind": {
+        "type": "string",
+        "description": "Kind of entity screened by the decision model or reachable through a tracking link.",
+        "enum": [
+          "Idea",
+          "Contribution",
+          "Report"
+        ]
+      },
+      "TrackedIdea": {
+        "type": "object",
+        "description": "Published idea concerned by the tracked text.",
+        "required": [
+          "slug",
+          "title"
+        ],
+        "properties": {
+          "slug": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string"
+          }
+        }
+      },
+      "TrackedItem": {
+        "type": "object",
+        "description": "What the tracking page shows.",
+        "required": [
+          "kind",
+          "status",
+          "submitted_on",
+          "idea",
+          "decision",
+          "report_outcome",
+          "review_request"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/TargetKind"
+          },
+          "status": {
+            "type": "string",
+            "description": "Status of the text (`domain::status`: `submitted`, `second_opinion`, `accepted`,\n`published`, `rejected`…), or `deleted` once erased by its author.",
+            "example": "accepted"
+          },
+          "submitted_on": {
+            "type": "string",
+            "format": "date",
+            "description": "Day of the submission (Europe/Paris)."
+          },
+          "idea": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TrackedIdea",
+                "description": "Published idea: the idea itself, the idea a duplicate was merged into, or the idea\nconcerned by a contribution or a report."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StatementOfReasons",
+                "description": "Statement of reasons of an automated decision against the text (refusal, masking)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "report_outcome": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReviewOutcome",
+                "description": "Outcome of the AI review of a report."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "review_request": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TrackedReviewRequest"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "TrackedReviewRequest": {
+        "type": "object",
+        "description": "Human review requested by the author.",
+        "required": [
+          "requested_on",
+          "status"
+        ],
+        "properties": {
+          "requested_on": {
+            "type": "string",
+            "format": "date",
+            "description": "Day of the request (Europe/Paris)."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReviewRequestStatus"
+          }
+        }
+      },
+      "TrackingRequest": {
+        "type": "object",
+        "description": "Body of the tracking requests.",
+        "required": [
+          "token"
+        ],
+        "properties": {
+          "token": {
+            "type": "string",
+            "description": "Tracking token (43 base64url characters), from the fragment of the tracking link."
+          }
+        },
+        "additionalProperties": false
       }
     },
     "securitySchemes": {
@@ -796,6 +1168,10 @@
     {
       "name": "submissions",
       "description": "Dépôt d'idées, de contributions et de signalements"
+    },
+    {
+      "name": "tracking",
+      "description": "Suivi anonyme d'un envoi par son jeton"
     },
     {
       "name": "admin",

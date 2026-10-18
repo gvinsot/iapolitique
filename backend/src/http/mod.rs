@@ -27,9 +27,12 @@ pub mod health;
 pub mod middleware;
 pub mod openapi;
 pub mod submissions;
+pub mod tracking;
 
 #[cfg(test)]
 mod submission_tests;
+#[cfg(test)]
+mod tracking_tests;
 
 use admin::AdminToken;
 use client_ip::TrustedProxyHops;
@@ -84,6 +87,9 @@ pub fn public_router(state: AppState) -> Router {
             "/api/ideas/{slug}/reports",
             post(submissions::submit_report),
         )
+        .route("/api/track", post(tracking::track))
+        .route("/api/track/delete", post(tracking::delete))
+        .route("/api/track/review-request", post(tracking::request_review))
         .fallback(not_found)
         .with_state(state.clone());
     middleware::with_common_layers(router, &state.config.http)

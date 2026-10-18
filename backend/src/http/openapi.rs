@@ -16,9 +16,15 @@ use super::submissions::{
     self, ContributionSubmission, ContributionSubmissionKind, IdeaSubmission, ReportSubmission,
     SubmissionResponse,
 };
+use super::tracking::{
+    self, DeletionResponse, ReviewRequestBody, TrackedIdea, TrackedItem, TrackedReviewRequest,
+    TrackingRequest,
+};
 use crate::antispam::altcha::AltchaChallenge;
 use crate::domain::rules::RuleReference;
-use crate::domain::types::{AdminLevel, ReportReason};
+use crate::domain::types::{
+    AdminLevel, ReportReason, ReviewOutcome, ReviewRequestStatus, TargetKind,
+};
 use crate::moderation::statement::{Measure, StatementOfReasons};
 
 /// Prefix of the admin routes, removed from the spec served on the public port.
@@ -40,6 +46,9 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         submissions::submit_idea,
         submissions::submit_contribution,
         submissions::submit_report,
+        tracking::track,
+        tracking::delete,
+        tracking::request_review,
         admin::session
     ),
     components(schemas(
@@ -57,13 +66,23 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         SubmissionResponse,
         StatementOfReasons,
         Measure,
-        RuleReference
+        RuleReference,
+        TrackingRequest,
+        ReviewRequestBody,
+        TrackedItem,
+        TrackedIdea,
+        TrackedReviewRequest,
+        DeletionResponse,
+        TargetKind,
+        ReviewOutcome,
+        ReviewRequestStatus
     )),
     modifiers(&AdminSecurity),
     tags(
         (name = "system", description = "Santé du service et spécification"),
         (name = "antispam", description = "Protection anti-abus des formulaires (ALTCHA)"),
         (name = "submissions", description = "Dépôt d'idées, de contributions et de signalements"),
+        (name = "tracking", description = "Suivi anonyme d'un envoi par son jeton"),
         (name = "admin", description = "Administration (réseau local uniquement, jeton requis)")
     )
 )]
@@ -178,6 +197,9 @@ mod tests {
             "/api/ideas",
             "/api/ideas/{slug}/contributions",
             "/api/ideas/{slug}/reports",
+            "/api/track",
+            "/api/track/delete",
+            "/api/track/review-request",
             "/api/admin/session",
         ] {
             assert!(paths.contains(&path), "{path} missing");

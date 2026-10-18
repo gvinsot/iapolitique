@@ -11,7 +11,7 @@
 
 use base64::Engine as _;
 use base64::engine::general_purpose::URL_SAFE_NO_PAD;
-use chrono::{DateTime, Utc};
+use chrono::NaiveDate;
 use sha2::{Digest, Sha256};
 use sqlx::PgExecutor;
 use uuid::Uuid;
@@ -73,12 +73,18 @@ pub fn token_hash(token: &str) -> Option<TokenHash> {
     Some(Sha256::digest(token.as_bytes()).into())
 }
 
+/// Days a token survives the deletion of its text, to confirm the deletion to its author.
+pub const TOMBSTONE_DAYS: i32 = 30;
+
 /// What a token gives access to.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct TokenTarget {
     pub kind: TargetKind,
     pub id: Uuid,
-    pub created_at: DateTime<Utc>,
+    /// Day the token was issued, i.e. of the submission (Europe/Paris).
+    pub created_on: NaiveDate,
+    /// The author deleted the text: only the token remains, until its expiry.
+    pub deleted: bool,
 }
 
 /// Stores the hash of a new token.
@@ -104,24 +110,42 @@ pub async fn find<'e>(
     executor: impl PgExecutor<'e>,
     hash: &TokenHash,
 ) -> sqlx::Result<Option<TokenTarget>> {
-    let row: Option<(String, Uuid, DateTime<Utc>)> = sqlx::query_as(
-        "SELECT target_kind, target_id, created_at FROM tracking_tokens
+    let row: Option<(String, Uuid, NaiveDate, bool)> = sqlx::query_as(
+        "SELECT target_kind, target_id, (created_at AT TIME ZONE 'Europe/Paris')::date,
+                deleted_at IS NOT NULL
+         FROM tracking_tokens
          WHERE token_hash = $1 AND (expires_at IS NULL OR expires_at > now())",
     )
     .bind(&hash[..])
     .fetch_optional(executor)
     .await?;
-    row.map(|(kind, id, created_at)| {
+    row.map(|(kind, id, created_on, deleted)| {
         let kind = kind
             .parse()
             .map_err(|err: crate::domain::UnknownVariant| sqlx::Error::Decode(err.into()))?;
         Ok(TokenTarget {
             kind,
             id,
-            created_at,
+            created_on,
+            deleted,
         })
     })
     .transpose()
+}
+
+/// Turns the token into a tombstone after the deletion of its text: it confirms the deletion
+/// for [`TOMBSTONE_DAYS`] days, then the daily purge removes it.
+pub async fn mark_deleted<'e>(executor: impl PgExecutor<'e>, hash: &TokenHash) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE tracking_tokens SET deleted_at = now(),
+             expires_at = now() + make_interval(days => $2)
+         WHERE token_hash = $1",
+    )
+    .bind(&hash[..])
+    .bind(TOMBSTONE_DAYS)
+    .execute(executor)
+    .await
+    .map(|_| ())
 }
 
 #[cfg(test)]
@@ -188,7 +212,12 @@ mod tests {
             .await
             .unwrap()
             .unwrap();
-        assert_eq!((found.kind, found.id), (TargetKind::Contribution, target));
+        assert_eq!(
+            (found.kind, found.id, found.deleted),
+            (TargetKind::Contribution, target, false)
+        );
+        mark_deleted(&pool, &token.hash()).await.unwrap();
+        assert!(find(&pool, &token.hash()).await.unwrap().unwrap().deleted);
         let other = TrackingToken::generate();
         assert_eq!(find(&pool, &other.hash()).await.unwrap(), None);
 

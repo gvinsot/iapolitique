@@ -29,12 +29,20 @@ const PURGE_INTERVAL: Duration = Duration::from_secs(600);
 /// flood of distinct addresses).
 const MAX_CLIENTS: usize = 200_000;
 
-/// Rate-limited form.
+/// Tracking requests (`/api/track*`) per hour and per fingerprint: generous for an author who
+/// reloads the page, low enough to make token guessing and database flooding pointless.
+pub const TRACKING_PER_HOUR: u32 = 120;
+/// Tracking requests per day and per fingerprint.
+pub const TRACKING_PER_DAY: u32 = 600;
+
+/// Rate-limited action.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum RateAction {
     Idea,
     Contribution,
     Report,
+    /// Any request of the tracking page (lookup, deletion, review request).
+    Tracking,
 }
 
 /// Limits per fingerprint (`RATE_LIMIT_*`).
@@ -64,6 +72,7 @@ impl RateLimits {
             RateAction::Idea => (Some(self.ideas_per_hour), self.ideas_per_day),
             RateAction::Contribution => (None, self.contributions_per_day),
             RateAction::Report => (None, self.reports_per_day),
+            RateAction::Tracking => (Some(TRACKING_PER_HOUR), TRACKING_PER_DAY),
         }
     }
 }
@@ -108,6 +117,7 @@ impl RateLimited {
             RateAction::Idea => format!("idée{plural}"),
             RateAction::Contribution => format!("contribution{plural}"),
             RateAction::Report => format!("signalement{plural}"),
+            RateAction::Tracking => format!("opération{plural} de suivi"),
         };
         let per = match period {
             RatePeriod::Hour => "par heure",
@@ -315,6 +325,26 @@ mod tests {
         let limiter = RateLimiter::new(LIMITS);
         let start = limiter.state.lock().unwrap().salt_created;
         (limiter, start)
+    }
+
+    #[test]
+    fn tracking_has_its_own_fixed_limits() {
+        let (limiter, t0) = limiter();
+        let client = ip("198.51.100.20");
+        for _ in 0..TRACKING_PER_HOUR {
+            limiter.check_at(client, RateAction::Tracking, t0).unwrap();
+        }
+        let refused = limiter
+            .check_at(client, RateAction::Tracking, t0)
+            .unwrap_err();
+        assert_eq!(refused.period, Some(RatePeriod::Hour));
+        assert!(
+            refused
+                .message()
+                .contains("120 opérations de suivi par heure")
+        );
+        // Other forms are counted apart.
+        limiter.check_at(client, RateAction::Idea, t0).unwrap();
     }
 
     #[test]

@@ -412,6 +412,23 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
   - Un refus affiche l'exposé des motifs (DSA art. 17) : mesure prise, règle en cause (article
     de `/regles`), « décision prise automatiquement par une IA », date de purge, voies de recours
     (réexamen humain, contact, juge).
+  - Jeton : format vérifié (43 caractères base64url) avant hachage, recherche par son SHA-256
+    (clé primaire) ; jeton inconnu, expiré ou mal formé : même `404 tracking_not_found`. Les
+    réponses ne contiennent aucun identifiant interne et portent `Cache-Control: no-store`.
+  - **Suppression** (`db::tracked`), immédiate et dans une transaction : idée → la ligne et tout
+    ce qui s'y rattache (historique, analyses, embedding, contributions et signalements
+    d'autres visiteurs, doublons fusionnés ; leurs jetons deviennent inconnus), un doublon
+    fusionné quitte aussi l'idée parente (compteur de propositions décrémenté), une idée
+    publiée ou masquée quitte le site et les exports sont régénérés (job `generate_exports`) ;
+    contribution → la ligne, et son résumé est retiré de `contributions_considered` des
+    analyses (exports régénérés si elle était intégrée) ; signalement → la ligne et les
+    coordonnées du signalant. Dans tous les cas : demande de réexamen, jobs en file et
+    explications de second avis effacés ; les scores du modèle de décision restent, sans
+    texte. Le jeton de l'auteur devient une pierre tombale (`status: deleted`) pendant 30 jours.
+  - **Réexamen humain** : possible une fois par texte, seulement contre une décision
+    automatique (refus ou masquage) ; message facultatif (1 000 caractères, masqué), table
+    `review_requests` (`pending` puis `done` par l'admin). Tant qu'il est en attente, le texte
+    refusé n'est pas purgé (`purge_on` vaut `null`).
 - Logs applicatifs : jamais d'IP, de jeton, d'en-têtes d'identification ni de texte d'idée
   (seulement des identifiants internes).
 
@@ -434,6 +451,8 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
   20 signalements / jour par empreinte. Fenêtres fixes ouvertes par la première requête
   comptée ; une IPv6 est comptée par préfixe /64 ; un refus répond `429` (`rate_limited`,
   message en français, `Retry-After`) et n'est pas compté.
+- Suivi (`/api/track*`, toutes routes confondues) : 120 requêtes / heure et 600 / jour par
+  empreinte (constantes `TRACKING_PER_HOUR` / `TRACKING_PER_DAY` de `antispam/rate_limit.rs`).
 - Le WAF et le rate limit global de Traefik (`global@file`) s'appliquent en plus.
 
 ### 7.3 Rétention
@@ -445,7 +464,8 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
 - Contenus masqués (`hidden`) : texte purgé après 12 mois.
 - Signalements : nom et e-mail facultatifs du signalant effacés 6 mois après le signalement ;
   précision et jeton d'un signalement traité (`reviewed`) effacés 6 mois après la revue.
-- Contribution supprimée par son auteur : effacement immédiat.
+- Contribution supprimée par son auteur : effacement immédiat (§7.1).
+- Demandes de réexamen humain : supprimées avec leur texte, et un an après leur traitement.
 - Job de purge quotidien dans le worker, testé.
 
 ### 7.4 Export
@@ -713,9 +733,9 @@ API publique (port 8080) :
 | GET | `/api/health`, `/api/ready` | vivacité, base joignable |
 | GET | `/api/altcha/challenge` | défi proof-of-work |
 | POST | `/api/ideas` | dépôt d'une idée `{ text, admin_level?, territory?, accept_licence, accept_publication, altcha }` → `201 { status, tracking_token, reason_code, reason_message, statement }` (`statement` : exposé des motifs d'un refus `{ measure, reason_code, reason_message, rule: { article, title, url }, automated, second_opinion, decided_on, purge_on }`) ; erreurs `consent_required`, `altcha_*` (400), `text_*`, `field_too_long`, `invalid_body` (422), `rate_limited` (429) |
-| POST | `/api/track` | suivi d'une idée, contribution ou signalement (corps `{ "token" }`, jamais dans l'URL) |
-| POST | `/api/track/delete` | suppression par l'auteur (corps `{ "token" }`) |
-| POST | `/api/track/review-request` | demande de réexamen humain (corps `{ "token", "message"? }`) |
+| POST | `/api/track` | suivi d'une idée, contribution ou signalement (corps `{ "token" }`, jamais dans l'URL) → `200 { kind, status, submitted_on, idea: { slug, title }?, decision: exposé des motifs?, report_outcome?, review_request: { requested_on, status }? }` (`status` : statut du §5.2 ou `deleted`) |
+| POST | `/api/track/delete` | suppression par l'auteur (corps `{ "token" }`) → `200 { status: "deleted" }`, idempotent |
+| POST | `/api/track/review-request` | demande de réexamen humain (corps `{ "token", "message"? }`) → `201 { requested_on, status: "pending" }` ; `409 review_not_available` / `review_already_requested` |
 | GET | `/api/legal` | coordonnées de l'éditeur (`LEGAL_*`) et versions/dates des pages légales et des CGU |
 | GET | `/api/ideas` | liste publiée : `sort` (`score`, `gain`, `feasibility`, `delay`, `recent`), filtres `admin_level`, `category`, `kind`, `territory`, `q`, pagination `page`/`per_page` |
 | GET | `/api/ideas/{slug}` | détail : idée, analyse courante, contributions intégrées, compteur de propositions |

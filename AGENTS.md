@@ -395,7 +395,10 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
 ### 7.2 Anti-abus
 
 - **ALTCHA** (proof-of-work auto-hébergé, clé `ALTCHA_HMAC_KEY`) sur dépôt, contribution et
-  signalement. Aucun captcha tiers.
+  signalement. Aucun captcha tiers. Protocole ALTCHA v1 (widget `altcha` 2.x) : défi
+  `GET /api/altcha/challenge` (SHA-256, `maxnumber` 100 000, valable 20 min, expiration signée
+  dans le sel) ; la solution (base64 du widget) n'est acceptée qu'une fois, les signatures
+  utilisées restant en mémoire jusqu'à leur expiration.
 - **Rate limit** applicatif par `HMAC(sel_du_jour, ip)` : le sel est aléatoire, gardé **en
   mémoire uniquement** (jamais en base, sur disque, dans un log ou une sauvegarde), renouvelé
   toutes les 24 h puis détruit ; les compteurs vivent aussi en mémoire et expirent en 24 h au

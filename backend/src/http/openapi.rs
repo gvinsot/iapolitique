@@ -9,8 +9,10 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use super::admin::{self, AdminSession};
+use super::antispam;
 use super::error::{ErrorBody, ErrorDetail};
 use super::health::{self, HealthResponse};
+use crate::antispam::altcha::AltchaChallenge;
 
 /// Prefix of the admin routes, removed from the spec served on the public port.
 pub const ADMIN_PREFIX: &str = "/api/admin";
@@ -23,11 +25,18 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
                        d'idées pour réduire les dépenses ou augmenter les recettes publiques.",
         license(name = "MIT")
     ),
-    paths(health::health, health::ready, openapi_json, admin::session),
-    components(schemas(ErrorBody, ErrorDetail, HealthResponse, AdminSession)),
+    paths(
+        health::health,
+        health::ready,
+        openapi_json,
+        antispam::altcha_challenge,
+        admin::session
+    ),
+    components(schemas(ErrorBody, ErrorDetail, HealthResponse, AdminSession, AltchaChallenge)),
     modifiers(&AdminSecurity),
     tags(
         (name = "system", description = "Santé du service et spécification"),
+        (name = "antispam", description = "Protection anti-abus des formulaires (ALTCHA)"),
         (name = "admin", description = "Administration (réseau local uniquement, jeton requis)")
     )
 )]
@@ -138,6 +147,7 @@ mod tests {
             "/api/health",
             "/api/ready",
             "/api/openapi.json",
+            "/api/altcha/challenge",
             "/api/admin/session",
         ] {
             assert!(paths.contains(&path), "{path} missing");

@@ -10,16 +10,20 @@ description = "Backend of iapolitique: API, worker and migrations"
 [dependencies]
 anyhow = "1"
 axum = "0.8"
+base64 = "0.23"
 chrono = { version = "0.4", default-features = false, features = ["std", "clock", "serde"] }
 clap = { version = "4", features = ["derive", "env"] }
+hmac = "0.13"
 indexmap = { version = "2", features = ["serde"] }
 jsonschema = { version = "0.59", default-features = false }
+rand = "0.10"
 regex = "1"
 reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "http2"] }
 rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 serde = { version = "1", features = ["derive"] }
 serde-saphyr = { version = "2", default-features = false, features = ["deserialize"] }
 serde_json = "1"
+sha2 = "0.11"
 sqlx = { version = "0.9", default-features = false, features = ["runtime-tokio", "tls-rustls-ring-webpki", "postgres", "derive", "macros", "migrate", "json", "uuid", "chrono"] }
 thiserror = "2"
 tokio = { version = "1", features = ["macros", "rt-multi-thread", "signal", "time", "net", "sync"] }

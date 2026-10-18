@@ -45,6 +45,27 @@
         ]
       }
     },
+    "/api/altcha/challenge": {
+      "get": {
+        "tags": [
+          "antispam"
+        ],
+        "summary": "A new ALTCHA proof-of-work challenge, to solve before submitting a form.",
+        "operationId": "getAltchaChallenge",
+        "responses": {
+          "200": {
+            "description": "Défi à résoudre par le widget ALTCHA (valable 20 minutes).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AltchaChallenge"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "tags": [
@@ -130,6 +151,42 @@
           }
         }
       },
+      "AltchaChallenge": {
+        "type": "object",
+        "description": "Challenge sent to the widget (`GET /api/altcha/challenge`).",
+        "required": [
+          "algorithm",
+          "challenge",
+          "maxnumber",
+          "salt",
+          "signature"
+        ],
+        "properties": {
+          "algorithm": {
+            "type": "string",
+            "description": "Always `SHA-256`.",
+            "example": "SHA-256"
+          },
+          "challenge": {
+            "type": "string",
+            "description": "Hex SHA-256 of `salt` followed by the secret number."
+          },
+          "maxnumber": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Upper bound of the secret number.",
+            "minimum": 0
+          },
+          "salt": {
+            "type": "string",
+            "description": "Random salt with its signed expiry: `<hex>?expires=<unix seconds>&`."
+          },
+          "signature": {
+            "type": "string",
+            "description": "Hex HMAC-SHA-256 of `challenge`."
+          }
+        }
+      },
       "ErrorBody": {
         "type": "object",
         "description": "Body of every error response.",
@@ -186,6 +243,10 @@
     {
       "name": "system",
       "description": "Santé du service et spécification"
+    },
+    {
+      "name": "antispam",
+      "description": "Protection anti-abus des formulaires (ALTCHA)"
     },
     {
       "name": "admin",

@@ -13,9 +13,11 @@ use sqlx::PgPool;
 
 use crate::ai::decision::Screener;
 use crate::ai::prompts::Prompts;
+use crate::antispam::altcha::Altcha;
 use crate::config::{Config, Secret};
 
 pub mod admin;
+pub mod antispam;
 pub mod client_ip;
 pub mod error;
 pub mod extract;
@@ -36,6 +38,8 @@ pub struct AppState {
     pub prompts: Arc<Prompts>,
     /// Synchronous screening by the decision model (§5.3).
     pub screener: Screener,
+    /// ALTCHA proof of work of the public forms (§7.2).
+    pub altcha: Arc<Altcha>,
 }
 
 impl FromRef<AppState> for TrustedProxyHops {
@@ -59,6 +63,7 @@ fn system_routes() -> Router<AppState> {
 pub fn public_router(state: AppState) -> Router {
     let router = system_routes()
         .route("/api/openapi.json", get(openapi::openapi_json))
+        .route("/api/altcha/challenge", get(antispam::altcha_challenge))
         .fallback(not_found)
         .with_state(state.clone());
     middleware::with_common_layers(router, &state.config.http)
@@ -110,6 +115,7 @@ mod tests {
             config: Arc::new(config),
             prompts,
             screener,
+            altcha: Arc::new(Altcha::new(Secret::new(TOKEN))),
         }
     }
 
@@ -158,6 +164,33 @@ mod tests {
         let (status, body) = call(&app, get_req("/api/ready")).await;
         assert_eq!(status, StatusCode::SERVICE_UNAVAILABLE);
         assert_eq!(body["error"]["code"], "database_unavailable");
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn altcha_challenges_are_served_uncached(pool: PgPool) {
+        let state = state(pool);
+        let app = public_router(state.clone());
+        let response = app
+            .clone()
+            .oneshot(get_req("/api/altcha/challenge"))
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+        let bytes = response.into_body().collect().await.unwrap().to_bytes();
+        let challenge: crate::antispam::altcha::AltchaChallenge =
+            serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(challenge.algorithm, "SHA-256");
+        assert_eq!(challenge.maxnumber, crate::antispam::altcha::MAX_NUMBER);
+        // Solvable and verifiable once with the same key.
+        let payload = crate::antispam::altcha::tests::solve(&challenge);
+        state.altcha.verify(&payload).unwrap();
+        assert!(state.altcha.verify(&payload).is_err());
+
+        // Not served on the admin port.
+        let admin = admin_router(state, Secret::new(TOKEN));
+        let (status, _) = call(&admin, get_req("/api/altcha/challenge")).await;
+        assert_eq!(status, StatusCode::NOT_FOUND);
     }
 
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]

@@ -21,6 +21,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/altcha/challenge": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** A new ALTCHA proof-of-work challenge, to solve before submitting a form. */
+        get: operations["getAltchaChallenge"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/health": {
         parameters: {
             query?: never;
@@ -79,6 +96,25 @@ export interface components {
         AdminSession: {
             authenticated: boolean;
         };
+        /** @description Challenge sent to the widget (`GET /api/altcha/challenge`). */
+        AltchaChallenge: {
+            /**
+             * @description Always `SHA-256`.
+             * @example SHA-256
+             */
+            algorithm: string;
+            /** @description Hex SHA-256 of `salt` followed by the secret number. */
+            challenge: string;
+            /**
+             * Format: int64
+             * @description Upper bound of the secret number.
+             */
+            maxnumber: number;
+            /** @description Random salt with its signed expiry: `<hex>?expires=<unix seconds>&`. */
+            salt: string;
+            /** @description Hex HMAC-SHA-256 of `challenge`. */
+            signature: string;
+        };
         /** @description Body of every error response. */
         ErrorBody: {
             error: components["schemas"]["ErrorDetail"];
@@ -107,6 +143,7 @@ export interface components {
     pathItems: never;
 }
 export type SchemaAdminSession = components['schemas']['AdminSession'];
+export type SchemaAltchaChallenge = components['schemas']['AltchaChallenge'];
 export type SchemaErrorBody = components['schemas']['ErrorBody'];
 export type SchemaErrorDetail = components['schemas']['ErrorDetail'];
 export type SchemaHealthResponse = components['schemas']['HealthResponse'];
@@ -137,6 +174,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getAltchaChallenge: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Défi à résoudre par le widget ALTCHA (valable 20 minutes). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AltchaChallenge"];
                 };
             };
         };

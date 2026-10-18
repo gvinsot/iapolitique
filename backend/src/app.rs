@@ -11,6 +11,7 @@ use tokio::sync::watch;
 use crate::ai::decision::{DecisionClient, Screener};
 use crate::ai::mistral::{MistralClient, MistralError};
 use crate::ai::prompts::Prompts;
+use crate::antispam::altcha::Altcha;
 use crate::config::Config;
 use crate::db;
 use crate::http::{self, AppState};
@@ -147,6 +148,13 @@ pub async fn run_api(config: Config) -> anyhow::Result<()> {
                 .context("cannot build the decision service client")?,
             Arc::clone(&prompts),
         ),
+        altcha: Arc::new(Altcha::new(
+            config
+                .antispam
+                .altcha_hmac_key
+                .clone()
+                .context("ALTCHA_HMAC_KEY is required by the api")?,
+        )),
         prompts,
     };
     let public = http::public_router(state.clone());

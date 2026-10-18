@@ -213,18 +213,35 @@ text_enum! {
 }
 
 text_enum! {
-    /// Format of a generated open data export (§7.4).
+    /// File of a generated open data export (§7.4).
     pub enum ExportFormat {
+        /// `ideas.json`: metadata, licence and published ideas.
         Json => "json",
+        /// `ideas.csv`: one row per published idea.
         Csv => "csv",
+        /// `LICENSE`: text of the Licence Ouverte 2.0.
+        License => "license",
+        /// `metadata.json`: licence, producer, notices, file descriptions.
+        Metadata => "metadata",
     }
 }
 
 impl ExportFormat {
     pub const fn content_type(self) -> &'static str {
         match self {
-            Self::Json => "application/json; charset=utf-8",
+            Self::Json | Self::Metadata => "application/json; charset=utf-8",
             Self::Csv => "text/csv; charset=utf-8",
+            Self::License => "text/plain; charset=utf-8",
+        }
+    }
+
+    /// Fixed name of the file (download name prefix, never built from user input, §14.1).
+    pub const fn file_name(self) -> &'static str {
+        match self {
+            Self::Json => "ideas.json",
+            Self::Csv => "ideas.csv",
+            Self::License => "LICENSE",
+            Self::Metadata => "metadata.json",
         }
     }
 }
@@ -281,6 +298,12 @@ mod tests {
     #[test]
     fn export_content_types() {
         assert!(ExportFormat::Csv.content_type().starts_with("text/csv"));
+        assert!(
+            ExportFormat::License
+                .content_type()
+                .starts_with("text/plain")
+        );
+        assert_eq!(ExportFormat::Metadata.file_name(), "metadata.json");
         assert!(
             ExportFormat::Json
                 .content_type()

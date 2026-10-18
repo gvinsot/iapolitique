@@ -117,6 +117,7 @@ iapolitique/
 │   ├── Cargo.toml
 │   ├── Dockerfile          # stages: build, runtime (contrôles CI : devops/Dockerfile.test)
 │   ├── migrations/         # migrations sqlx (NNNN_description.sql)
+│   ├── assets/             # fichiers embarqués (texte officiel de la Licence Ouverte 2.0)
 │   └── src/
 │       ├── main.rs         # sous-commandes: api | worker | migrate | openapi | healthcheck
 │       ├── config.rs       # lecture env + /run/secrets
@@ -528,6 +529,21 @@ Pas d'API publique documentée au MVP.
 - **Exclus** : idées refusées, masquées ou en attente, jetons et hash, journaux de filtrage,
   signalements, coordonnées, horodatages fins (dates au jour près).
 - Régénéré chaque nuit et après tout masquage ou suppression ; fichiers datés et versionnés.
+- Mise en œuvre (`jobs/exports.rs`, `db/exports.rs`) : job `generate_exports` chaque nuit à
+  04:15 (Europe/Paris) et 2 min après toute publication, ré-analyse, masquage ou suppression
+  (clé `generate_exports`). Une génération écrit quatre lignes dans `exports` (même
+  `generation_id`, `export_schema_version` = `EXPORT_SCHEMA_VERSION`, actuellement `1.0`) :
+  `json` (`ideas.json` : `metadata`, `licence_text`, `ideas`), `csv` (`ideas.csv`, colonnes
+  fixes, listes jointes par « | »), `license` (texte officiel Etalab embarqué depuis
+  `backend/assets/licence-ouverte-2.0.md`) et `metadata` (`metadata.json`). Par idée :
+  `slug`, `url` (`https://{TRAEFIK_HOST}/idees/{slug}`, `iapolitique.fr` par défaut),
+  `date_publication`, `date_derniere_mise_a_jour`, `proposal_count`, `contribution_count`,
+  `original` (`text` masqué, `source_type`, `attribution`, `personal_data_masked`), `analysis`
+  (champs du §6.2 sauf les identifiants de contributions, marquage IA, versions ; sources
+  réduites à `id`, `title`, `publisher`, `url`, `consulted_on`), `score` (composantes,
+  « score calculé par algorithme »), `contributions` (résumés neutres intégrés). Aucun
+  identifiant interne. Les exports sont servis depuis la base (dernière génération par
+  format) ; la purge garde 7 jours d'exports remplacés.
 - Page `/licence` : licence, compatibilité CC BY 4.0, mention d'attribution prête à copier
   (« Source : iapolitique.fr – Propositions citoyennes et analyses générées par IA (Mistral AI),
   mise à jour du AAAA-MM-JJ – Licence Ouverte 2.0 »), avertissement IA.
@@ -785,7 +801,7 @@ API publique (port 8080) :
 | GET | `/api/methodology` | prompts, grilles, taxonomie, formule de score et leurs versions |
 | GET | `/api/taxonomy` | niveaux, catégories, publics, motifs |
 | GET | `/api/stats` | compteurs publics |
-| GET | `/api/exports/ideas.json`, `/api/exports/ideas.csv` | exports open data |
+| GET | `/api/exports/ideas.json`, `/api/exports/ideas.csv`, `/api/exports/LICENSE`, `/api/exports/metadata.json` | exports open data : dernière génération de chaque format de la table `exports` (`json`, `csv`, `license`, `metadata`, §7.4), `Content-Type` de `ExportFormat::content_type`, nom de téléchargement fixe daté |
 | GET | `/api/openapi.json` | spec OpenAPI |
 
 API admin (port 8081, `Authorization: Bearer $ADMIN_API_TOKEN`), sous `/api/admin/…` :

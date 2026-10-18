@@ -15,6 +15,7 @@ use crate::config::DatabaseConfig;
 pub mod ai_calls;
 pub mod analyses;
 pub mod embeddings;
+pub mod exports;
 pub mod ideas;
 pub mod screenings;
 pub mod settings;

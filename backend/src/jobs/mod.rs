@@ -7,6 +7,7 @@
 //! - [`moderation`]: screening retries and Mistral second opinions.
 //! - [`analysis`]: Mistral analysis (research, structuring, score) and publication of ideas.
 //! - [`dedup`]: duplicate detection of accepted ideas (embeddings, pgvector).
+//! - [`exports`]: open data exports (JSON, CSV, licence, metadata), nightly and after changes.
 //! - [`guard`]: API key and daily budget checks of the handlers that call Mistral.
 //! - [`pipeline`]: payloads, dedupe keys and constructors of the submission pipeline jobs.
 //! - [`reports`]: grouped AI review of the reports of an idea, escalation of serious content.
@@ -23,6 +24,7 @@ use crate::domain::text_enum;
 
 pub mod analysis;
 pub mod dedup;
+pub mod exports;
 pub mod guard;
 pub mod health;
 pub mod moderation;

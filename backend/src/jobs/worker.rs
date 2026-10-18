@@ -16,6 +16,7 @@ use tokio::time::Instant;
 
 use super::analysis::AnalyzeHandler;
 use super::dedup::DedupHandler;
+use super::exports::ExportsHandler;
 use super::health::Liveness;
 use super::moderation::{ScreenHandler, SecondOpinionHandler};
 use super::purge::PurgeHandler;
@@ -124,6 +125,7 @@ pub fn default_registry() -> Registry {
         .register(DedupHandler)
         .register(AnalyzeHandler)
         .register(ReviewReportsHandler)
+        .register(ExportsHandler)
         .register(PurgeHandler);
     registry
 }
@@ -450,6 +452,7 @@ mod tests {
                 JobKind::ScreenContribution,
                 JobKind::ScreenReport,
                 JobKind::ReviewReports,
+                JobKind::GenerateExports,
                 JobKind::Purge
             ]
         );
@@ -459,14 +462,18 @@ mod tests {
                 JobKind::ScreenIdea,
                 JobKind::ScreenContribution,
                 JobKind::ScreenReport,
+                JobKind::GenerateExports,
                 JobKind::Purge
             ]
         );
-        assert_eq!(registry.claimable_kinds(true).len(), 8);
-        assert_eq!(registry.schedules(), vec![crate::jobs::purge::SCHEDULE]);
+        assert_eq!(registry.claimable_kinds(true).len(), 9);
+        assert_eq!(
+            registry.schedules(),
+            vec![crate::jobs::exports::SCHEDULE, crate::jobs::purge::SCHEDULE]
+        );
         assert_eq!(
             format!("{registry:?}"),
-            "[ScreenIdea, SecondOpinion, DedupIdea, AnalyzeIdea, ScreenContribution, ScreenReport, ReviewReports, Purge]"
+            "[ScreenIdea, SecondOpinion, DedupIdea, AnalyzeIdea, ScreenContribution, ScreenReport, ReviewReports, GenerateExports, Purge]"
         );
     }
 
@@ -667,12 +674,12 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(status, "queued");
-        // The purge schedule was created at startup.
+        // The purge and export schedules were created at startup.
         let (schedules,): (i64,) = sqlx::query_as("SELECT count(*) FROM job_schedules")
             .fetch_one(&pool)
             .await
             .unwrap();
-        assert_eq!(schedules, 1);
+        assert_eq!(schedules, 2);
     }
 
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]

@@ -23,8 +23,11 @@ describe("HomePage ranking filters", () => {
     await user.click(await screen.findByRole("option", { name: "Commune" }));
     expect(router.state.location.search).toBe("?admin_level=commune");
 
-    await user.type(screen.getByRole("searchbox", { name: "Rechercher" }), "cantines{Enter}");
-    expect(new URLSearchParams(router.state.location.search).get("q")).toBe("cantines");
+    await user.type(screen.getByRole("searchbox", { name: "Rechercher" }), "cantines");
+    await user.type(screen.getByRole("textbox", { name: "Territoire" }), "Nantes{Enter}");
+    const params = new URLSearchParams(router.state.location.search);
+    expect(params.get("q")).toBe("cantines");
+    expect(params.get("territory")).toBe("Nantes");
 
     await user.click(screen.getByRole("button", { name: "Réinitialiser les filtres" }));
     expect(router.state.location.search).toBe("");

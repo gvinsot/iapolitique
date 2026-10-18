@@ -1,6 +1,11 @@
 import { useSearchParams } from "react-router";
 
-import { type IdeaFilters, ideaFiltersToSearchParams, parseIdeaFilters } from "@/lib/idea-filters";
+import {
+  type IdeaFilters,
+  ideaFiltersToSearchParams,
+  parseIdeaFilters,
+  patchIdeaFilters,
+} from "@/lib/idea-filters";
 
 /** Reads and writes the ranking filters in the URL query string. */
 export function useIdeaFilters() {
@@ -8,7 +13,7 @@ export function useIdeaFilters() {
   const filters = parseIdeaFilters(searchParams);
 
   const update = (patch: Partial<IdeaFilters>) => {
-    setSearchParams(ideaFiltersToSearchParams({ ...filters, ...patch }), {
+    setSearchParams(ideaFiltersToSearchParams(patchIdeaFilters(filters, patch)), {
       replace: true,
       preventScrollReset: true,
     });

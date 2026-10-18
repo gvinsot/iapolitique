@@ -16,34 +16,47 @@ import {
   defaultIdeaFilters,
   hasActiveIdeaFilters,
   IDEA_SEARCH_MAX_LENGTH,
+  IDEA_TERRITORY_MAX_LENGTH,
 } from "@/lib/idea-filters";
+import type { CategoryRef } from "@/lib/idea-model";
 import { adminLevelLabels, entriesOf, ideaKindLabels, ideaSortLabels, isKeyOf } from "@/lib/labels";
 
 /** Radix Select reserves the empty string, so "no filter" uses this sentinel value. */
 const ALL = "all";
 
-export function IdeaFiltersBar() {
+interface IdeaFiltersBarProps {
+  /** Categories of the taxonomy (GET /api/taxonomy); the category filter is hidden without. */
+  categories?: readonly CategoryRef[];
+}
+
+/** Sort and filters of the ranking (AGENTS.md §13.2), kept in the URL query string. */
+export function IdeaFiltersBar({ categories = [] }: IdeaFiltersBarProps) {
   const { filters, update } = useIdeaFilters();
   const id = useId();
 
   const onSearch = (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const value = new FormData(event.currentTarget).get("q");
-    update({ q: typeof value === "string" ? value : "" });
+    const data = new FormData(event.currentTarget);
+    const q = data.get("q");
+    const territory = data.get("territory");
+    update({
+      q: typeof q === "string" ? q : "",
+      territory: typeof territory === "string" ? territory : "",
+    });
   };
 
   return (
-    <div className="grid gap-4 rounded-lg border bg-card p-4 sm:grid-cols-2 lg:grid-cols-[2fr_1fr_1fr_1fr] lg:items-end">
+    <div className="grid gap-4 rounded-lg border bg-card p-4 sm:grid-cols-2 lg:grid-cols-4 lg:items-end">
       <form
         role="search"
         aria-label="Rechercher une idée"
         onSubmit={onSearch}
-        className="space-y-2 sm:col-span-2 lg:col-span-1"
-        // Re-initialise the field when the URL changes (reset, back button).
-        key={filters.q}
+        className="grid gap-4 sm:col-span-2 sm:grid-cols-[2fr_1fr_auto] sm:items-end lg:col-span-4"
+        // Re-initialise the fields when the URL changes (reset, back button).
+        key={`${filters.q}|${filters.territory}`}
       >
-        <Label htmlFor={`${id}-q`}>Rechercher</Label>
-        <div className="flex gap-2">
+        <div className="space-y-2">
+          <Label htmlFor={`${id}-q`}>Rechercher</Label>
           <Input
             id={`${id}-q`}
             name="q"
@@ -53,10 +66,22 @@ export function IdeaFiltersBar() {
             placeholder="Ex. : transport, énergie, fraude…"
             autoComplete="off"
           />
-          <Button type="submit" variant="secondary" size="icon" aria-label="Lancer la recherche">
-            <SearchIcon aria-hidden="true" />
-          </Button>
         </div>
+        <div className="space-y-2">
+          <Label htmlFor={`${id}-territory`}>Territoire</Label>
+          <Input
+            id={`${id}-territory`}
+            name="territory"
+            defaultValue={filters.territory}
+            maxLength={IDEA_TERRITORY_MAX_LENGTH}
+            placeholder="Nom ou code INSEE"
+            autoComplete="off"
+          />
+        </div>
+        <Button type="submit" variant="secondary">
+          <SearchIcon aria-hidden="true" />
+          Lancer la recherche
+        </Button>
       </form>
 
       <div className="space-y-2">
@@ -123,6 +148,32 @@ export function IdeaFiltersBar() {
           </SelectContent>
         </Select>
       </div>
+
+      {categories.length > 0 ? (
+        <div className="space-y-2">
+          <Label htmlFor={`${id}-category`}>Catégorie</Label>
+          <Select
+            value={filters.category ?? ALL}
+            onValueChange={(value) => {
+              update({
+                category: categories.some((category) => category.key === value) ? value : null,
+              });
+            }}
+          >
+            <SelectTrigger id={`${id}-category`} className="w-full">
+              <SelectValue />
+            </SelectTrigger>
+            <SelectContent>
+              <SelectItem value={ALL}>Toutes les catégories</SelectItem>
+              {categories.map((category) => (
+                <SelectItem key={category.key} value={category.key}>
+                  {category.label}
+                </SelectItem>
+              ))}
+            </SelectContent>
+          </Select>
+        </div>
+      ) : null}
 
       {hasActiveIdeaFilters(filters) ? (
         <div className="sm:col-span-2 lg:col-span-4">

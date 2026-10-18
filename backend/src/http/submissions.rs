@@ -248,11 +248,8 @@ pub(crate) async fn screen_and_respond(
     token: TrackingToken,
 ) -> Result<Response, ApiError> {
     let inline = state.mistral.is_some();
-    let second_opinion_at = if inline {
-        Utc::now() + FALLBACK_DELAY
-    } else {
-        Utc::now()
-    };
+    // While the api tries the second opinion inline, the fallback job waits.
+    let second_opinion_at = inline.then(|| Utc::now() + FALLBACK_DELAY);
     let mut step = moderation::screen(
         &state.pool,
         &state.screener,

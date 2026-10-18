@@ -3,8 +3,6 @@
 //! a row lock: a job about a text settled meanwhile (by the api, another job or its author's
 //! deletion) succeeds without doing anything.
 
-use chrono::Utc;
-
 use super::pipeline::{self, TargetPayload};
 use super::worker::{HandlerFuture, JobContext, JobHandler};
 use super::{Job, JobError, JobKind, JobOutcome};
@@ -54,7 +52,7 @@ impl JobHandler for ScreenHandler {
                 target,
                 Some(job.id),
                 Actor::Worker,
-                Utc::now(),
+                None,
             )
             .await
             .map_err(|err| JobError::Transient(err.to_string()))?;
@@ -248,7 +246,7 @@ mod tests {
             Target::new(TargetKind::Idea, idea),
             None,
             Actor::Api,
-            Utc::now(),
+            None,
         )
         .await
         .unwrap();

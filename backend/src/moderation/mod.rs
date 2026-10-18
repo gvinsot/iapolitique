@@ -223,7 +223,7 @@ pub(crate) async fn load_content(
 /// without details is accepted without screening (there is no visitor text to check).
 ///
 /// `second_opinion_at`: when the Mistral second opinion job of a gray zone may run (the api
-/// delays it while it tries the second opinion inline).
+/// delays it while it tries the second opinion inline); `None`: at once (database clock).
 pub async fn screen(
     pool: &PgPool,
     screener: &Screener,
@@ -231,7 +231,7 @@ pub async fn screen(
     target: Target,
     job_id: Option<i64>,
     actor: Actor,
-    second_opinion_at: DateTime<Utc>,
+    second_opinion_at: Option<DateTime<Utc>>,
 ) -> Result<Step, ModerationError> {
     let Some(content) = load_content(pool, prompts, target).await? else {
         return Ok(Step::Stale);
@@ -271,7 +271,7 @@ pub async fn apply_screening(
     target: Target,
     result: &ScreeningResult,
     actor: Actor,
-    second_opinion_at: DateTime<Utc>,
+    second_opinion_at: Option<DateTime<Utc>>,
 ) -> Result<Step, ModerationError> {
     let evaluation = &result.evaluation;
     let verdict = match evaluation.outcome {
@@ -297,7 +297,7 @@ pub async fn apply_screening(
         Stage::Screening,
         verdict,
         change,
-        Some(second_opinion_at),
+        second_opinion_at,
     )
     .await
 }
@@ -450,19 +450,20 @@ async fn follow_up(conn: &mut PgConnection, target: Target) -> sqlx::Result<()> 
 /// and per 24 hours, except for `contenu_problematique`, reviewed without delay (a queued review
 /// is then brought forward).
 async fn schedule_report_review(conn: &mut PgConnection, report_id: Uuid) -> sqlx::Result<()> {
-    let (idea_id, reason, last_review): (Uuid, String, Option<DateTime<Utc>>) = sqlx::query_as(
-        "SELECT r.idea_id, r.reason, i.last_report_review_at
-         FROM reports r JOIN ideas i ON i.id = r.idea_id WHERE r.id = $1",
-    )
-    .bind(report_id)
-    .fetch_one(&mut *conn)
-    .await?;
-    let urgent = reason == ReportReason::ProblematicContent.as_str();
-    let now = Utc::now();
-    let run_after = match last_review {
-        Some(last) if !urgent => (last + REPORT_REVIEW_INTERVAL).max(now),
-        _ => now,
-    };
+    // Times come from the database clock, like the `run_after` the queue compares them with.
+    let (idea_id, urgent, now, run_after): (Uuid, bool, DateTime<Utc>, DateTime<Utc>) =
+        sqlx::query_as(
+            "SELECT r.idea_id, r.reason = $2, now(),
+                    CASE WHEN r.reason = $2 OR i.last_report_review_at IS NULL THEN now()
+                         ELSE greatest(now(), i.last_report_review_at
+                                              + make_interval(secs => $3)) END
+             FROM reports r JOIN ideas i ON i.id = r.idea_id WHERE r.id = $1",
+        )
+        .bind(report_id)
+        .bind(ReportReason::ProblematicContent.as_str())
+        .bind(REPORT_REVIEW_INTERVAL.num_seconds() as f64)
+        .fetch_one(&mut *conn)
+        .await?;
     let enqueued = queue::enqueue(
         &mut *conn,
         &pipeline::review_reports_job(idea_id, run_after),

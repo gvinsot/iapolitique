@@ -1,6 +1,5 @@
 //! Settling rules of the moderation, against a real database and a mocked decision service.
 
-use chrono::{DateTime, Utc};
 use sqlx::PgPool;
 use uuid::Uuid;
 
@@ -39,18 +38,23 @@ async fn screen_now(app: &TestApp, target: Target) -> Step {
         target,
         None,
         Actor::Worker,
-        Utc::now(),
+        None,
     )
     .await
     .unwrap()
 }
 
-async fn job_run_after(pool: &PgPool, key: &str) -> Option<DateTime<Utc>> {
-    sqlx::query_scalar("SELECT run_after FROM jobs WHERE dedupe_key = $1 AND status = 'queued'")
-        .bind(key)
-        .fetch_optional(pool)
-        .await
-        .unwrap()
+/// Seconds before the queued job with this key is due, by the database clock (negative or
+/// zero: due).
+async fn due_in(pool: &PgPool, key: &str) -> Option<f64> {
+    sqlx::query_scalar(
+        "SELECT extract(epoch FROM run_after - now())::float8 FROM jobs
+         WHERE dedupe_key = $1 AND status = 'queued'",
+    )
+    .bind(key)
+    .fetch_optional(pool)
+    .await
+    .unwrap()
 }
 
 #[sqlx::test(migrator = "crate::db::MIGRATOR")]
@@ -110,10 +114,10 @@ async fn reports_without_details_are_accepted_without_screening(pool: PgPool) {
         .unwrap();
     assert_eq!(count, 0);
     assert!(
-        job_run_after(&pool, &format!("review_reports:{idea}"))
+        due_in(&pool, &format!("review_reports:{idea}"))
             .await
             .unwrap()
-            <= Utc::now()
+            <= 0.0
     );
 }
 
@@ -131,8 +135,7 @@ async fn report_reviews_are_grouped_per_day_except_problematic_content(pool: PgP
     .unwrap();
     let key = format!("review_reports:{idea}");
 
-    // Reviewed two hours ago: the next review waits 22 hours (the database clock may differ
-    // slightly from the test's).
+    // Reviewed two hours ago: the next review waits 22 hours.
     let first = report(
         &pool,
         idea,
@@ -144,17 +147,13 @@ async fn report_reviews_are_grouped_per_day_except_problematic_content(pool: PgP
         screen_now(&app, Target::new(TargetKind::Report, first)).await,
         Step::Accepted
     );
-    let delayed = job_run_after(&pool, &key).await.unwrap();
-    let wait = delayed - Utc::now();
-    assert!(
-        wait > chrono::Duration::hours(21)
-            && wait <= chrono::Duration::hours(22) + chrono::Duration::minutes(1),
-        "{wait}"
-    );
+    let wait = due_in(&pool, &key).await.unwrap();
+    assert!(wait > 21.0 * 3600.0 && wait <= 22.0 * 3600.0, "{wait}");
     // A second report joins the same review.
     let second = report(&pool, idea, "autre", Some("Le titre est trompeur.")).await;
     screen_now(&app, Target::new(TargetKind::Report, second)).await;
-    assert_eq!(job_run_after(&pool, &key).await.unwrap(), delayed);
+    let unchanged = due_in(&pool, &key).await.unwrap();
+    assert!((wait - unchanged).abs() < 60.0, "{wait} {unchanged}");
     // Problematic content brings the review forward.
     let urgent = report(
         &pool,
@@ -164,7 +163,7 @@ async fn report_reviews_are_grouped_per_day_except_problematic_content(pool: PgP
     )
     .await;
     screen_now(&app, Target::new(TargetKind::Report, urgent)).await;
-    assert!(job_run_after(&pool, &key).await.unwrap() <= Utc::now());
+    assert!(due_in(&pool, &key).await.unwrap() <= 0.0);
     let (jobs,): (i64,) = sqlx::query_as("SELECT count(*) FROM jobs WHERE kind = 'review_reports'")
         .fetch_one(&pool)
         .await

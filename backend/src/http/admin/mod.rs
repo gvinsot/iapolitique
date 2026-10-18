@@ -7,7 +7,9 @@
 //! - [`dashboard`]: job queue, screening rates, AI costs, pending queues;
 //! - [`jobs`]: job list and retry of dead jobs;
 //! - [`ideas`]: ideas by status with search, hide / republish, re-analysis;
-//! - [`moderation`]: reports, escalations of serious content, human review requests.
+//! - [`moderation`]: reports, escalations of serious content, human review requests;
+//! - [`screenings`]: screening decisions, labels and calibration export;
+//! - [`settings`]: screening and duplicate thresholds.
 
 use std::sync::Arc;
 
@@ -17,7 +19,7 @@ use axum::extract::{Request, State};
 use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
-use axum::routing::{get, post};
+use axum::routing::{get, post, put};
 use serde::Serialize;
 use utoipa::ToSchema;
 
@@ -29,9 +31,13 @@ pub mod dashboard;
 pub mod ideas;
 pub mod jobs;
 pub mod moderation;
+pub mod screenings;
+pub mod settings;
 
 #[cfg(test)]
 mod api_tests;
+#[cfg(test)]
+mod calibration_tests;
 #[cfg(test)]
 mod moderation_tests;
 
@@ -57,6 +63,18 @@ pub fn routes() -> Router<AppState> {
             "/review-requests/{id}/resolve",
             post(moderation::resolve_review_request),
         )
+        .route("/screenings", get(screenings::list))
+        .route("/screenings/export.jsonl", get(screenings::export))
+        .route(
+            "/screenings/{id}/label",
+            put(screenings::label).delete(screenings::unlabel),
+        )
+        .route("/settings", get(settings::get))
+        .route(
+            "/settings/screening-thresholds",
+            put(settings::update_thresholds),
+        )
+        .route("/settings/dedup-threshold", put(settings::update_dedup))
 }
 
 /// `404` with a specific code.

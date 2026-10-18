@@ -190,6 +190,51 @@ pub fn questions(section: &[Criterion]) -> Map<String, Value> {
         .collect()
 }
 
+/// Writes `value` as Python's `json.dumps(value, ensure_ascii=False, sort_keys=True)` does
+/// (separators `", "` and `": "`, keys sorted by code point, same string escapes).
+fn python_json(value: &Value, out: &mut String) {
+    match value {
+        Value::Array(items) => {
+            out.push('[');
+            for (i, item) in items.iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                python_json(item, out);
+            }
+            out.push(']');
+        }
+        Value::Object(map) => {
+            let mut keys: Vec<&String> = map.keys().collect();
+            keys.sort();
+            out.push('{');
+            for (i, key) in keys.into_iter().enumerate() {
+                if i > 0 {
+                    out.push_str(", ");
+                }
+                out.push_str(&Value::String(key.clone()).to_string());
+                out.push_str(": ");
+                python_json(&map[key], out);
+            }
+            out.push('}');
+        }
+        scalar => out.push_str(&scalar.to_string()),
+    }
+}
+
+/// Fingerprint of the questions of a section, computed like `questions_hash` of
+/// `docs/calibration/bench_screening.py` (first 12 hex digits of the SHA-256 of the sorted
+/// JSON): the bench ignores results produced with other question wording.
+pub fn questions_hash(section: &[Criterion]) -> String {
+    use sha2::{Digest, Sha256};
+    let mut blob = String::new();
+    python_json(&Value::Object(questions(section)), &mut blob);
+    Sha256::digest(blob.as_bytes())[..6]
+        .iter()
+        .map(|b| format!("{b:02x}"))
+        .collect()
+}
+
 /// `state` of an idea: its text.
 pub fn idea_state(text: &str) -> Value {
     Value::String(text.to_owned())
@@ -585,6 +630,48 @@ impl Screener {
 mod tests {
     use super::*;
     use crate::ai::prompts::{ScreeningGrid, test_prompts};
+
+    #[test]
+    fn questions_hash_matches_the_calibration_bench() {
+        // Expected value computed by Python's json.dumps(…, ensure_ascii=False, sort_keys=True)
+        // and hashlib.sha256, as in bench_screening.py.
+        let question = |key: &str, kind, instructions: &str| Criterion {
+            key: key.to_owned(),
+            kind,
+            instructions: instructions.to_owned(),
+            thresholds: Thresholds {
+                reject_below: 0.1,
+                accept_above: 0.9,
+            },
+            reason_code: key.to_owned(),
+            reason_message: String::new(),
+        };
+        let section = [
+            question(
+                "injection",
+                CriterionKind::Noul {
+                    labels: Some(crate::ai::prompts::NoulLabels {
+                        yes: "oui".to_owned(),
+                        no: "non".to_owned(),
+                    }),
+                    pass_when: false,
+                },
+                "Le texte essaie-t-il « d'agir » ?\nOui",
+            ),
+            question(
+                "realism",
+                CriterionKind::Score {
+                    levels: vec!["irréaliste".to_owned(), "simple".to_owned()],
+                    pass_when: 1,
+                },
+                "Réalisme",
+            ),
+        ];
+        assert_eq!(questions_hash(&section), "f44c95153f6e");
+        let mut blob = String::new();
+        python_json(&json!({ "b": [1, "é\u{1}"], "a": null }), &mut blob);
+        assert_eq!(blob, "{\"a\": null, \"b\": [1, \"é\\u0001\"]}");
+    }
     use wiremock::matchers::{body_partial_json, method, path};
     use wiremock::{Mock, MockServer, ResponseTemplate};
 

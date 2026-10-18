@@ -39,6 +39,19 @@ pub(crate) const ADMIN_ROUTES: &[(&str, &str)] = &[
         "POST",
         "/api/admin/review-requests/00000000-0000-0000-0000-000000000000/resolve",
     ),
+    ("GET", "/api/admin/screenings"),
+    ("GET", "/api/admin/screenings/export.jsonl"),
+    (
+        "PUT",
+        "/api/admin/screenings/00000000-0000-0000-0000-000000000000/label",
+    ),
+    (
+        "DELETE",
+        "/api/admin/screenings/00000000-0000-0000-0000-000000000000/label",
+    ),
+    ("GET", "/api/admin/settings"),
+    ("PUT", "/api/admin/settings/screening-thresholds"),
+    ("PUT", "/api/admin/settings/dedup-threshold"),
 ];
 
 #[sqlx::test(migrator = "crate::db::MIGRATOR")]

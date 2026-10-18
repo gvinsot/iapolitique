@@ -23,6 +23,14 @@ use super::admin::moderation::{
     AdminReport, AdminReportPage, AdminReportReview, AdminReviewRequest, AdminReviewRequestPage,
     AdminReviewResolution, AdminReviewedDecision,
 };
+use super::admin::screenings::{
+    self as admin_screenings, AdminCriterionScore, AdminScreening, AdminScreeningLabel,
+    AdminScreeningLabelRequest, AdminScreeningPage, AdminSecondOpinion, CalibrationPart,
+};
+use super::admin::settings::{
+    self as admin_settings, AdminCriterionThresholds, AdminDedupThreshold, AdminDedupUpdate,
+    AdminSettings, AdminThresholdOverride, AdminThresholdSection, AdminThresholdsUpdate,
+};
 use super::admin::{self, AdminIdeaRef, AdminSession};
 use super::antispam;
 use super::error::{ErrorBody, ErrorDetail};
@@ -54,8 +62,9 @@ use crate::db::portal::IdeaSort;
 use crate::domain::rules::RuleReference;
 use crate::domain::status::{IdeaStatus, ReportStatus};
 use crate::domain::types::{
-    AdminLevel, Confidence, ContributionKind, EscalationOutcome, IdeaKind, ImpactDirection,
-    LegalVehicle, ReportReason, ReviewOutcome, ReviewRequestStatus, ReviewResolution, TargetKind,
+    AdminLevel, Confidence, ContributionKind, CriterionVerdict, Decision, EscalationOutcome,
+    IdeaKind, ImpactDirection, LabelVerdict, LegalVehicle, ReportReason, ReviewOutcome,
+    ReviewRequestStatus, ReviewResolution, ScreeningOutcome, TargetKind,
 };
 use crate::jobs::{JobKind, JobStatus};
 use crate::moderation::statement::{Measure, StatementOfReasons};
@@ -104,7 +113,14 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         admin_moderation::escalations,
         admin_moderation::handle_escalation,
         admin_moderation::review_requests,
-        admin_moderation::resolve_review_request
+        admin_moderation::resolve_review_request,
+        admin_screenings::list,
+        admin_screenings::label,
+        admin_screenings::unlabel,
+        admin_screenings::export,
+        admin_settings::get,
+        admin_settings::update_thresholds,
+        admin_settings::update_dedup
     ),
     components(schemas(
         ErrorBody,
@@ -203,7 +219,25 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         AdminReviewRequestPage,
         AdminReviewedDecision,
         AdminReviewResolution,
-        ReviewResolution
+        ReviewResolution,
+        AdminScreening,
+        AdminScreeningPage,
+        AdminCriterionScore,
+        AdminSecondOpinion,
+        AdminScreeningLabel,
+        AdminScreeningLabelRequest,
+        CalibrationPart,
+        LabelVerdict,
+        Decision,
+        CriterionVerdict,
+        ScreeningOutcome,
+        AdminSettings,
+        AdminThresholdSection,
+        AdminCriterionThresholds,
+        AdminDedupThreshold,
+        AdminThresholdsUpdate,
+        AdminThresholdOverride,
+        AdminDedupUpdate
     )),
     modifiers(&AdminSecurity),
     tags(
@@ -394,6 +428,12 @@ mod tests {
             "/api/admin/escalations/{id}/handle",
             "/api/admin/review-requests",
             "/api/admin/review-requests/{id}/resolve",
+            "/api/admin/screenings",
+            "/api/admin/screenings/{id}/label",
+            "/api/admin/screenings/export.jsonl",
+            "/api/admin/settings",
+            "/api/admin/settings/screening-thresholds",
+            "/api/admin/settings/dedup-threshold",
         ] {
             assert!(paths.contains(&path), "{path} missing");
         }

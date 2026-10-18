@@ -960,6 +960,330 @@
         ]
       }
     },
+    "/api/admin/screenings": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Screenings with their raw scores, for the calibration of the thresholds.",
+        "operationId": "listAdminScreenings",
+        "parameters": [
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TargetKind"
+            }
+          },
+          {
+            "name": "outcome",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ScreeningOutcome"
+            }
+          },
+          {
+            "name": "labeled",
+            "in": "query",
+            "description": "`true`: labelled only; `false`: decided and not labelled yet.",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "reason_code",
+            "in": "query",
+            "description": "Refusal reason (`reason_code` of the grid).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 10000,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 50,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Une page de décisions de filtrage.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminScreeningPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Paramètre invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
+    "/api/admin/screenings/export.jsonl": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "JSON Lines export of the screenings for `docs/calibration/bench_screening.py`: `results`\ngives the raw answers (`id`, `section`, `questions_hash`, `latency_ms`, `input_tokens`,\n`answers`), `samples` the labelled texts (`id`, `section`, `text`, `expected`, `fails`,\n`gray_ok`, `split`, `tags`, plus `parent` and `kind` or `reason_label`). The ids match\nbetween both files. Texts are masked and absent once erased.",
+        "operationId": "exportAdminScreenings",
+        "parameters": [
+          {
+            "name": "part",
+            "in": "query",
+            "description": "`results` (default) or `samples` (labelled screenings only).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/CalibrationPart"
+            }
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/TargetKind"
+            }
+          },
+          {
+            "name": "labeled_only",
+            "in": "query",
+            "description": "Only the labelled screenings (always the case for `samples`).",
+            "required": false,
+            "schema": {
+              "type": "boolean"
+            }
+          },
+          {
+            "name": "limit",
+            "in": "query",
+            "description": "Lines at most, most recent first (5 000 by default, 20 000 at most).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 20000,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Fichier JSON Lines.",
+            "content": {
+              "application/x-ndjson": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Paramètre invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
+    "/api/admin/screenings/{id}/label": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Labels a screening: whether its decision was right and which one was expected (§8).",
+        "operationId": "labelAdminScreening",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de la décision de filtrage",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminScreeningLabelRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Décision étiquetée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminScreening"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Décision inconnue (`screening_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Étiquette incohérente (`label_inconsistent`) ou corps invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      },
+      "delete": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Removes the label of a screening.",
+        "operationId": "unlabelAdminScreening",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de la décision de filtrage",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Étiquette retirée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminScreening"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Décision inconnue (`screening_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
     "/api/admin/session": {
       "get": {
         "tags": [
@@ -980,6 +1304,154 @@
           },
           "401": {
             "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
+    "/api/admin/settings": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Screening thresholds and duplicate threshold in force.",
+        "operationId": "getAdminSettings",
+        "responses": {
+          "200": {
+            "description": "Réglages en vigueur.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
+    "/api/admin/settings/dedup-threshold": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Sets the cosine similarity from which an accepted idea is merged into the nearest\npublished one (setting `dedup.similarity_threshold`, §5.4, §13.6).",
+        "operationId": "updateAdminDedupThreshold",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminDedupUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Réglages en vigueur.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Valeur hors de [0,5 ; 1] (`invalid_threshold`), corps invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
+    "/api/admin/settings/screening-thresholds": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Replaces the screening threshold overrides (setting `screening.thresholds`, §13.6). The new\nthresholds apply to the next screenings; each screening records the thresholds it used.",
+        "operationId": "updateAdminScreeningThresholds",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminThresholdsUpdate"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Réglages en vigueur.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSettings"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Critère inconnu ou seuils incohérents (`invalid_thresholds`), corps invalide.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1962,6 +2434,95 @@
           }
         }
       },
+      "AdminCriterionScore": {
+        "type": "object",
+        "description": "One criterion of a screening: probability of passing it, thresholds applied, verdict.",
+        "required": [
+          "key",
+          "probability",
+          "reject_below",
+          "accept_above",
+          "verdict"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "probability": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Probability of passing the criterion (0 to 1), `null` when not computed."
+          },
+          "reject_below": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "accept_above": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "verdict": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/CriterionVerdict"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "AdminCriterionThresholds": {
+        "type": "object",
+        "description": "Thresholds of one criterion: in force and from `screening.yaml`.",
+        "required": [
+          "key",
+          "reason_code",
+          "reject_below",
+          "accept_above",
+          "default_reject_below",
+          "default_accept_above",
+          "adjusted"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "reject_below": {
+            "type": "number",
+            "format": "double"
+          },
+          "accept_above": {
+            "type": "number",
+            "format": "double"
+          },
+          "default_reject_below": {
+            "type": "number",
+            "format": "double"
+          },
+          "default_accept_above": {
+            "type": "number",
+            "format": "double"
+          },
+          "adjusted": {
+            "type": "boolean",
+            "description": "The thresholds in force differ from the file."
+          }
+        }
+      },
       "AdminDashboard": {
         "type": "object",
         "required": [
@@ -1992,6 +2553,53 @@
             "$ref": "#/components/schemas/AdminQueues"
           }
         }
+      },
+      "AdminDedupThreshold": {
+        "type": "object",
+        "required": [
+          "value",
+          "default",
+          "adjusted",
+          "minimum"
+        ],
+        "properties": {
+          "value": {
+            "type": "number",
+            "format": "double",
+            "description": "Cosine similarity in force."
+          },
+          "default": {
+            "type": "number",
+            "format": "double",
+            "description": "`DEDUP_SIMILARITY_THRESHOLD` of the environment."
+          },
+          "adjusted": {
+            "type": "boolean"
+          },
+          "minimum": {
+            "type": "number",
+            "format": "double",
+            "description": "Lowest value accepted."
+          }
+        }
+      },
+      "AdminDedupUpdate": {
+        "type": "object",
+        "description": "New duplicate threshold; `null` returns to `DEDUP_SIMILARITY_THRESHOLD`.",
+        "required": [
+          "value"
+        ],
+        "properties": {
+          "value": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double",
+            "description": "Cosine similarity between 0.5 and 1, or `null`."
+          }
+        },
+        "additionalProperties": false
       },
       "AdminEscalation": {
         "type": "object",
@@ -2974,6 +3582,231 @@
           }
         }
       },
+      "AdminScreening": {
+        "type": "object",
+        "description": "A screening by the decision model (scores kept without text after the purge).",
+        "required": [
+          "id",
+          "target_kind",
+          "target_id",
+          "created_at",
+          "grid_version",
+          "outcome",
+          "reason_code",
+          "error_code",
+          "latency_ms",
+          "criteria",
+          "second_opinion",
+          "final_decision",
+          "decided_at",
+          "label",
+          "excerpt"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "target_kind": {
+            "$ref": "#/components/schemas/TargetKind"
+          },
+          "target_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "grid_version": {
+            "type": "string",
+            "description": "Version of `screening.yaml`."
+          },
+          "outcome": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ScreeningOutcome",
+                "description": "`null` when the decision service failed (see `error_code`)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "error_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "latency_ms": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "criteria": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminCriterionScore"
+            },
+            "description": "Criteria in the order of the grid."
+          },
+          "second_opinion": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AdminSecondOpinion"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "final_decision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Decision",
+                "description": "Decision finally reached (decision model or second opinion)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "decided_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "label": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AdminScreeningLabel"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "excerpt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Beginning of the masked text, `null` once erased."
+          }
+        }
+      },
+      "AdminScreeningLabel": {
+        "type": "object",
+        "description": "The administrator's label of a screening.",
+        "required": [
+          "label",
+          "expected",
+          "note",
+          "labeled_at"
+        ],
+        "properties": {
+          "label": {
+            "$ref": "#/components/schemas/LabelVerdict",
+            "description": "Whether the decision reached was right."
+          },
+          "expected": {
+            "$ref": "#/components/schemas/Decision",
+            "description": "The decision the screening should have reached."
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "labeled_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AdminScreeningLabelRequest": {
+        "type": "object",
+        "description": "Judgement of a screening decision.",
+        "required": [
+          "label"
+        ],
+        "properties": {
+          "label": {
+            "$ref": "#/components/schemas/LabelVerdict"
+          },
+          "expected": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Decision",
+                "description": "Decision expected. Optional when it follows from `label` and the decision reached;\nrequired when no decision was reached (service error, second opinion pending)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "1 000 characters."
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminScreeningPage": {
+        "type": "object",
+        "description": "A page of screenings, most recent first.",
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total",
+          "total_pages"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminScreening"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "per_page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Items matching the filters, all pages included.",
+            "minimum": 0
+          },
+          "total_pages": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
       "AdminScreeningRates": {
         "type": "object",
         "description": "Screening outcomes of one kind of text over the window. Rates are shares of the\nscreenings that reached the decision model (`null` without any).",
@@ -3052,6 +3885,61 @@
           }
         }
       },
+      "AdminSecondOpinion": {
+        "type": "object",
+        "description": "The Mistral second opinion of a gray-zone screening.",
+        "required": [
+          "decision",
+          "reason_code",
+          "explanation",
+          "model",
+          "prompt_version",
+          "at"
+        ],
+        "properties": {
+          "decision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/Decision"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "explanation": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "model": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "prompt_version": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
       "AdminSession": {
         "type": "object",
         "required": [
@@ -3062,6 +3950,103 @@
             "type": "boolean"
           }
         }
+      },
+      "AdminSettings": {
+        "type": "object",
+        "description": "Settings in force.",
+        "required": [
+          "grid_version",
+          "screening",
+          "dedup_similarity_threshold"
+        ],
+        "properties": {
+          "grid_version": {
+            "type": "string",
+            "description": "Version of `screening.yaml`."
+          },
+          "screening": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminThresholdSection"
+            }
+          },
+          "dedup_similarity_threshold": {
+            "$ref": "#/components/schemas/AdminDedupThreshold"
+          }
+        }
+      },
+      "AdminThresholdOverride": {
+        "type": "object",
+        "description": "Thresholds of one criterion; an omitted one keeps the value of `screening.yaml`.",
+        "properties": {
+          "reject_below": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          },
+          "accept_above": {
+            "type": [
+              "number",
+              "null"
+            ],
+            "format": "double"
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminThresholdSection": {
+        "type": "object",
+        "required": [
+          "kind",
+          "criteria"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/TargetKind"
+          },
+          "criteria": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminCriterionThresholds"
+            }
+          }
+        }
+      },
+      "AdminThresholdsUpdate": {
+        "type": "object",
+        "description": "Every threshold override, by section and criterion key. Replaces the previous ones; an empty\nbody returns to the thresholds of `screening.yaml`.",
+        "properties": {
+          "idea": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AdminThresholdOverride"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "contribution": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AdminThresholdOverride"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "report": {
+            "type": "object",
+            "additionalProperties": {
+              "$ref": "#/components/schemas/AdminThresholdOverride"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          }
+        },
+        "additionalProperties": false
       },
       "AiMarking": {
         "type": "object",
@@ -3197,6 +4182,14 @@
             "type": "string"
           }
         }
+      },
+      "CalibrationPart": {
+        "type": "string",
+        "description": "File of the calibration bench to produce.",
+        "enum": [
+          "Results",
+          "Samples"
+        ]
       },
       "CategoryItem": {
         "type": "object",
@@ -3360,6 +4353,23 @@
             "format": "date"
           }
         }
+      },
+      "CriterionVerdict": {
+        "type": "string",
+        "description": "Verdict of a single screening criterion given its thresholds (§5.3).",
+        "enum": [
+          "Pass",
+          "Fail",
+          "Gray"
+        ]
+      },
+      "Decision": {
+        "type": "string",
+        "description": "Binary decision: second opinion result, final screening decision or admin label.",
+        "enum": [
+          "Accept",
+          "Reject"
+        ]
       },
       "DeletionResponse": {
         "type": "object",
@@ -3992,6 +5002,14 @@
             "format": "int64"
           }
         }
+      },
+      "LabelVerdict": {
+        "type": "string",
+        "description": "Administrator's judgement of a screening decision, for the calibration (§5.3, §8).",
+        "enum": [
+          "Correct",
+          "Incorrect"
+        ]
       },
       "LegalInfo": {
         "type": "object",
@@ -4698,6 +5716,15 @@
             }
           }
         }
+      },
+      "ScreeningOutcome": {
+        "type": "string",
+        "description": "Result of the decision model stage of a screening.",
+        "enum": [
+          "Accepted",
+          "Rejected",
+          "GrayZone"
+        ]
       },
       "ScreeningSection": {
         "type": "object",

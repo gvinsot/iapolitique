@@ -222,6 +222,64 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/screenings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Screenings with their raw scores, for the calibration of the thresholds. */
+        get: operations["listAdminScreenings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/screenings/export.jsonl": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * JSON Lines export of the screenings for `docs/calibration/bench_screening.py`: `results`
+         *     gives the raw answers (`id`, `section`, `questions_hash`, `latency_ms`, `input_tokens`,
+         *     `answers`), `samples` the labelled texts (`id`, `section`, `text`, `expected`, `fails`,
+         *     `gray_ok`, `split`, `tags`, plus `parent` and `kind` or `reason_label`). The ids match
+         *     between both files. Texts are masked and absent once erased.
+         */
+        get: operations["exportAdminScreenings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/screenings/{id}/label": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Labels a screening: whether its decision was right and which one was expected (§8). */
+        put: operations["labelAdminScreening"];
+        post?: never;
+        /** Removes the label of a screening. */
+        delete: operations["unlabelAdminScreening"];
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/session": {
         parameters: {
             query?: never;
@@ -232,6 +290,63 @@ export interface paths {
         /** Checks the admin token (used by the admin pages to validate the token typed by the user). */
         get: operations["getAdminSession"];
         put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/settings": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Screening thresholds and duplicate threshold in force. */
+        get: operations["getAdminSettings"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/settings/dedup-threshold": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Sets the cosine similarity from which an accepted idea is merged into the nearest
+         *     published one (setting `dedup.similarity_threshold`, §5.4, §13.6).
+         */
+        put: operations["updateAdminDedupThreshold"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/settings/screening-thresholds": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Replaces the screening threshold overrides (setting `screening.thresholds`, §13.6). The new
+         *     thresholds apply to the next screenings; each screening records the thresholds it used.
+         */
+        put: operations["updateAdminScreeningThresholds"];
         post?: never;
         delete?: never;
         options?: never;
@@ -611,6 +726,35 @@ export interface components {
             next_reset: string;
             by_purpose: components["schemas"]["AdminPurposeCost"][];
         };
+        /** @description One criterion of a screening: probability of passing it, thresholds applied, verdict. */
+        AdminCriterionScore: {
+            key: string;
+            /**
+             * Format: double
+             * @description Probability of passing the criterion (0 to 1), `null` when not computed.
+             */
+            probability: number | null;
+            /** Format: double */
+            reject_below: number | null;
+            /** Format: double */
+            accept_above: number | null;
+            verdict: components["schemas"]["CriterionVerdict"] | null;
+        };
+        /** @description Thresholds of one criterion: in force and from `screening.yaml`. */
+        AdminCriterionThresholds: {
+            key: string;
+            reason_code: string;
+            /** Format: double */
+            reject_below: number;
+            /** Format: double */
+            accept_above: number;
+            /** Format: double */
+            default_reject_below: number;
+            /** Format: double */
+            default_accept_above: number;
+            /** @description The thresholds in force differ from the file. */
+            adjusted: boolean;
+        };
         AdminDashboard: {
             jobs: components["schemas"]["AdminJobSummary"];
             /** Format: int32 */
@@ -618,6 +762,32 @@ export interface components {
             screening: components["schemas"]["AdminScreeningRates"][];
             ai_costs: components["schemas"]["AdminAiCosts"];
             queues: components["schemas"]["AdminQueues"];
+        };
+        AdminDedupThreshold: {
+            /**
+             * Format: double
+             * @description Cosine similarity in force.
+             */
+            value: number;
+            /**
+             * Format: double
+             * @description `DEDUP_SIMILARITY_THRESHOLD` of the environment.
+             */
+            default: number;
+            adjusted: boolean;
+            /**
+             * Format: double
+             * @description Lowest value accepted.
+             */
+            minimum: number;
+        };
+        /** @description New duplicate threshold; `null` returns to `DEDUP_SIMILARITY_THRESHOLD`. */
+        AdminDedupUpdate: {
+            /**
+             * Format: double
+             * @description Cosine similarity between 0.5 and 1, or `null`.
+             */
+            value: number | null;
         };
         /** @description An idea hidden at once because a report review found serious content (§7.5). */
         AdminEscalation: {
@@ -940,6 +1110,64 @@ export interface components {
             /** @description Refusal reason code, or `hidden_reason` of a masking. */
             reason_code: string | null;
         };
+        /** @description A screening by the decision model (scores kept without text after the purge). */
+        AdminScreening: {
+            /** Format: uuid */
+            id: string;
+            target_kind: components["schemas"]["TargetKind"];
+            /** Format: uuid */
+            target_id: string;
+            /** Format: date-time */
+            created_at: string;
+            /** @description Version of `screening.yaml`. */
+            grid_version: string;
+            outcome: components["schemas"]["ScreeningOutcome"] | null;
+            reason_code: string | null;
+            error_code: string | null;
+            /** Format: int32 */
+            latency_ms: number | null;
+            /** @description Criteria in the order of the grid. */
+            criteria: components["schemas"]["AdminCriterionScore"][];
+            second_opinion: components["schemas"]["AdminSecondOpinion"] | null;
+            final_decision: components["schemas"]["Decision"] | null;
+            /** Format: date-time */
+            decided_at: string | null;
+            label: components["schemas"]["AdminScreeningLabel"] | null;
+            /** @description Beginning of the masked text, `null` once erased. */
+            excerpt: string | null;
+        };
+        /** @description The administrator's label of a screening. */
+        AdminScreeningLabel: {
+            /** @description Whether the decision reached was right. */
+            label: components["schemas"]["LabelVerdict"];
+            /** @description The decision the screening should have reached. */
+            expected: components["schemas"]["Decision"];
+            note: string | null;
+            /** Format: date-time */
+            labeled_at: string;
+        };
+        /** @description Judgement of a screening decision. */
+        AdminScreeningLabelRequest: {
+            label: components["schemas"]["LabelVerdict"];
+            expected?: components["schemas"]["Decision"] | null;
+            /** @description 1 000 characters. */
+            note?: string | null;
+        };
+        /** @description A page of screenings, most recent first. */
+        AdminScreeningPage: {
+            items: components["schemas"]["AdminScreening"][];
+            /** Format: int32 */
+            page: number;
+            /** Format: int32 */
+            per_page: number;
+            /**
+             * Format: int64
+             * @description Items matching the filters, all pages included.
+             */
+            total: number;
+            /** Format: int32 */
+            total_pages: number;
+        };
         /**
          * @description Screening outcomes of one kind of text over the window. Rates are shares of the
          *     screenings that reached the decision model (`null` without any).
@@ -973,8 +1201,51 @@ export interface components {
             /** Format: int64 */
             labeled: number;
         };
+        /** @description The Mistral second opinion of a gray-zone screening. */
+        AdminSecondOpinion: {
+            decision: components["schemas"]["Decision"] | null;
+            reason_code: string | null;
+            explanation: string | null;
+            model: string | null;
+            prompt_version: string | null;
+            /** Format: date-time */
+            at: string | null;
+        };
         AdminSession: {
             authenticated: boolean;
+        };
+        /** @description Settings in force. */
+        AdminSettings: {
+            /** @description Version of `screening.yaml`. */
+            grid_version: string;
+            screening: components["schemas"]["AdminThresholdSection"][];
+            dedup_similarity_threshold: components["schemas"]["AdminDedupThreshold"];
+        };
+        /** @description Thresholds of one criterion; an omitted one keeps the value of `screening.yaml`. */
+        AdminThresholdOverride: {
+            /** Format: double */
+            reject_below?: number | null;
+            /** Format: double */
+            accept_above?: number | null;
+        };
+        AdminThresholdSection: {
+            kind: components["schemas"]["TargetKind"];
+            criteria: components["schemas"]["AdminCriterionThresholds"][];
+        };
+        /**
+         * @description Every threshold override, by section and criterion key. Replaces the previous ones; an empty
+         *     body returns to the thresholds of `screening.yaml`.
+         */
+        AdminThresholdsUpdate: {
+            idea?: {
+                [key: string]: components["schemas"]["AdminThresholdOverride"];
+            };
+            contribution?: {
+                [key: string]: components["schemas"]["AdminThresholdOverride"];
+            };
+            report?: {
+                [key: string]: components["schemas"]["AdminThresholdOverride"];
+            };
         };
         /** @description Machine-readable marking of the generated content (AI Act art. 50, §7.5). */
         AiMarking: {
@@ -1033,6 +1304,11 @@ export interface components {
             high: number;
             calculation: string;
         };
+        /**
+         * @description File of the calibration bench to produce.
+         * @enum {string}
+         */
+        CalibrationPart: "Results" | "Samples";
         /** @description A category, its group and the administrative levels that accept it. */
         CategoryItem: {
             key: string;
@@ -1097,6 +1373,16 @@ export interface components {
             /** Format: date */
             integrated_on: string | null;
         };
+        /**
+         * @description Verdict of a single screening criterion given its thresholds (§5.3).
+         * @enum {string}
+         */
+        CriterionVerdict: "Pass" | "Fail" | "Gray";
+        /**
+         * @description Binary decision: second opinion result, final screening decision or admin label.
+         * @enum {string}
+         */
+        Decision: "Accept" | "Reject";
         /** @description Confirmation of a deletion. */
         DeletionResponse: {
             /**
@@ -1344,6 +1630,11 @@ export interface components {
             /** Format: int64 */
             count: number;
         };
+        /**
+         * @description Administrator's judgement of a screening decision, for the calibration (§5.3, §8).
+         * @enum {string}
+         */
+        LabelVerdict: "Correct" | "Incorrect";
         LegalInfo: {
             publisher: components["schemas"]["LegalPublisher"];
             contact_email: string | null;
@@ -1632,6 +1923,11 @@ export interface components {
             version: string;
             sections: components["schemas"]["ScreeningSection"][];
         };
+        /**
+         * @description Result of the decision model stage of a screening.
+         * @enum {string}
+         */
+        ScreeningOutcome: "Accepted" | "Rejected" | "GrayZone";
         /** @description The criteria applied to one kind of text, in the order of evaluation. */
         ScreeningSection: {
             kind: components["schemas"]["TargetKind"];
@@ -1797,7 +2093,11 @@ export interface components {
     pathItems: never;
 }
 export type SchemaAdminAiCosts = components['schemas']['AdminAiCosts'];
+export type SchemaAdminCriterionScore = components['schemas']['AdminCriterionScore'];
+export type SchemaAdminCriterionThresholds = components['schemas']['AdminCriterionThresholds'];
 export type SchemaAdminDashboard = components['schemas']['AdminDashboard'];
+export type SchemaAdminDedupThreshold = components['schemas']['AdminDedupThreshold'];
+export type SchemaAdminDedupUpdate = components['schemas']['AdminDedupUpdate'];
 export type SchemaAdminEscalation = components['schemas']['AdminEscalation'];
 export type SchemaAdminEscalationHandling = components['schemas']['AdminEscalationHandling'];
 export type SchemaAdminEscalationPage = components['schemas']['AdminEscalationPage'];
@@ -1821,11 +2121,21 @@ export type SchemaAdminReviewRequest = components['schemas']['AdminReviewRequest
 export type SchemaAdminReviewRequestPage = components['schemas']['AdminReviewRequestPage'];
 export type SchemaAdminReviewResolution = components['schemas']['AdminReviewResolution'];
 export type SchemaAdminReviewedDecision = components['schemas']['AdminReviewedDecision'];
+export type SchemaAdminScreening = components['schemas']['AdminScreening'];
+export type SchemaAdminScreeningLabel = components['schemas']['AdminScreeningLabel'];
+export type SchemaAdminScreeningLabelRequest = components['schemas']['AdminScreeningLabelRequest'];
+export type SchemaAdminScreeningPage = components['schemas']['AdminScreeningPage'];
 export type SchemaAdminScreeningRates = components['schemas']['AdminScreeningRates'];
+export type SchemaAdminSecondOpinion = components['schemas']['AdminSecondOpinion'];
 export type SchemaAdminSession = components['schemas']['AdminSession'];
+export type SchemaAdminSettings = components['schemas']['AdminSettings'];
+export type SchemaAdminThresholdOverride = components['schemas']['AdminThresholdOverride'];
+export type SchemaAdminThresholdSection = components['schemas']['AdminThresholdSection'];
+export type SchemaAdminThresholdsUpdate = components['schemas']['AdminThresholdsUpdate'];
 export type SchemaAiMarking = components['schemas']['AiMarking'];
 export type SchemaAltchaChallenge = components['schemas']['AltchaChallenge'];
 export type SchemaAmountEstimate = components['schemas']['AmountEstimate'];
+export type SchemaCalibrationPart = components['schemas']['CalibrationPart'];
 export type SchemaCategoryItem = components['schemas']['CategoryItem'];
 export type SchemaCategoryRef = components['schemas']['CategoryRef'];
 export type SchemaConfidence = components['schemas']['Confidence'];
@@ -1834,6 +2144,8 @@ export type SchemaContributionKind = components['schemas']['ContributionKind'];
 export type SchemaContributionSubmission = components['schemas']['ContributionSubmission'];
 export type SchemaContributionSubmissionKind = components['schemas']['ContributionSubmissionKind'];
 export type SchemaContributionSummary = components['schemas']['ContributionSummary'];
+export type SchemaCriterionVerdict = components['schemas']['CriterionVerdict'];
+export type SchemaDecision = components['schemas']['Decision'];
 export type SchemaDeletionResponse = components['schemas']['DeletionResponse'];
 export type SchemaErrorBody = components['schemas']['ErrorBody'];
 export type SchemaErrorDetail = components['schemas']['ErrorDetail'];
@@ -1855,6 +2167,7 @@ export type SchemaImpactDirection = components['schemas']['ImpactDirection'];
 export type SchemaJobKind = components['schemas']['JobKind'];
 export type SchemaJobStatus = components['schemas']['JobStatus'];
 export type SchemaKeyCount = components['schemas']['KeyCount'];
+export type SchemaLabelVerdict = components['schemas']['LabelVerdict'];
 export type SchemaLegalInfo = components['schemas']['LegalInfo'];
 export type SchemaLegalPages = components['schemas']['LegalPages'];
 export type SchemaLegalPublisher = components['schemas']['LegalPublisher'];
@@ -1879,6 +2192,7 @@ export type SchemaScoreComponents = components['schemas']['ScoreComponents'];
 export type SchemaScoringMethod = components['schemas']['ScoringMethod'];
 export type SchemaScreeningCriterion = components['schemas']['ScreeningCriterion'];
 export type SchemaScreeningMethod = components['schemas']['ScreeningMethod'];
+export type SchemaScreeningOutcome = components['schemas']['ScreeningOutcome'];
 export type SchemaScreeningSection = components['schemas']['ScreeningSection'];
 export type SchemaSearchMatch = components['schemas']['SearchMatch'];
 export type SchemaSourceReference = components['schemas']['SourceReference'];
@@ -2497,6 +2811,194 @@ export interface operations {
             };
         };
     };
+    listAdminScreenings: {
+        parameters: {
+            query?: {
+                kind?: components["schemas"]["TargetKind"];
+                outcome?: components["schemas"]["ScreeningOutcome"];
+                /** @description `true`: labelled only; `false`: decided and not labelled yet. */
+                labeled?: boolean;
+                /** @description Refusal reason (`reason_code` of the grid). */
+                reason_code?: string;
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Une page de décisions de filtrage. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminScreeningPage"];
+                };
+            };
+            /** @description Paramètre invalide. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    exportAdminScreenings: {
+        parameters: {
+            query?: {
+                /** @description `results` (default) or `samples` (labelled screenings only). */
+                part?: components["schemas"]["CalibrationPart"];
+                kind?: components["schemas"]["TargetKind"];
+                /** @description Only the labelled screenings (always the case for `samples`). */
+                labeled_only?: boolean;
+                /** @description Lines at most, most recent first (5 000 by default, 20 000 at most). */
+                limit?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Fichier JSON Lines. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/x-ndjson": string;
+                };
+            };
+            /** @description Paramètre invalide. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    labelAdminScreening: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant de la décision de filtrage */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminScreeningLabelRequest"];
+            };
+        };
+        responses: {
+            /** @description Décision étiquetée. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminScreening"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Décision inconnue (`screening_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Étiquette incohérente (`label_inconsistent`) ou corps invalide. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    unlabelAdminScreening: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant de la décision de filtrage */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Étiquette retirée. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminScreening"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Décision inconnue (`screening_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     getAdminSession: {
         parameters: {
             query?: never;
@@ -2517,6 +3019,119 @@ export interface operations {
             };
             /** @description Jeton absent ou invalide. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getAdminSettings: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Réglages en vigueur. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminSettings"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    updateAdminDedupThreshold: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminDedupUpdate"];
+            };
+        };
+        responses: {
+            /** @description Réglages en vigueur. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminSettings"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Valeur hors de [0,5 ; 1] (`invalid_threshold`), corps invalide. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    updateAdminScreeningThresholds: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminThresholdsUpdate"];
+            };
+        };
+        responses: {
+            /** @description Réglages en vigueur. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminSettings"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Critère inconnu ou seuils incohérents (`invalid_thresholds`), corps invalide. */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

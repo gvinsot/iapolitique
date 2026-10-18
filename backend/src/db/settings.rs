@@ -57,6 +57,15 @@ pub async fn set<'e>(executor: impl PgExecutor<'e>, key: &str, value: &Value) ->
     .map(|_| ())
 }
 
+/// Removes a setting (the default applies again). Returns whether it existed.
+pub async fn delete<'e>(executor: impl PgExecutor<'e>, key: &str) -> sqlx::Result<bool> {
+    let result = sqlx::query("DELETE FROM settings WHERE key = $1")
+        .bind(key)
+        .execute(executor)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -69,6 +78,9 @@ mod tests {
         set(&pool, SCREENING_THRESHOLDS, &value).await.unwrap();
         set(&pool, SCREENING_THRESHOLDS, &value).await.unwrap();
         assert_eq!(get(&pool, SCREENING_THRESHOLDS).await.unwrap(), Some(value));
+        assert!(delete(&pool, SCREENING_THRESHOLDS).await.unwrap());
+        assert!(!delete(&pool, SCREENING_THRESHOLDS).await.unwrap());
+        assert_eq!(get(&pool, SCREENING_THRESHOLDS).await.unwrap(), None);
     }
 
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]

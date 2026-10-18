@@ -266,7 +266,8 @@ n'appeler que `/v1/systemone`.
   job `second_opinion` (5 tentatives) échoue définitivement sur une erreur Mistral non
   transitoire (4xx hors 408/429) ; le texte reste alors en `second_opinion` jusqu'à l'admin.
 - Les scores bruts sont stockés pour **calibrer les seuils** (l'admin peut étiqueter des
-  décisions, voir [§8](#8-administration-lan-uniquement)). Les probabilités ne sont pas
+  décisions, voir [§8](#8-administration-lan-uniquement), et les exporter au format du banc
+  `docs/calibration/bench_screening.py`). Les probabilités ne sont pas
   calibrées d'origine : ne jamais coder de seuil en dur.
 - Contributions et signalements passent par le même service avec leurs propres questions
   (pertinence par rapport à l'idée, respect, injection).
@@ -845,6 +846,12 @@ total_pages }`) et refusent les paramètres inconnus (`400 invalid_query`).
 | GET | `/api/admin/escalations` | file d'escalade (filtre `status` `pending`/`done`, en attente d'abord, plus anciennes d'abord) avec `due_at` (cible 24 h) et explication de la revue |
 | POST | `/api/admin/escalations/{id}/handle` | `{ outcome: transmitted\|dismissed, note? }` (2 000 caractères) → `200` ; `404 escalation_not_found`, `409 escalation_already_handled` ; action `escalation.handle` |
 | GET | `/api/admin/review-requests` | demandes de réexamen (filtre `status`, en attente d'abord) avec texte masqué concerné, message, décision en vigueur (`{ measure: rejected\|hidden, reason_code }`) |
+| GET | `/api/admin/screenings` | décisions de filtrage (filtres `kind`, `outcome`, `labeled` (`true` : étiquetées, `false` : décidées et non étiquetées), `reason_code`), plus récentes d'abord : version de grille, issue, motif, erreur, latence, `criteria: [{ key, probability, reject_below, accept_above, verdict }]` dans l'ordre de la grille, second avis, décision finale, étiquette `{ label: correct\|incorrect, expected: accept\|reject, note, labeled_at }`, début du texte masqué (`null` après purge) |
+| PUT, DELETE | `/api/admin/screenings/{id}/label` | étiquette de calibration `{ label: correct\|incorrect, expected?: accept\|reject, note? }` : `expected` se déduit de `label` et de la décision atteinte, il est requis sans décision (erreur du service, second avis en attente) ; incohérence : `422 label_inconsistent` ; stockée dans `screenings.human_label` (décision attendue) ; `DELETE` la retire ; actions `screening.label` / `screening.unlabel` |
+| GET | `/api/admin/screenings/export.jsonl` | export JSON Lines pour `docs/calibration/bench_screening.py` (`application/x-ndjson`, pièce jointe) : `part=results` (défaut : `{ id, section, questions_hash, latency_ms, input_tokens, answers, grid_version }` des décisions avec réponses brutes ; `questions_hash` calculé comme le banc pour la grille en vigueur, `grid-<version>` pour une autre version, que le banc ignore) ou `part=samples` (décisions étiquetées : `{ id, section, text (masqué, vide après purge), expected, fails, gray_ok, split: tune, tags }` + `parent` et `kind` ou `reason_label`) ; filtres `kind`, `labeled_only`, `limit` (5 000 par défaut, 20 000 au plus) |
+| GET | `/api/admin/settings` | seuils en vigueur par section et critère (`reject_below`, `accept_above`, valeurs du fichier, `adjusted`) et seuil de doublon (`value`, `default`, `adjusted`, `minimum`) |
+| PUT | `/api/admin/settings/screening-thresholds` | remplace le réglage `screening.thresholds` (§13.6) : `{ idea?, contribution?, report? : { "<clé>": { reject_below?, accept_above? } } }`, critères vérifiés contre `screening.yaml`, seuils dans [0, 1] et `reject_below ≤ accept_above` après fusion avec le fichier (`422 invalid_thresholds`) ; `{}` revient aux seuils du fichier ; action `settings.screening_thresholds` (avant/après) |
+| PUT | `/api/admin/settings/dedup-threshold` | `{ value: nombre entre 0,5 et 1 \| null }` (`null` : retour à `DEDUP_SIMILARITY_THRESHOLD`) ; `422 invalid_threshold` ; action `settings.dedup_threshold` |
 | POST | `/api/admin/review-requests/{id}/resolve` | `{ resolution: confirmed\|overturned, note? }` (§7.1) → `200` ; `404 review_request_not_found`, `409 review_request_already_resolved` / `decision_not_overturnable` (texte ni refusé ni masqué) ; action `review_request.resolve` |
 
 Le port
@@ -924,7 +931,7 @@ le défaut s'applique.
 | Clé | Valeur | Rôle |
 |---|---|---|
 | `screening.thresholds` | `{ "<section>": { "<clé du critère>": { "reject_below"?: nombre, "accept_above"?: nombre } } }`, sections `idea`, `contribution`, `report` | Surcharge, critère par critère, des seuils de `screening.yaml` (§5.3). Un seuil omis garde la valeur du fichier ; il faut `0 ≤ reject_below ≤ accept_above ≤ 1`. Les seuils appliqués sont enregistrés avec chaque décision (`screenings.thresholds`). |
-| `dedup.similarity_threshold` | nombre entre 0 et 1 | Similarité cosinus à partir de laquelle une idée acceptée est fusionnée dans l'idée publiée la plus proche (§5.4) ; surcharge `DEDUP_SIMILARITY_THRESHOLD`. |
+| `dedup.similarity_threshold` | nombre entre 0 et 1 (l'admin n'accepte que 0,5 à 1) | Similarité cosinus à partir de laquelle une idée acceptée est fusionnée dans l'idée publiée la plus proche (§5.4) ; surcharge `DEDUP_SIMILARITY_THRESHOLD`. |
 
 ---
 

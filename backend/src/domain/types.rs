@@ -213,6 +213,16 @@ text_enum! {
 }
 
 text_enum! {
+    /// Administrator's judgement of a screening decision, for the calibration (§5.3, §8).
+    pub enum LabelVerdict {
+        /// The decision was right.
+        Correct => "correct",
+        /// The decision was wrong: the expected one is the opposite.
+        Incorrect => "incorrect",
+    }
+}
+
+text_enum! {
     /// How the administrator closed an escalation of serious content (§7.5).
     pub enum EscalationOutcome {
         /// Forwarded to PHAROS (or to the competent authority).

@@ -18,6 +18,7 @@ use super::health::Liveness;
 use super::purge::PurgeHandler;
 use super::schedule::{self, DailySchedule};
 use super::{Job, JobError, JobKind, JobOutcome, queue};
+use crate::ai::budget;
 use crate::ai::decision::Screener;
 use crate::ai::mistral::MistralClient;
 use crate::ai::prompts::Prompts;
@@ -298,9 +299,18 @@ async fn process(
         }
     });
 
-    let result = match registry.get(kind) {
-        None => Ok(Err(JobError::Permanent(format!("no handler for {kind}")))),
-        Some(handler) => {
+    // The daily AI budget (§6.4) postpones the jobs that call Mistral to the next Paris
+    // midnight, without consuming an attempt.
+    let postponed = if kind.requires_mistral() {
+        budget::postpone_if_exceeded(&pool, ctx.config.mistral.daily_budget).await
+    } else {
+        Ok(None)
+    };
+    let result = match (postponed, registry.get(kind)) {
+        (Err(err), _) => Ok(Err(JobError::from(err))),
+        (Ok(Some(outcome)), _) => Ok(Ok(outcome)),
+        (Ok(None), None) => Ok(Err(JobError::Permanent(format!("no handler for {kind}")))),
+        (Ok(None), Some(handler)) => {
             let job = job.clone();
             let ctx = Arc::clone(&ctx);
             tokio::spawn(async move { handler.handle(&ctx, &job).await }).await
@@ -500,6 +510,83 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(panic_error.as_deref(), Some("handler panicked"));
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn mistral_jobs_wait_for_the_next_budget_day(pool: PgPool) {
+        // Default budget: 5 € a day; 6 € already spent today.
+        sqlx::query(
+            "INSERT INTO ai_calls (provider, purpose, model, cost_micro_eur, latency_ms, status)
+             VALUES ('mistral', 'analysis_research', 'm', 6000000, 10, 'success')",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut registry = Registry::new();
+        for kind in [JobKind::AnalyzeIdea, JobKind::ScreenIdea] {
+            registry.register(Scripted {
+                kind,
+                calls: Arc::clone(&calls),
+            });
+        }
+        for kind in [JobKind::AnalyzeIdea, JobKind::ScreenIdea] {
+            enqueue(
+                &pool,
+                &NewJob::new(kind).payload(serde_json::json!({ "mode": "ok" })),
+            )
+            .await
+            .unwrap();
+        }
+        let ctx = JobContext {
+            pool: pool.clone(),
+            config: test_config(true),
+            prompts: crate::ai::prompts::test_prompts(),
+            screener: test_screener(),
+            mistral: None,
+        };
+        let worker = Worker::new(
+            ctx,
+            registry,
+            options(),
+            Liveness::new(Duration::from_secs(60)),
+        );
+        let (stop, shutdown) = watch::channel(false);
+        let running = tokio::spawn(worker.run(shutdown));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        loop {
+            let (pending,): (i64,) = sqlx::query_as(
+                "SELECT count(*) FROM jobs WHERE status = 'running'
+                    OR (status = 'queued' AND attempts > 0)
+                    OR (kind = 'screen_idea' AND status <> 'succeeded')
+                    OR (kind = 'analyze_idea' AND run_after < now() + interval '1 minute')",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+            if pending == 0 {
+                break;
+            }
+            assert!(Instant::now() < deadline, "jobs not processed in time");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        stop.send(true).unwrap();
+        running.await.unwrap().unwrap();
+
+        // Only the screening (no Mistral) ran.
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
+        let budget = crate::ai::budget::status(&pool, crate::domain::money::MicroEur::from_eur(5))
+            .await
+            .unwrap();
+        let (status, attempts, run_after): (String, i32, chrono::DateTime<chrono::Utc>) =
+            sqlx::query_as(
+                "SELECT status, attempts, run_after FROM jobs WHERE kind = 'analyze_idea'",
+            )
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!((status.as_str(), attempts), ("queued", 0));
+        assert_eq!(run_after, budget.next_reset);
     }
 
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]

@@ -508,7 +508,7 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
 - Contenus masqués (`hidden`) : texte purgé après 12 mois (`hidden → purged`, sauf réexamen
   humain en attente) avec tout ce qui en dérive : titre, résumé, slug, territoire, contenu
   textuel des analyses (montants, catégorie et scores gardés pour les statistiques),
-  explications des revues de signalement, embedding, jetons ; ses contributions sont supprimées
+  explications des revues de signalement, embedding, jetons, droits de réponse ; ses contributions sont supprimées
   et les doublons qui y ont été fusionnés purgés (`merged → purged`). L'exposé des motifs du
   masquage donne la date de purge.
 - Signalements : nom et e-mail facultatifs du signalant effacés 6 mois après le signalement ;
@@ -607,7 +607,9 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
   (diffamation, menace, haine, terrorisme, pédocriminalité) : masquage immédiat et file admin
   « escalade » (transmission manuelle à PHAROS, cible 24 h).
 - **Droit de réponse** (LCEN art. 1-1 III) : l'admin peut publier une réponse attachée à une
-  idée (insertion sous 3 jours).
+  idée (insertion sous 3 jours) : table `rights_of_reply` (`author_label`, `body` en texte
+  brut, `requested_on`), affichée par `GET /api/ideas/{slug}`, effacée avec l'idée (suppression
+  ou purge 12 mois après un masquage).
 - **Mistral AI** : sous-traitant (art. 28 RGPD). Option « Anonymous improvement data »
   **désactivée** sur le compte (fait le 2026-10-18). Ne jamais utiliser de modèle « Labs » ou
   « Preview ». Ne jamais transmettre IP, empreinte ou jeton. Le point d'accès UE
@@ -801,8 +803,8 @@ API publique (port 8080) :
 | POST | `/api/track/delete` | suppression par l'auteur (corps `{ "token" }`) → `200 { status: "deleted" }`, idempotent |
 | POST | `/api/track/review-request` | demande de réexamen humain (corps `{ "token", "message"? }`) → `201 { requested_on, status: "pending" }` ; `409 review_not_available` / `review_already_requested` |
 | GET | `/api/legal` | coordonnées de l'éditeur (`LEGAL_*`) et versions/dates des pages légales et des CGU |
-| GET | `/api/ideas` | liste publiée : `sort` (`score`, `gain`, `feasibility`, `delay`, `recent`), filtres `admin_level`, `category`, `kind`, `territory`, `q`, pagination `page`/`per_page` |
-| GET | `/api/ideas/{slug}` | détail : idée, analyse courante, contributions intégrées, compteur de propositions |
+| GET | `/api/ideas` | classement des idées `published` uniquement : `sort` (`score` par défaut, `gain`, `feasibility`, `delay`, `recent`), filtres `admin_level`, `category` (clé de la taxonomie), `kind`, `territory` (nom, partie du nom sans accents ni casse, ou code INSEE exact), `q` (200 caractères : recherche plein texte française sans accents `websearch_to_tsquery('french_unaccent')` sur titre et résumé, puis, si rien ne correspond, similarité trigramme `word_similarity ≥ 0,3`), `page` (1 à 10 000) / `per_page` (1 à 50, 20 par défaut) → `200 { items: [{ slug, title, summary, admin_level, territory: { name, insee_code }?, category: { key, label }, kind, annual_gain_eur: { low, median, high }, feasibility, time_to_effect_months, confidence, score, proposal_count, contribution_count, updated_at }], page, per_page, total, total_pages, search: exact\|approximate\|null }` ; paramètre invalide ou inconnu : `400 invalid_query` |
+| GET | `/api/ideas/{slug}` | page d'une idée `published` : `{ slug, title, summary, admin_level, territory?, category, kind, original: { text (masqué), personal_data_masked, attribution, notice }, analysis (champs du §6.2 sans identifiants, `impacts` en liste ordonnée `{ public, label, effect, explanation }`), score: { label, scoring_version, net_annual_eur, feasibility_factor, confidence_factor, delay_factor, score }, contributions: [{ kind, summary, taken_into_account, response, integrated_on }] (résumés neutres, jamais le texte), rights_of_reply: [{ author_label, body, published_at, updated_at }], ai: { ai_generated, provider, model, generated_at, analysis_version, prompt_version, research_prompt_version, schema_version, scoring_version, web_search_count, human_reviewed, notice }, proposal_count, contribution_count, published_on, updated_at, canonical_url }` ; idée inconnue, masquée ou purgée : `404 idea_not_found` ; idée fusionnée : `301` vers `/api/ideas/{slug parent}` (corps `{ slug }`) |
 | POST | `/api/ideas/{slug}/contributions` | amélioration ou objection `{ kind: amelioration\|objection, text, accept_licence, accept_publication, altcha }` → `201` comme `/api/ideas` ; `404 idea_not_found` si l'idée n'est pas publiée |
 | POST | `/api/ideas/{slug}/reports` | signalement `{ reason, details? (alias precision), reporter_name?, reporter_email?, good_faith, altcha }` → `201` comme `/api/ideas` ; erreurs `good_faith_required`, `invalid_email`, `idea_not_found` |
 | GET | `/api/methodology` | prompts, grilles, taxonomie, formule de score et leurs versions |
@@ -953,7 +955,7 @@ Posés par nginx (frontend) **et** par l'api (réponses JSON), testés automatiq
 | `Cross-Origin-Opener-Policy` | `same-origin` |
 | `Cross-Origin-Resource-Policy` | `same-origin` |
 | `Cross-Origin-Embedder-Policy` | `require-corp` si compatible (vérifié dans un navigateur), sinon `credentialless` |
-| `Cache-Control` | `no-store` sur toute réponse contenant un jeton, sur `/api/track*` et sur l'API admin ; `max-age` court sur les GET publics |
+| `Cache-Control` | `no-store` sur toute réponse contenant un jeton, sur `/api/track*` et sur l'API admin ; `max-age` court sur les GET publics (`public, max-age=60` : classement, idée, statistiques ; `public, max-age=300` : méthodologie, taxonomie, mentions légales, exports ; `http/cache.rs`) |
 | `X-Robots-Tag` | `noindex, nofollow` sur l'admin, `/suivi` et l'API |
 | `Server` / `X-Powered-By` | absents ou neutres |
 

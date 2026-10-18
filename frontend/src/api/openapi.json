@@ -88,6 +88,115 @@
       }
     },
     "/api/ideas": {
+      "get": {
+        "tags": [
+          "portal"
+        ],
+        "summary": "Ranking of the published ideas.",
+        "operationId": "listIdeas",
+        "parameters": [
+          {
+            "name": "sort",
+            "in": "query",
+            "description": "Order of the ranking (`score` by default).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IdeaSort"
+            }
+          },
+          {
+            "name": "admin_level",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/AdminLevel"
+            }
+          },
+          {
+            "name": "category",
+            "in": "query",
+            "description": "Category key of the taxonomy (`GET /api/taxonomy`).",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "achats_publics"
+          },
+          {
+            "name": "kind",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IdeaKind"
+            }
+          },
+          {
+            "name": "territory",
+            "in": "query",
+            "description": "Territory name (part of it, accents and case ignored) or INSEE code, 120 characters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            },
+            "example": "Lyon"
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Search in the neutral titles and summaries (French, accents ignored, approaching\nresults when nothing matches exactly), 200 characters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "description": "Page number, from 1.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 10000,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "description": "Ideas per page, 1 to 50 (20 by default).",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 50,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Une page du classement.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdeaList"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Paramètre invalide (`invalid_query`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      },
       "post": {
         "tags": [
           "submissions"
@@ -147,6 +256,58 @@
           },
           "503": {
             "description": "Service momentanément surchargé.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ideas/{slug}": {
+      "get": {
+        "tags": [
+          "portal"
+        ],
+        "summary": "Page of a published idea, with its current analysis, its score components, the summaries\nof the integrated contributions and the rights of reply. The slug of an idea merged into\nanother one answers `301` towards the other idea (its `Location` and the body give its slug).",
+        "operationId": "getIdea",
+        "parameters": [
+          {
+            "name": "slug",
+            "in": "path",
+            "description": "Slug de l'idée",
+            "required": true,
+            "schema": {
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "L'idée publiée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdeaDetail"
+                }
+              }
+            }
+          },
+          "301": {
+            "description": "Idée fusionnée dans une autre : voir `Location`.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/IdeaRedirect"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Idée inconnue, masquée ou purgée (`idea_not_found`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -612,6 +773,78 @@
           }
         }
       },
+      "AiMarking": {
+        "type": "object",
+        "description": "Machine-readable marking of the generated content (AI Act art. 50, §7.5).",
+        "required": [
+          "ai_generated",
+          "provider",
+          "model",
+          "generated_at",
+          "analysis_version",
+          "prompt_version",
+          "research_prompt_version",
+          "schema_version",
+          "scoring_version",
+          "web_search_count",
+          "human_reviewed",
+          "notice"
+        ],
+        "properties": {
+          "ai_generated": {
+            "type": "boolean",
+            "description": "Always `true`: title, summary, analysis and contribution summaries are generated."
+          },
+          "provider": {
+            "type": "string",
+            "example": "Mistral AI"
+          },
+          "model": {
+            "type": "string"
+          },
+          "generated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "analysis_version": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Version of the analysis of this idea (1 for the first one).",
+            "minimum": 0
+          },
+          "prompt_version": {
+            "type": "string",
+            "description": "Version of `prompts/analysis.md`."
+          },
+          "research_prompt_version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Version of `prompts/analysis_research.md`."
+          },
+          "schema_version": {
+            "type": "string",
+            "description": "Fingerprint of `prompts/analysis.schema.json`."
+          },
+          "scoring_version": {
+            "type": "string"
+          },
+          "web_search_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "human_reviewed": {
+            "type": "boolean",
+            "description": "Always `false`: no systematic human review."
+          },
+          "notice": {
+            "type": "string",
+            "description": "Label shown before every generated block."
+          }
+        }
+      },
       "AltchaChallenge": {
         "type": "object",
         "description": "Challenge sent to the widget (`GET /api/altcha/challenge`).",
@@ -647,6 +880,69 @@
             "description": "Hex HMAC-SHA-256 of `challenge`."
           }
         }
+      },
+      "AmountEstimate": {
+        "type": "object",
+        "description": "An estimate with its detailed calculation (citing the sources `[Sx]`).",
+        "required": [
+          "low",
+          "median",
+          "high",
+          "calculation"
+        ],
+        "properties": {
+          "low": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "median": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "high": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "calculation": {
+            "type": "string"
+          }
+        }
+      },
+      "CategoryRef": {
+        "type": "object",
+        "description": "A category of `prompts/taxonomy.yaml` with its French label.",
+        "required": [
+          "key",
+          "label"
+        ],
+        "properties": {
+          "key": {
+            "type": "string",
+            "example": "achats_publics"
+          },
+          "label": {
+            "type": "string",
+            "example": "Achats publics"
+          }
+        }
+      },
+      "Confidence": {
+        "type": "string",
+        "description": "Quality of the available data behind an estimate (§6.2 `confidence`).",
+        "enum": [
+          "Low",
+          "Medium",
+          "High"
+        ]
+      },
+      "ContributionKind": {
+        "type": "string",
+        "description": "Kind of contribution attached to a published idea (§5.4, §5.5). Keys of\n`contribution_kinds` in `prompts/taxonomy.yaml`, plus `doublon` for merged duplicates.",
+        "enum": [
+          "Improvement",
+          "Objection",
+          "Duplicate"
+        ]
       },
       "ContributionSubmission": {
         "type": "object",
@@ -688,6 +984,40 @@
           "Improvement",
           "Objection"
         ]
+      },
+      "ContributionSummary": {
+        "type": "object",
+        "description": "A contribution taken into account by an analysis: neutral summary, never the raw text.",
+        "required": [
+          "kind",
+          "summary",
+          "taken_into_account",
+          "response",
+          "integrated_on"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/ContributionKind"
+          },
+          "summary": {
+            "type": "string"
+          },
+          "taken_into_account": {
+            "type": "boolean",
+            "description": "Whether the analysis changed because of it."
+          },
+          "response": {
+            "type": "string",
+            "description": "Answer of the analysis to the contribution."
+          },
+          "integrated_on": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date"
+          }
+        }
       },
       "DeletionResponse": {
         "type": "object",
@@ -734,6 +1064,50 @@
           }
         }
       },
+      "EuroRange": {
+        "type": "object",
+        "description": "Low, median and high estimate, in whole euros.",
+        "required": [
+          "low",
+          "median",
+          "high"
+        ],
+        "properties": {
+          "low": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "median": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "high": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "FeasibilityAssessment": {
+        "type": "object",
+        "required": [
+          "score",
+          "obstacles"
+        ],
+        "properties": {
+          "score": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1 to 5.",
+            "minimum": 0
+          },
+          "obstacles": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "HealthResponse": {
         "type": "object",
         "required": [
@@ -745,6 +1119,384 @@
             "example": "ok"
           }
         }
+      },
+      "IdeaAnalysis": {
+        "type": "object",
+        "description": "Generated analysis of the idea (§6.2).",
+        "required": [
+          "improved_proposal",
+          "existing_situation",
+          "legal_vehicle",
+          "annual_gain_eur",
+          "implementation_cost_eur",
+          "time_to_effect_months",
+          "feasibility",
+          "confidence",
+          "confidence_explanation",
+          "assumptions",
+          "pros",
+          "cons",
+          "risks",
+          "impacts",
+          "sources",
+          "changes_since_previous"
+        ],
+        "properties": {
+          "improved_proposal": {
+            "type": "string"
+          },
+          "existing_situation": {
+            "type": "string"
+          },
+          "legal_vehicle": {
+            "$ref": "#/components/schemas/LegalVehicle"
+          },
+          "annual_gain_eur": {
+            "$ref": "#/components/schemas/AmountEstimate"
+          },
+          "implementation_cost_eur": {
+            "$ref": "#/components/schemas/AmountEstimate"
+          },
+          "time_to_effect_months": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "feasibility": {
+            "$ref": "#/components/schemas/FeasibilityAssessment"
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/Confidence"
+          },
+          "confidence_explanation": {
+            "type": "string"
+          },
+          "assumptions": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "pros": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "cons": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "risks": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          },
+          "impacts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ImpactAssessment"
+            },
+            "description": "One entry per public of the taxonomy, in its order."
+          },
+          "sources": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/SourceReference"
+            }
+          },
+          "changes_since_previous": {
+            "type": "string",
+            "description": "What changed since the previous analysis (empty for the first one)."
+          }
+        }
+      },
+      "IdeaDetail": {
+        "type": "object",
+        "description": "Page of a published idea.",
+        "required": [
+          "slug",
+          "title",
+          "summary",
+          "admin_level",
+          "territory",
+          "category",
+          "kind",
+          "original",
+          "analysis",
+          "score",
+          "contributions",
+          "rights_of_reply",
+          "ai",
+          "proposal_count",
+          "contribution_count",
+          "published_on",
+          "updated_at",
+          "canonical_url"
+        ],
+        "properties": {
+          "slug": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "description": "Neutral title written by the analysis."
+          },
+          "summary": {
+            "type": "string"
+          },
+          "admin_level": {
+            "$ref": "#/components/schemas/AdminLevel"
+          },
+          "territory": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TerritoryRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "category": {
+            "$ref": "#/components/schemas/CategoryRef"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/IdeaKind"
+          },
+          "original": {
+            "$ref": "#/components/schemas/OriginalText"
+          },
+          "analysis": {
+            "$ref": "#/components/schemas/IdeaAnalysis"
+          },
+          "score": {
+            "$ref": "#/components/schemas/ScoreComponents"
+          },
+          "contributions": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ContributionSummary"
+            }
+          },
+          "rights_of_reply": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RightOfReply"
+            }
+          },
+          "ai": {
+            "$ref": "#/components/schemas/AiMarking"
+          },
+          "proposal_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many times the idea was proposed (merged duplicates included).",
+            "minimum": 0
+          },
+          "contribution_count": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "published_on": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "Day of the first publication (Europe/Paris)."
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Date of the current analysis."
+          },
+          "canonical_url": {
+            "type": "string",
+            "description": "`https://{TRAEFIK_HOST}/idees/{slug}`."
+          }
+        }
+      },
+      "IdeaKind": {
+        "type": "string",
+        "description": "Nature of the budget effect (§6.2 `kind`).",
+        "enum": [
+          "Savings",
+          "Revenue",
+          "Mixed"
+        ]
+      },
+      "IdeaList": {
+        "type": "object",
+        "description": "A page of the ranking.",
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total",
+          "total_pages",
+          "search"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/IdeaListItem"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "per_page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Ideas matching the filters, all pages included.",
+            "minimum": 0
+          },
+          "total_pages": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "search": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/SearchMatch",
+                "description": "How the search matched, `null` without search."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "IdeaListItem": {
+        "type": "object",
+        "description": "An idea of the ranking (card).",
+        "required": [
+          "slug",
+          "title",
+          "summary",
+          "admin_level",
+          "territory",
+          "category",
+          "kind",
+          "annual_gain_eur",
+          "feasibility",
+          "time_to_effect_months",
+          "confidence",
+          "score",
+          "proposal_count",
+          "contribution_count",
+          "updated_at"
+        ],
+        "properties": {
+          "slug": {
+            "type": "string"
+          },
+          "title": {
+            "type": "string",
+            "description": "Neutral title written by the analysis."
+          },
+          "summary": {
+            "type": "string"
+          },
+          "admin_level": {
+            "$ref": "#/components/schemas/AdminLevel"
+          },
+          "territory": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/TerritoryRef"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "category": {
+            "$ref": "#/components/schemas/CategoryRef"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/IdeaKind"
+          },
+          "annual_gain_eur": {
+            "$ref": "#/components/schemas/EuroRange",
+            "description": "Gross annual gain once in full effect."
+          },
+          "feasibility": {
+            "type": "integer",
+            "format": "int32",
+            "description": "1 to 5.",
+            "minimum": 0
+          },
+          "time_to_effect_months": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "confidence": {
+            "$ref": "#/components/schemas/Confidence"
+          },
+          "score": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Composite score in euros per year (« score calculé par algorithme »)."
+          },
+          "proposal_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "How many times the idea was proposed (merged duplicates included).",
+            "minimum": 0
+          },
+          "contribution_count": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Integrated improvements and objections.",
+            "minimum": 0
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Date of the current analysis."
+          }
+        }
+      },
+      "IdeaRedirect": {
+        "type": "object",
+        "description": "Body of the redirection of a merged idea to the idea it was merged into.",
+        "required": [
+          "slug"
+        ],
+        "properties": {
+          "slug": {
+            "type": "string",
+            "description": "Slug of the idea to show instead."
+          }
+        }
+      },
+      "IdeaSort": {
+        "type": "string",
+        "description": "Order of the ranking (§6.3): composite score by default.",
+        "enum": [
+          "Score",
+          "Gain",
+          "Feasibility",
+          "Delay",
+          "Recent"
+        ]
       },
       "IdeaSubmission": {
         "type": "object",
@@ -794,6 +1546,56 @@
         },
         "additionalProperties": false
       },
+      "ImpactAssessment": {
+        "type": "object",
+        "description": "Impact of the idea on one public of the taxonomy.",
+        "required": [
+          "public",
+          "label",
+          "effect",
+          "explanation"
+        ],
+        "properties": {
+          "public": {
+            "type": "string",
+            "description": "Key of `impact_publics` in the taxonomy."
+          },
+          "label": {
+            "type": "string",
+            "description": "French label of the public."
+          },
+          "effect": {
+            "$ref": "#/components/schemas/ImpactDirection"
+          },
+          "explanation": {
+            "type": "string"
+          }
+        }
+      },
+      "ImpactDirection": {
+        "type": "string",
+        "description": "Direction of the impact of an idea on a public (§6.2 `impacts`).",
+        "enum": [
+          "Positive",
+          "Neutral",
+          "Negative",
+          "Uncertain"
+        ]
+      },
+      "LegalVehicle": {
+        "type": "string",
+        "description": "Legal instrument needed to implement an idea (§6.2 `legal_vehicle`).",
+        "enum": [
+          "Loi",
+          "LoiDeFinances",
+          "Decret",
+          "Arrete",
+          "Deliberation",
+          "Circulaire",
+          "OrganisationInterne",
+          "Autre"
+        ]
+      },
       "Measure": {
         "type": "string",
         "description": "Measure taken against the text.",
@@ -801,6 +1603,33 @@
           "Rejected",
           "Hidden"
         ]
+      },
+      "OriginalText": {
+        "type": "object",
+        "description": "Masked original text of the author, shown apart from the generated content.",
+        "required": [
+          "text",
+          "personal_data_masked",
+          "attribution",
+          "notice"
+        ],
+        "properties": {
+          "text": {
+            "type": "string"
+          },
+          "personal_data_masked": {
+            "type": "boolean",
+            "description": "Personal data was masked automatically (`[donnée masquée]`)."
+          },
+          "attribution": {
+            "type": "string",
+            "example": "Contribution anonyme – iapolitique.fr"
+          },
+          "notice": {
+            "type": "string",
+            "description": "Heading shown above the text."
+          }
+        }
       },
       "ReportReason": {
         "type": "string",
@@ -894,6 +1723,33 @@
           "Done"
         ]
       },
+      "RightOfReply": {
+        "type": "object",
+        "description": "Right of reply published by the editor under the idea (LCEN art. 1-1 III). Plain text.",
+        "required": [
+          "author_label",
+          "body",
+          "published_at",
+          "updated_at"
+        ],
+        "properties": {
+          "author_label": {
+            "type": "string",
+            "description": "How the person replying is designated, as they asked."
+          },
+          "body": {
+            "type": "string"
+          },
+          "published_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "updated_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
       "RuleReference": {
         "type": "object",
         "description": "Rule at stake in a decision, as sent to the author.",
@@ -916,6 +1772,83 @@
             "type": "string",
             "description": "Relative link to the article, e.g. `/regles#critere-sujet`.",
             "example": "/regles#critere-sujet"
+          }
+        }
+      },
+      "ScoreComponents": {
+        "type": "object",
+        "description": "Components of the composite score (§6.3), « score calculé par algorithme ».",
+        "required": [
+          "label",
+          "scoring_version",
+          "net_annual_eur",
+          "feasibility_factor",
+          "confidence_factor",
+          "delay_factor",
+          "score"
+        ],
+        "properties": {
+          "label": {
+            "type": "string",
+            "example": "score calculé par algorithme"
+          },
+          "scoring_version": {
+            "type": "string"
+          },
+          "net_annual_eur": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "feasibility_factor": {
+            "type": "number",
+            "format": "double"
+          },
+          "confidence_factor": {
+            "type": "number",
+            "format": "double"
+          },
+          "delay_factor": {
+            "type": "number",
+            "format": "double"
+          },
+          "score": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
+      "SearchMatch": {
+        "type": "string",
+        "description": "How the search text matched.",
+        "enum": [
+          "Exact",
+          "Approximate"
+        ]
+      },
+      "SourceReference": {
+        "type": "object",
+        "description": "A source cited by the analysis. Its URL comes from the AI: render it as a link only when\nits scheme is `https:` or `http:` (§14.1).",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "`S1`, `S2`… as cited in the texts.",
+            "default": ""
+          },
+          "title": {
+            "type": "string",
+            "default": ""
+          },
+          "publisher": {
+            "type": "string",
+            "default": ""
+          },
+          "url": {
+            "type": "string",
+            "default": ""
+          },
+          "used_for": {
+            "type": "string",
+            "default": ""
           }
         }
       },
@@ -1027,6 +1960,25 @@
           "Contribution",
           "Report"
         ]
+      },
+      "TerritoryRef": {
+        "type": "object",
+        "description": "Territory targeted by an idea.",
+        "required": [
+          "name",
+          "insee_code"
+        ],
+        "properties": {
+          "name": {
+            "type": "string",
+            "example": "Lyon"
+          },
+          "insee_code": {
+            "type": "string",
+            "description": "INSEE code, empty when unknown.",
+            "example": "69123"
+          }
+        }
       },
       "TrackedIdea": {
         "type": "object",
@@ -1164,6 +2116,10 @@
     {
       "name": "antispam",
       "description": "Protection anti-abus des formulaires (ALTCHA)"
+    },
+    {
+      "name": "portal",
+      "description": "Classement et pages des idées publiées"
     },
     {
       "name": "submissions",

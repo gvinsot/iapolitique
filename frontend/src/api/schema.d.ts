@@ -62,13 +62,35 @@ export interface paths {
             path?: never;
             cookie?: never;
         };
-        get?: never;
+        /** Ranking of the published ideas. */
+        get: operations["listIdeas"];
         put?: never;
         /**
          * Submits an idea: screened at once by the decision model, answered with its status and a
          *     tracking token.
          */
         post: operations["submitIdea"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ideas/{slug}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Page of a published idea, with its current analysis, its score components, the summaries
+         *     of the integrated contributions and the rights of reply. The slug of an idea merged into
+         *     another one answers `301` towards the other idea (its `Location` and the body give its slug).
+         */
+        get: operations["getIdea"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -218,6 +240,34 @@ export interface components {
         AdminSession: {
             authenticated: boolean;
         };
+        /** @description Machine-readable marking of the generated content (AI Act art. 50, §7.5). */
+        AiMarking: {
+            /** @description Always `true`: title, summary, analysis and contribution summaries are generated. */
+            ai_generated: boolean;
+            /** @example Mistral AI */
+            provider: string;
+            model: string;
+            /** Format: date-time */
+            generated_at: string;
+            /**
+             * Format: int32
+             * @description Version of the analysis of this idea (1 for the first one).
+             */
+            analysis_version: number;
+            /** @description Version of `prompts/analysis.md`. */
+            prompt_version: string;
+            /** @description Version of `prompts/analysis_research.md`. */
+            research_prompt_version: string | null;
+            /** @description Fingerprint of `prompts/analysis.schema.json`. */
+            schema_version: string;
+            scoring_version: string;
+            /** Format: int32 */
+            web_search_count: number;
+            /** @description Always `false`: no systematic human review. */
+            human_reviewed: boolean;
+            /** @description Label shown before every generated block. */
+            notice: string;
+        };
         /** @description Challenge sent to the widget (`GET /api/altcha/challenge`). */
         AltchaChallenge: {
             /**
@@ -237,6 +287,34 @@ export interface components {
             /** @description Hex HMAC-SHA-256 of `challenge`. */
             signature: string;
         };
+        /** @description An estimate with its detailed calculation (citing the sources `[Sx]`). */
+        AmountEstimate: {
+            /** Format: int64 */
+            low: number;
+            /** Format: int64 */
+            median: number;
+            /** Format: int64 */
+            high: number;
+            calculation: string;
+        };
+        /** @description A category of `prompts/taxonomy.yaml` with its French label. */
+        CategoryRef: {
+            /** @example achats_publics */
+            key: string;
+            /** @example Achats publics */
+            label: string;
+        };
+        /**
+         * @description Quality of the available data behind an estimate (§6.2 `confidence`).
+         * @enum {string}
+         */
+        Confidence: "Low" | "Medium" | "High";
+        /**
+         * @description Kind of contribution attached to a published idea (§5.4, §5.5). Keys of
+         *     `contribution_kinds` in `prompts/taxonomy.yaml`, plus `doublon` for merged duplicates.
+         * @enum {string}
+         */
+        ContributionKind: "Improvement" | "Objection" | "Duplicate";
         /** @description An improvement or an objection to a published idea (§5.5). */
         ContributionSubmission: {
             kind: components["schemas"]["ContributionSubmissionKind"];
@@ -257,6 +335,17 @@ export interface components {
          * @enum {string}
          */
         ContributionSubmissionKind: "Improvement" | "Objection";
+        /** @description A contribution taken into account by an analysis: neutral summary, never the raw text. */
+        ContributionSummary: {
+            kind: components["schemas"]["ContributionKind"];
+            summary: string;
+            /** @description Whether the analysis changed because of it. */
+            taken_into_account: boolean;
+            /** @description Answer of the analysis to the contribution. */
+            response: string;
+            /** Format: date */
+            integrated_on: string | null;
+        };
         /** @description Confirmation of a deletion. */
         DeletionResponse: {
             /**
@@ -281,10 +370,157 @@ export interface components {
              */
             message: string;
         };
+        /** @description Low, median and high estimate, in whole euros. */
+        EuroRange: {
+            /** Format: int64 */
+            low: number;
+            /** Format: int64 */
+            median: number;
+            /** Format: int64 */
+            high: number;
+        };
+        FeasibilityAssessment: {
+            /**
+             * Format: int32
+             * @description 1 to 5.
+             */
+            score: number;
+            obstacles: string[];
+        };
         HealthResponse: {
             /** @example ok */
             status: string;
         };
+        /** @description Generated analysis of the idea (§6.2). */
+        IdeaAnalysis: {
+            improved_proposal: string;
+            existing_situation: string;
+            legal_vehicle: components["schemas"]["LegalVehicle"];
+            annual_gain_eur: components["schemas"]["AmountEstimate"];
+            implementation_cost_eur: components["schemas"]["AmountEstimate"];
+            /** Format: int32 */
+            time_to_effect_months: number;
+            feasibility: components["schemas"]["FeasibilityAssessment"];
+            confidence: components["schemas"]["Confidence"];
+            confidence_explanation: string;
+            assumptions: string[];
+            pros: string[];
+            cons: string[];
+            risks: string[];
+            /** @description One entry per public of the taxonomy, in its order. */
+            impacts: components["schemas"]["ImpactAssessment"][];
+            sources: components["schemas"]["SourceReference"][];
+            /** @description What changed since the previous analysis (empty for the first one). */
+            changes_since_previous: string;
+        };
+        /** @description Page of a published idea. */
+        IdeaDetail: {
+            slug: string;
+            /** @description Neutral title written by the analysis. */
+            title: string;
+            summary: string;
+            admin_level: components["schemas"]["AdminLevel"];
+            territory: components["schemas"]["TerritoryRef"] | null;
+            category: components["schemas"]["CategoryRef"];
+            kind: components["schemas"]["IdeaKind"];
+            original: components["schemas"]["OriginalText"];
+            analysis: components["schemas"]["IdeaAnalysis"];
+            score: components["schemas"]["ScoreComponents"];
+            contributions: components["schemas"]["ContributionSummary"][];
+            rights_of_reply: components["schemas"]["RightOfReply"][];
+            ai: components["schemas"]["AiMarking"];
+            /**
+             * Format: int32
+             * @description How many times the idea was proposed (merged duplicates included).
+             */
+            proposal_count: number;
+            /** Format: int32 */
+            contribution_count: number;
+            /**
+             * Format: date
+             * @description Day of the first publication (Europe/Paris).
+             */
+            published_on: string | null;
+            /**
+             * Format: date-time
+             * @description Date of the current analysis.
+             */
+            updated_at: string;
+            /** @description `https://{TRAEFIK_HOST}/idees/{slug}`. */
+            canonical_url: string;
+        };
+        /**
+         * @description Nature of the budget effect (§6.2 `kind`).
+         * @enum {string}
+         */
+        IdeaKind: "Savings" | "Revenue" | "Mixed";
+        /** @description A page of the ranking. */
+        IdeaList: {
+            items: components["schemas"]["IdeaListItem"][];
+            /** Format: int32 */
+            page: number;
+            /** Format: int32 */
+            per_page: number;
+            /**
+             * Format: int64
+             * @description Ideas matching the filters, all pages included.
+             */
+            total: number;
+            /** Format: int32 */
+            total_pages: number;
+            search: components["schemas"]["SearchMatch"] | null;
+        };
+        /** @description An idea of the ranking (card). */
+        IdeaListItem: {
+            slug: string;
+            /** @description Neutral title written by the analysis. */
+            title: string;
+            summary: string;
+            admin_level: components["schemas"]["AdminLevel"];
+            territory: components["schemas"]["TerritoryRef"] | null;
+            category: components["schemas"]["CategoryRef"];
+            kind: components["schemas"]["IdeaKind"];
+            /** @description Gross annual gain once in full effect. */
+            annual_gain_eur: components["schemas"]["EuroRange"];
+            /**
+             * Format: int32
+             * @description 1 to 5.
+             */
+            feasibility: number;
+            /** Format: int32 */
+            time_to_effect_months: number;
+            confidence: components["schemas"]["Confidence"];
+            /**
+             * Format: int64
+             * @description Composite score in euros per year (« score calculé par algorithme »).
+             */
+            score: number;
+            /**
+             * Format: int32
+             * @description How many times the idea was proposed (merged duplicates included).
+             */
+            proposal_count: number;
+            /**
+             * Format: int32
+             * @description Integrated improvements and objections.
+             */
+            contribution_count: number;
+            /**
+             * Format: date-time
+             * @description Date of the current analysis.
+             */
+            updated_at: string;
+        };
+        /** @description Body of the redirection of a merged idea to the idea it was merged into. */
+        IdeaRedirect: {
+            /** @description Slug of the idea to show instead. */
+            slug: string;
+        };
+        /**
+         * @description Order of the ranking (§6.3): composite score by default.
+         * @enum {string}
+         */
+        IdeaSort: "Score" | "Gain" | "Feasibility" | "Delay" | "Recent";
         /** @description A new idea (§5.1). */
         IdeaSubmission: {
             /**
@@ -305,11 +541,40 @@ export interface components {
             /** @description Solution of the ALTCHA widget (base64), accepted once. */
             altcha: string;
         };
+        /** @description Impact of the idea on one public of the taxonomy. */
+        ImpactAssessment: {
+            /** @description Key of `impact_publics` in the taxonomy. */
+            public: string;
+            /** @description French label of the public. */
+            label: string;
+            effect: components["schemas"]["ImpactDirection"];
+            explanation: string;
+        };
+        /**
+         * @description Direction of the impact of an idea on a public (§6.2 `impacts`).
+         * @enum {string}
+         */
+        ImpactDirection: "Positive" | "Neutral" | "Negative" | "Uncertain";
+        /**
+         * @description Legal instrument needed to implement an idea (§6.2 `legal_vehicle`).
+         * @enum {string}
+         */
+        LegalVehicle: "Loi" | "LoiDeFinances" | "Decret" | "Arrete" | "Deliberation" | "Circulaire" | "OrganisationInterne" | "Autre";
         /**
          * @description Measure taken against the text.
          * @enum {string}
          */
         Measure: "Rejected" | "Hidden";
+        /** @description Masked original text of the author, shown apart from the generated content. */
+        OriginalText: {
+            text: string;
+            /** @description Personal data was masked automatically (`[donnée masquée]`). */
+            personal_data_masked: boolean;
+            /** @example Contribution anonyme – iapolitique.fr */
+            attribution: string;
+            /** @description Heading shown above the text. */
+            notice: string;
+        };
         /**
          * @description Reason selected by the author of a report (§5.6): keys of `report_reasons` in
          *     `prompts/taxonomy.yaml`.
@@ -352,6 +617,16 @@ export interface components {
          * @enum {string}
          */
         ReviewRequestStatus: "Pending" | "Done";
+        /** @description Right of reply published by the editor under the idea (LCEN art. 1-1 III). Plain text. */
+        RightOfReply: {
+            /** @description How the person replying is designated, as they asked. */
+            author_label: string;
+            body: string;
+            /** Format: date-time */
+            published_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
         /** @description Rule at stake in a decision, as sent to the author. */
         RuleReference: {
             /**
@@ -366,6 +641,46 @@ export interface components {
              * @example /regles#critere-sujet
              */
             url: string;
+        };
+        /** @description Components of the composite score (§6.3), « score calculé par algorithme ». */
+        ScoreComponents: {
+            /** @example score calculé par algorithme */
+            label: string;
+            scoring_version: string;
+            /** Format: int64 */
+            net_annual_eur: number;
+            /** Format: double */
+            feasibility_factor: number;
+            /** Format: double */
+            confidence_factor: number;
+            /** Format: double */
+            delay_factor: number;
+            /** Format: int64 */
+            score: number;
+        };
+        /**
+         * @description How the search text matched.
+         * @enum {string}
+         */
+        SearchMatch: "Exact" | "Approximate";
+        /**
+         * @description A source cited by the analysis. Its URL comes from the AI: render it as a link only when
+         *     its scheme is `https:` or `http:` (§14.1).
+         */
+        SourceReference: {
+            /**
+             * @description `S1`, `S2`… as cited in the texts.
+             * @default
+             */
+            id: string;
+            /** @default  */
+            title: string;
+            /** @default  */
+            publisher: string;
+            /** @default  */
+            url: string;
+            /** @default  */
+            used_for: string;
         };
         /** @description Statement of reasons, given with a refusal and on the tracking page. */
         StatementOfReasons: {
@@ -419,6 +734,16 @@ export interface components {
          * @enum {string}
          */
         TargetKind: "Idea" | "Contribution" | "Report";
+        /** @description Territory targeted by an idea. */
+        TerritoryRef: {
+            /** @example Lyon */
+            name: string;
+            /**
+             * @description INSEE code, empty when unknown.
+             * @example 69123
+             */
+            insee_code: string;
+        };
         /** @description Published idea concerned by the tracked text. */
         TrackedIdea: {
             slug: string;
@@ -466,24 +791,48 @@ export interface components {
 }
 export type SchemaAdminLevel = components['schemas']['AdminLevel'];
 export type SchemaAdminSession = components['schemas']['AdminSession'];
+export type SchemaAiMarking = components['schemas']['AiMarking'];
 export type SchemaAltchaChallenge = components['schemas']['AltchaChallenge'];
+export type SchemaAmountEstimate = components['schemas']['AmountEstimate'];
+export type SchemaCategoryRef = components['schemas']['CategoryRef'];
+export type SchemaConfidence = components['schemas']['Confidence'];
+export type SchemaContributionKind = components['schemas']['ContributionKind'];
 export type SchemaContributionSubmission = components['schemas']['ContributionSubmission'];
 export type SchemaContributionSubmissionKind = components['schemas']['ContributionSubmissionKind'];
+export type SchemaContributionSummary = components['schemas']['ContributionSummary'];
 export type SchemaDeletionResponse = components['schemas']['DeletionResponse'];
 export type SchemaErrorBody = components['schemas']['ErrorBody'];
 export type SchemaErrorDetail = components['schemas']['ErrorDetail'];
+export type SchemaEuroRange = components['schemas']['EuroRange'];
+export type SchemaFeasibilityAssessment = components['schemas']['FeasibilityAssessment'];
 export type SchemaHealthResponse = components['schemas']['HealthResponse'];
+export type SchemaIdeaAnalysis = components['schemas']['IdeaAnalysis'];
+export type SchemaIdeaDetail = components['schemas']['IdeaDetail'];
+export type SchemaIdeaKind = components['schemas']['IdeaKind'];
+export type SchemaIdeaList = components['schemas']['IdeaList'];
+export type SchemaIdeaListItem = components['schemas']['IdeaListItem'];
+export type SchemaIdeaRedirect = components['schemas']['IdeaRedirect'];
+export type SchemaIdeaSort = components['schemas']['IdeaSort'];
 export type SchemaIdeaSubmission = components['schemas']['IdeaSubmission'];
+export type SchemaImpactAssessment = components['schemas']['ImpactAssessment'];
+export type SchemaImpactDirection = components['schemas']['ImpactDirection'];
+export type SchemaLegalVehicle = components['schemas']['LegalVehicle'];
 export type SchemaMeasure = components['schemas']['Measure'];
+export type SchemaOriginalText = components['schemas']['OriginalText'];
 export type SchemaReportReason = components['schemas']['ReportReason'];
 export type SchemaReportSubmission = components['schemas']['ReportSubmission'];
 export type SchemaReviewOutcome = components['schemas']['ReviewOutcome'];
 export type SchemaReviewRequestBody = components['schemas']['ReviewRequestBody'];
 export type SchemaReviewRequestStatus = components['schemas']['ReviewRequestStatus'];
+export type SchemaRightOfReply = components['schemas']['RightOfReply'];
 export type SchemaRuleReference = components['schemas']['RuleReference'];
+export type SchemaScoreComponents = components['schemas']['ScoreComponents'];
+export type SchemaSearchMatch = components['schemas']['SearchMatch'];
+export type SchemaSourceReference = components['schemas']['SourceReference'];
 export type SchemaStatementOfReasons = components['schemas']['StatementOfReasons'];
 export type SchemaSubmissionResponse = components['schemas']['SubmissionResponse'];
 export type SchemaTargetKind = components['schemas']['TargetKind'];
+export type SchemaTerritoryRef = components['schemas']['TerritoryRef'];
 export type SchemaTrackedIdea = components['schemas']['TrackedIdea'];
 export type SchemaTrackedItem = components['schemas']['TrackedItem'];
 export type SchemaTrackedReviewRequest = components['schemas']['TrackedReviewRequest'];
@@ -559,6 +908,59 @@ export interface operations {
             };
         };
     };
+    listIdeas: {
+        parameters: {
+            query?: {
+                /** @description Order of the ranking (`score` by default). */
+                sort?: components["schemas"]["IdeaSort"];
+                admin_level?: components["schemas"]["AdminLevel"];
+                /**
+                 * @description Category key of the taxonomy (`GET /api/taxonomy`).
+                 * @example achats_publics
+                 */
+                category?: string;
+                kind?: components["schemas"]["IdeaKind"];
+                /**
+                 * @description Territory name (part of it, accents and case ignored) or INSEE code, 120 characters.
+                 * @example Lyon
+                 */
+                territory?: string;
+                /**
+                 * @description Search in the neutral titles and summaries (French, accents ignored, approaching
+                 *     results when nothing matches exactly), 200 characters.
+                 */
+                q?: string;
+                /** @description Page number, from 1. */
+                page?: number;
+                /** @description Ideas per page, 1 to 50 (20 by default). */
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Une page du classement. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdeaList"];
+                };
+            };
+            /** @description Paramètre invalide (`invalid_query`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     submitIdea: {
         parameters: {
             query?: never;
@@ -610,6 +1012,47 @@ export interface operations {
             };
             /** @description Service momentanément surchargé. */
             503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getIdea: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Slug de l'idée */
+                slug: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description L'idée publiée. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdeaDetail"];
+                };
+            };
+            /** @description Idée fusionnée dans une autre : voir `Location`. */
+            301: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["IdeaRedirect"];
+                };
+            };
+            /** @description Idée inconnue, masquée ou purgée (`idea_not_found`). */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

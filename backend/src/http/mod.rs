@@ -20,15 +20,19 @@ use crate::config::{Config, Secret};
 
 pub mod admin;
 pub mod antispam;
+pub mod cache;
 pub mod client_ip;
 pub mod error;
 pub mod extract;
 pub mod health;
+pub mod ideas;
 pub mod middleware;
 pub mod openapi;
 pub mod submissions;
 pub mod tracking;
 
+#[cfg(test)]
+mod ideas_tests;
 #[cfg(test)]
 mod submission_tests;
 #[cfg(test)]
@@ -78,7 +82,11 @@ pub fn public_router(state: AppState) -> Router {
     let router = system_routes()
         .route("/api/openapi.json", get(openapi::openapi_json))
         .route("/api/altcha/challenge", get(antispam::altcha_challenge))
-        .route("/api/ideas", post(submissions::submit_idea))
+        .route(
+            "/api/ideas",
+            get(ideas::list).post(submissions::submit_idea),
+        )
+        .route("/api/ideas/{slug}", get(ideas::detail))
         .route(
             "/api/ideas/{slug}/contributions",
             post(submissions::submit_contribution),

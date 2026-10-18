@@ -9,8 +9,8 @@
 //!   their text and everything derived from it are erased and the status becomes `purged`: the
 //!   original text, the territory, the title, summary and slug, the text of their analyses
 //!   (amounts, category and scores stay for statistics), the explanations of their report
-//!   reviews, their embedding; their contributions are deleted (with their tracking tokens) and
-//!   the duplicates merged into them are purged too.
+//!   reviews, their embedding, the rights of reply published under them; their contributions
+//!   are deleted (with their tracking tokens) and the duplicates merged into them are purged too.
 //! - Handled review requests are deleted one year after their handling.
 //! - Reports: the optional name and e-mail of the reporter are erased 6 months after the report;
 //!   reviewed reports lose their details and their tracking token 6 months after the review.
@@ -327,6 +327,12 @@ async fn purge_hidden_ideas(
         .execute(&mut *conn)
         .await?
         .rows_affected() as i64;
+
+    // Rights of reply published under them (they quote or answer the idea).
+    sqlx::query("DELETE FROM rights_of_reply WHERE idea_id = ANY($1)")
+        .bind(&ideas)
+        .execute(&mut *conn)
+        .await?;
 
     // Duplicates merged into them: same purge as the ideas, without publication columns.
     let duplicates: Vec<Uuid> = sqlx::query_scalar(
@@ -914,6 +920,14 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        sqlx::query(
+            "INSERT INTO rights_of_reply (idea_id, author_label, body, requested_on)
+             VALUES ($1, 'Le service concerné', 'Réponse.', current_date)",
+        )
+        .bind(old)
+        .execute(&pool)
+        .await
+        .unwrap();
         let duplicate = crate::test_support::idea_with_status(&pool, "dedup").await;
         sqlx::query("UPDATE ideas SET status = 'published' WHERE id = $1")
             .bind(old)
@@ -949,6 +963,13 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(idea["status"], "purged");
+        let replies: i64 =
+            sqlx::query_scalar("SELECT count(*) FROM rights_of_reply WHERE idea_id = $1")
+                .bind(old)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(replies, 0);
         for field in [
             "original_text",
             "title",

@@ -426,3 +426,140 @@ pub async fn published_idea(pool: &PgPool, slug: &str) -> Uuid {
     .unwrap();
     idea
 }
+
+/// Publication columns of an idea of the portal tests ([`listed_idea`]).
+#[derive(Debug, Clone)]
+pub struct IdeaSpec<'a> {
+    pub slug: &'a str,
+    pub title: &'a str,
+    pub summary: &'a str,
+    pub admin_level: &'a str,
+    pub category: &'a str,
+    pub kind: &'a str,
+    /// Territory name and INSEE code.
+    pub territory: Option<(&'a str, &'a str)>,
+    pub annual_gain_median_eur: i64,
+    pub feasibility: i16,
+    pub time_to_effect_months: i32,
+    pub score_eur: i64,
+    /// Days since the publication.
+    pub published_days_ago: i32,
+    pub status: &'a str,
+}
+
+impl Default for IdeaSpec<'_> {
+    fn default() -> Self {
+        Self {
+            slug: "mutualiser-les-achats",
+            title: "Mutualiser les achats courants des hôpitaux publics",
+            summary: "Regrouper les achats courants des hôpitaux au sein de centrales régionales.",
+            admin_level: "securite_sociale",
+            category: "maladie",
+            kind: "savings",
+            territory: None,
+            annual_gain_median_eur: 2_000_000,
+            feasibility: 4,
+            time_to_effect_months: 18,
+            score_eur: 1_000_000,
+            published_days_ago: 1,
+            status: "published",
+        }
+    }
+}
+
+/// Inserts an idea with a complete current analysis (content: the analysis fixture) and the
+/// publication columns of `spec`, then sets its status (`published` or `hidden`). Returns its
+/// id.
+pub async fn listed_idea(pool: &PgPool, spec: &IdeaSpec<'_>) -> Uuid {
+    let idea: Uuid = sqlx::query_scalar(
+        "INSERT INTO ideas (original_text, cgu_version, cgu_accepted_at)
+         VALUES ('Regrouper les achats des hôpitaux. Contact : [donnée masquée]', '1.0',
+                 current_date)
+         RETURNING id",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    let (territory_name, territory_code) = spec.territory.unzip();
+    let analysis: Uuid = sqlx::query_scalar(
+        "INSERT INTO analyses (
+            idea_id, version, trigger, content, title, summary, kind, category, admin_level,
+            territory_name, territory_code, legal_vehicle, annual_gain_low_eur,
+            annual_gain_median_eur, annual_gain_high_eur, implementation_cost_low_eur,
+            implementation_cost_median_eur, implementation_cost_high_eur,
+            time_to_effect_months, feasibility, confidence, score_eur, net_annual_eur,
+            feasibility_factor, confidence_factor, delay_factor, model, prompt_version,
+            research_prompt_version, schema_version, scoring_version, web_search_count
+         ) VALUES (
+            $1, 1, 'initial', $2, $3, $4, $5, $6, $7, $8, $9, 'organisation_interne',
+            $10 / 2, $10, $10 * 2, 0, 100000, 200000, $11, $12, 'medium', $13, $10 - 20000,
+            0.8, 0.75, 0.57, 'mistral-large-latest', '1.0.0', '1.0.0', 'sha256:0123456789ab',
+            '1', 2
+         ) RETURNING id",
+    )
+    .bind(idea)
+    .bind(analysis_output())
+    .bind(spec.title)
+    .bind(spec.summary)
+    .bind(spec.kind)
+    .bind(spec.category)
+    .bind(spec.admin_level)
+    .bind(territory_name)
+    .bind(territory_code)
+    .bind(spec.annual_gain_median_eur)
+    .bind(spec.time_to_effect_months)
+    .bind(spec.feasibility)
+    .bind(spec.score_eur)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE ideas SET status = $3, slug = $2, title = a.title, summary = a.summary,
+             current_analysis_id = a.id, admin_level = a.admin_level,
+             territory_name = a.territory_name, territory_code = a.territory_code,
+             category = a.category, kind = a.kind,
+             annual_gain_median_eur = a.annual_gain_median_eur,
+             implementation_cost_median_eur = a.implementation_cost_median_eur,
+             time_to_effect_months = a.time_to_effect_months, feasibility = a.feasibility,
+             confidence = a.confidence, score_eur = a.score_eur,
+             net_annual_eur = a.net_annual_eur, feasibility_factor = a.feasibility_factor,
+             confidence_factor = a.confidence_factor, delay_factor = a.delay_factor,
+             scoring_version = a.scoring_version, last_analyzed_at = a.created_at,
+             published_at = now() - make_interval(days => $4),
+             first_published_at = now() - make_interval(days => $4),
+             hidden_at = CASE WHEN $3 = 'hidden' THEN now() END,
+             hidden_reason = CASE WHEN $3 = 'hidden' THEN 'admin' END
+         FROM analyses a WHERE a.id = $5 AND ideas.id = $1",
+    )
+    .bind(idea)
+    .bind(spec.slug)
+    .bind(spec.status)
+    .bind(spec.published_days_ago)
+    .bind(analysis)
+    .execute(pool)
+    .await
+    .unwrap();
+    idea
+}
+
+/// GET on `router`: status, headers and JSON body (`Null` when empty or not JSON).
+pub async fn get_json(
+    router: &Router,
+    uri: &str,
+    headers: &[(&str, &str)],
+) -> (StatusCode, axum::http::HeaderMap, Value) {
+    let mut request = Request::get(uri);
+    for (name, value) in headers {
+        request = request.header(*name, *value);
+    }
+    let response = router
+        .clone()
+        .oneshot(request.body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let status = response.status();
+    let headers = response.headers().clone();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    (status, headers, value)
+}

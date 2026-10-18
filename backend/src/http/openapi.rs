@@ -12,6 +12,12 @@ use super::admin::{self, AdminSession};
 use super::antispam;
 use super::error::{ErrorBody, ErrorDetail};
 use super::health::{self, HealthResponse};
+use super::ideas::{
+    self, AiMarking, AmountEstimate, CategoryRef, ContributionSummary, EuroRange,
+    FeasibilityAssessment, IdeaAnalysis, IdeaDetail, IdeaList, IdeaListItem, IdeaRedirect,
+    ImpactAssessment, OriginalText, RightOfReply, ScoreComponents, SearchMatch, SourceReference,
+    TerritoryRef,
+};
 use super::submissions::{
     self, ContributionSubmission, ContributionSubmissionKind, IdeaSubmission, ReportSubmission,
     SubmissionResponse,
@@ -21,9 +27,11 @@ use super::tracking::{
     TrackingRequest,
 };
 use crate::antispam::altcha::AltchaChallenge;
+use crate::db::portal::IdeaSort;
 use crate::domain::rules::RuleReference;
 use crate::domain::types::{
-    AdminLevel, ReportReason, ReviewOutcome, ReviewRequestStatus, TargetKind,
+    AdminLevel, Confidence, ContributionKind, IdeaKind, ImpactDirection, LegalVehicle,
+    ReportReason, ReviewOutcome, ReviewRequestStatus, TargetKind,
 };
 use crate::moderation::statement::{Measure, StatementOfReasons};
 
@@ -43,6 +51,8 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         health::ready,
         openapi_json,
         antispam::altcha_challenge,
+        ideas::list,
+        ideas::detail,
         submissions::submit_idea,
         submissions::submit_contribution,
         submissions::submit_report,
@@ -75,12 +85,37 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         DeletionResponse,
         TargetKind,
         ReviewOutcome,
-        ReviewRequestStatus
+        ReviewRequestStatus,
+        IdeaSort,
+        IdeaKind,
+        Confidence,
+        LegalVehicle,
+        ImpactDirection,
+        ContributionKind,
+        SearchMatch,
+        IdeaList,
+        IdeaListItem,
+        TerritoryRef,
+        CategoryRef,
+        EuroRange,
+        IdeaDetail,
+        IdeaRedirect,
+        OriginalText,
+        IdeaAnalysis,
+        AmountEstimate,
+        FeasibilityAssessment,
+        ImpactAssessment,
+        SourceReference,
+        ScoreComponents,
+        AiMarking,
+        ContributionSummary,
+        RightOfReply
     )),
     modifiers(&AdminSecurity),
     tags(
         (name = "system", description = "Santé du service et spécification"),
         (name = "antispam", description = "Protection anti-abus des formulaires (ALTCHA)"),
+        (name = "portal", description = "Classement et pages des idées publiées"),
         (name = "submissions", description = "Dépôt d'idées, de contributions et de signalements"),
         (name = "tracking", description = "Suivi anonyme d'un envoi par son jeton"),
         (name = "admin", description = "Administration (réseau local uniquement, jeton requis)")
@@ -195,6 +230,7 @@ mod tests {
             "/api/openapi.json",
             "/api/altcha/challenge",
             "/api/ideas",
+            "/api/ideas/{slug}",
             "/api/ideas/{slug}/contributions",
             "/api/ideas/{slug}/reports",
             "/api/track",

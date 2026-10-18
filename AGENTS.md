@@ -230,7 +230,9 @@ n'appeler que `/v1/systemone`.
   - `injection` (`noul`) : tentative de manipulation d'une IA ;
   - `respectful` (`noul`) : pas d'insulte, de haine, d'incitation à la violence ;
   - `targeted` (`noul`) : vise nommément un parti, un élu, une personne ou un groupe
-    (religion, origine, orientation…) ;
+    (religion, origine, orientation…), ou promeut ou dénigre un candidat ou un parti ;
+  - `personal_data` (`noul`) : désigne un particulier identifiable (nom, fonction précise dans
+    un service nommé…) ou lui impute des faits (§7.5) ;
   - `on_topic` (`noul`) : propose une mesure qui réduit les dépenses ou augmente les recettes
     d'une administration publique française ;
   - `lawful` (`noul`) : compatible avec les droits fondamentaux ;
@@ -269,9 +271,10 @@ contributions et le résumé neutre de celles qui ont été prises en compte, ja
 Bouton « Signaler » sur chaque idée publiée : motif (erreur de chiffrage, source erronée,
 contenu problématique, doublon, autre) + précision facultative. Le signalement est filtré, puis
 traité **par IA** : Mistral réévalue l'idée avec le signalement (`prompts/report_review.md`) et
-conclut `maintain`, `update` (nouvelle analyse) ou `hide` (masquée, visible dans l'admin).
-Les signalements d'une même idée sont regroupés : au plus une réévaluation par idée et par
-24 h.
+conclut `maintain`, `update` (nouvelle analyse) ou `hide` (masquée, visible dans l'admin), avec
+un drapeau `escalate` pour les contenus graves (masquage immédiat et file d'escalade humaine,
+§7.5). Les signalements d'une même idée sont regroupés : au plus une réévaluation par idée et
+par 24 h, sauf `contenu_problematique`, traité sans délai. Formulaire et obligations : §7.5.
 
 ### 5.7 Déclencheurs de ré-analyse
 
@@ -376,8 +379,16 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
 - Aucune donnée personnelle collectée : pas de compte, pas d'email, pas d'IP, pas de user-agent
   stocké, pas de cookie.
 - **Lien de suivi** : à la soumission, un jeton aléatoire de 256 bits (base64url) est renvoyé
-  **une seule fois** (`/suivi/<jeton>`) ; seul son hash SHA-256 est stocké. L'interface invite
-  l'auteur à le conserver. Le même mécanisme vaut pour contributions et signalements.
+  **une seule fois** ; seul son hash SHA-256 est stocké. L'interface invite l'auteur à le
+  conserver. Le même mécanisme vaut pour contributions et signalements.
+  - Le jeton est placé dans le **fragment** de l'URL (`/suivi#<jeton>`) et envoyé à l'API dans
+    le **corps** d'un `POST` : il n'apparaît jamais dans une URL de requête, donc jamais dans les
+    journaux de Traefik ou de nginx. La page de suivi envoie `Referrer-Policy: no-referrer`.
+  - La page de suivi propose « Supprimer ma contribution » (effacement immédiat, retrait des
+    exports suivants) et « Demander un réexamen humain » (file admin).
+  - Un refus affiche l'exposé des motifs (DSA art. 17) : mesure prise, règle en cause (article
+    de `/regles`), « décision prise automatiquement par une IA », date de purge, voies de recours
+    (réexamen humain, contact, juge).
 - Logs applicatifs : jamais d'IP, de jeton, d'en-têtes d'identification ni de texte d'idée
   (seulement des identifiants internes).
 
@@ -385,10 +396,14 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
 
 - **ALTCHA** (proof-of-work auto-hébergé, clé `ALTCHA_HMAC_KEY`) sur dépôt, contribution et
   signalement. Aucun captcha tiers.
-- **Rate limit** applicatif par `HMAC(sel_du_jour, ip)` : le sel est aléatoire, renouvelé chaque
-  jour, partagé entre réplicas via la base et détruit le lendemain ; les compteurs expirent avec
-  lui. L'IP en clair n'est jamais persistée. L'IP cliente provient de `X-Forwarded-For` posé par
-  Traefik.
+- **Rate limit** applicatif par `HMAC(sel_du_jour, ip)` : le sel est aléatoire, gardé **en
+  mémoire uniquement** (jamais en base, sur disque, dans un log ou une sauvegarde), renouvelé
+  toutes les 24 h puis détruit ; les compteurs vivent aussi en mémoire et expirent en 24 h au
+  plus. L'api tourne en une réplique ; avec plusieurs répliques, la limite s'appliquerait par
+  réplique (acceptable). Les tables `rate_limit_salts` / `rate_limit_counters` du schéma
+  initial ne sont pas utilisées. L'IP en clair n'est jamais persistée. L'IP cliente provient de
+  `X-Forwarded-For` posé par Traefik (ports publiés en mode `host` : Traefik voit l'IP réelle).
+- Aucune empreinte HMAC n'est stockée avec une idée, une contribution ou un signalement.
 - Limites par défaut (configurables) : 5 idées / heure et 20 / jour, 20 contributions / jour,
   20 signalements / jour par empreinte.
 - Le WAF et le rate limit global de Traefik (`global@file`) s'appliquent en plus.
@@ -398,14 +413,92 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
 - Idée refusée : texte et jeton purgés **30 jours** après le refus ; seules des statistiques
   agrégées sont conservées (date, motif, niveau, scores du modèle de décision pour la calibration
   sans le texte).
-- Idées publiées : conservées avec leur texte original.
+- Idées publiées : conservées avec leur texte original (version masquée, voir §7.5).
+- Contenus masqués (`hidden`) : texte purgé après 12 mois.
+- Signalements traités : purgés après 6 mois (coordonnées facultatives du signalant comprises).
+- Contribution supprimée par son auteur : effacement immédiat.
 - Job de purge quotidien dans le worker, testé.
 
 ### 7.4 Export
 
-Export JSON et CSV des idées publiées et de leurs analyses (téléchargement depuis le portail,
-régénéré quotidiennement). Pas d'API publique documentée au MVP. Licence des données : à décider
-(voir [§11](#11-hors-périmètre-et-décisions-ouvertes)).
+Export JSON et CSV des idées publiées et de leurs analyses (téléchargement depuis le portail).
+Pas d'API publique documentée au MVP.
+
+- **Licence : Licence Ouverte 2.0 (Etalab)**, SPDX `etalab-2.0`, compatible CC BY 4.0, « dans
+  la mesure où des droits existent » ; contenus de tiers cités exclus. Concédant : l'éditeur
+  d'iapolitique.fr (les contributeurs lui concèdent leurs droits via les CGU, §7.5).
+- Chaque export contient un fichier `LICENSE` (texte LO 2.0) et des métadonnées : licence,
+  producteur, `generated_at`, version du schéma d'export, avertissement IA, exclusion des
+  contenus de tiers, mention « données personnelles masquées », avertissement d'irrévocabilité
+  (une copie déjà téléchargée ne peut pas être retirée) et invitation à se resynchroniser.
+- Par idée : texte original (`source_type=user`, `attribution="Contribution anonyme –
+  iapolitique.fr"`), champs générés marqués (`ai_generated=true`, `ai_model`, `ai_provider`,
+  `generated_at`, `analysis_version`, `human_reviewed=false`), `date_derniere_mise_a_jour` et
+  URL canonique. Sources : titre, éditeur, URL, date, sans extrait long.
+- **Exclus** : idées refusées, masquées ou en attente, jetons et hash, journaux de filtrage,
+  signalements, coordonnées, horodatages fins (dates au jour près).
+- Régénéré chaque nuit et après tout masquage ou suppression ; fichiers datés et versionnés.
+- Page `/licence` : licence, compatibilité CC BY 4.0, mention d'attribution prête à copier
+  (« Source : iapolitique.fr – Propositions citoyennes et analyses générées par IA (Mistral AI),
+  mise à jour du AAAA-MM-JJ – Licence Ouverte 2.0 »), avertissement IA.
+
+### 7.5 Conformité juridique
+
+Référence : [docs/juridique/memo.md](docs/juridique/memo.md) (décisions du 2026-10-18). Ce
+n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'humain.
+
+- **Éditeur** : personne physique, identité publiée (LCEN art. 1-1). Ses coordonnées ne sont
+  **jamais** dans git (dépôt public) : variables `LEGAL_PUBLISHER_NAME`,
+  `LEGAL_PUBLISHER_ADDRESS`, `LEGAL_PUBLISHER_PHONE`, `LEGAL_CONTACT_EMAIL`,
+  `LEGAL_PRIVACY_EMAIL`, servies par `GET /api/legal` et affichées par les pages légales.
+  Site auto-hébergé : l'hébergeur est l'éditeur lui-même.
+- **Pages** (liées dans le pied de page de toutes les pages) : `/mentions-legales`,
+  `/confidentialite`, `/regles` (CGU : critères numérotés d'acceptation et de rejet, modération
+  algorithmique d3-mini + Mistral sans relecture humaine systématique, mesures, durées, recours,
+  paramètres du score, clause de licence, interdits), `/licence`. Modèles de texte : sections 1 à
+  3 du mémo. Chaque page affiche sa date de mise à jour.
+- **Formulaires publiables** (idée, contribution) : deux cases **non pré-cochées**, envoi
+  bloqué sans elles : acceptation de la clause de licence des CGU, et « je comprends que mon
+  texte sera publié s'il est accepté ». Avertissement « Ne signez pas, ne nommez aucun agent ni
+  particulier » et mention du traitement par IA (modèle local puis Mistral AI). On stocke
+  `cgu_version` et `cgu_accepted_at` (au jour près) avec chaque contribution, rien d'autre.
+- **Données personnelles dans les textes** : avant tout appel à Mistral et avant publication,
+  masquage déterministe (e-mails, téléphones, IBAN, NIR, adresses postales, URL nominatives →
+  `[donnée masquée]`) ; et critère de filtrage `personal_data` (§5.3) qui refuse un texte
+  désignant un particulier identifiable, avec invitation à reformuler. Les élus et ministres
+  agissant dans leur fonction ne sont pas des particuliers, mais le critère `targeted` refuse
+  toute attaque ou promotion d'un parti, d'un candidat ou d'un élu. Le texte « original »
+  affiché est la version masquée, avec la mention « données personnelles masquées ».
+- **Transparence IA (AI Act art. 50, applicable depuis le 2026-08-02)** : avant chaque bloc
+  généré, l'étiquette visible et accessible « Analyse générée automatiquement par intelligence
+  artificielle (Mistral AI), sans relecture humaine. Elle peut contenir des erreurs ; vérifiez
+  les sources citées. Ce n'est pas une position officielle. » ; marquage lisible par machine
+  (`data-ai-generated="true"` et JSON-LD) dans le HTML et les exports. Le texte de l'internaute
+  est séparé visuellement sous « Contribution d'un internaute (texte original, données
+  personnelles masquées) ». Le score est présenté comme « score calculé par algorithme », jamais
+  comme un sondage ou une mesure d'opinion (vigilance renforcée du 2027-01-01 au second tour de
+  la présidentielle).
+- **Site non officiel** : mention persistante « Site citoyen indépendant et non officiel, sans
+  lien avec l'État ni aucune administration ». Interdits : Marianne, bloc-marque, DSFR, codes
+  visuels des sites .gouv.fr, vocabulaire administratif trompeur (« dossier », « validé par »).
+- **Signalement** (DSA « léger », LCEN art. 6) : motif, précision, nom et e-mail **facultatifs**,
+  déclaration de bonne foi, rappel de la sanction des signalements abusifs (LCEN art. 6 VII),
+  accusé de réception sur la page de suivi, mention du traitement automatisé.
+- **Escalade humaine** : la revue de signalement marque `escalate` les contenus graves
+  (diffamation, menace, haine, terrorisme, pédocriminalité) : masquage immédiat et file admin
+  « escalade » (transmission manuelle à PHAROS, cible 24 h).
+- **Droit de réponse** (LCEN art. 1-1 III) : l'admin peut publier une réponse attachée à une
+  idée (insertion sous 3 jours).
+- **Mistral AI** : sous-traitant (art. 28 RGPD). Option « Anonymous improvement data »
+  **désactivée** sur le compte (fait le 2026-10-18). Ne jamais utiliser de modèle « Labs » ou
+  « Preview ». Ne jamais transmettre IP, empreinte ou jeton. Le point d'accès UE
+  (`MISTRAL_API_BASE_URL`) est à confirmer ; la recherche web sort de la garantie régionale
+  (mentionné dans la politique de confidentialité).
+- **Journaux** : l'application ne collecte jamais l'IP en clair ; nginx sans IP. Les journaux
+  d'accès Traefik (infrastructure partagée) doivent tronquer l'IP ou être gardés 7 jours au plus
+  (voir `docs/ops.md`).
+- **Stockage local navigateur** : uniquement le thème et, si l'utilisateur le demande, ses liens
+  de suivi ; décrit dans `/confidentialite`. Aucun cookie, donc pas de bandeau.
 
 ---
 
@@ -493,6 +586,8 @@ décidée par l'humain.
 - Les variables sensibles portent un suffixe reconnu par PulsarCD pour devenir des secrets
   Docker : `DATABASE_CONNECTION_STRING`, `MISTRAL_API_KEY`, `ALTCHA_HMAC_KEY`,
   `ADMIN_API_TOKEN`. Ne jamais utiliser `DATABASE_URL` (serait déployé en clair).
+- Coordonnées légales (non secrètes mais hors git) : `LEGAL_PUBLISHER_NAME`,
+  `LEGAL_PUBLISHER_ADDRESS`, `LEGAL_PUBLISHER_PHONE`, `LEGAL_CONTACT_EMAIL`, `LEGAL_PRIVACY_EMAIL`.
 - Variables non sensibles : `TRAEFIK_HOST`, `ADMIN_HOST`, `LLM_NETWORK`, `DECISION_SERVICE_URL`,
   `MISTRAL_ANALYSIS_MODEL`, `MISTRAL_REVIEW_MODEL`, `MISTRAL_EMBED_MODEL`,
   `MISTRAL_DAILY_BUDGET_EUR`, prix unitaires Mistral, `DEDUP_SIMILARITY_THRESHOLD`, limites de
@@ -506,10 +601,14 @@ décidée par l'humain.
 (statut externe : déjà appliquée, en débat, reprise…). **Exclus** : comptes utilisateurs, votes,
 commentaires libres, ré-analyse périodique, API publique documentée, multi-pays, autres langues.
 
+**Décidé** : licence Licence Ouverte 2.0 (§7.4) ; éditeur personne physique avec identité
+publiée hors dépôt (§7.5) ; aucune IP en clair (§7.2, §7.5).
+
 **À décider** (ne pas trancher sans l'humain) :
-- licence des données exportées ;
-- valeurs initiales des seuils de filtrage et de doublon (à calibrer sur des exemples réels) ;
-- mentions légales et page de confidentialité (contenu juridique).
+- valeurs des seuils de filtrage et de doublon en production (défauts calibrés sur des exemples
+  écrits à la main : `docs/calibration/screening_report.md` §4, `DEDUP_SIMILARITY_THRESHOLD`) ;
+- prix unitaires Mistral et plafonds journaliers réels ;
+- points juridiques de la section 5 de `docs/juridique/memo.md` (à faire valider par un juriste).
 
 ---
 
@@ -579,7 +678,10 @@ API publique (port 8080) :
 | GET | `/api/health`, `/api/ready` | vivacité, base joignable |
 | GET | `/api/altcha/challenge` | défi proof-of-work |
 | POST | `/api/ideas` | dépôt d'une idée → statut du filtrage + jeton de suivi |
-| GET | `/api/track/{token}` | suivi d'une idée, contribution ou signalement |
+| POST | `/api/track` | suivi d'une idée, contribution ou signalement (corps `{ "token" }`, jamais dans l'URL) |
+| POST | `/api/track/delete` | suppression par l'auteur (corps `{ "token" }`) |
+| POST | `/api/track/review-request` | demande de réexamen humain (corps `{ "token", "message"? }`) |
+| GET | `/api/legal` | coordonnées de l'éditeur (`LEGAL_*`) et versions/dates des pages légales et des CGU |
 | GET | `/api/ideas` | liste publiée : `sort` (`score`, `gain`, `feasibility`, `delay`, `recent`), filtres `admin_level`, `category`, `kind`, `territory`, `q`, pagination `page`/`per_page` |
 | GET | `/api/ideas/{slug}` | détail : idée, analyse courante, contributions intégrées, compteur de propositions |
 | POST | `/api/ideas/{slug}/contributions` | amélioration ou objection |
@@ -592,7 +694,9 @@ API publique (port 8080) :
 
 API admin (port 8081, `Authorization: Bearer $ADMIN_API_TOKEN`), sous `/api/admin/…` :
 tableau de bord, file de jobs, coûts IA, idées masquées et signalements, masquer/republier,
-relancer une analyse, décisions de filtrage avec étiquetage, réglages des seuils.
+relancer une analyse, décisions de filtrage avec étiquetage (et export JSONL pour
+`docs/calibration/bench_screening.py`), réglages des seuils, file d'escalade, demandes de
+réexamen humain, publication d'un droit de réponse.
 `GET /api/admin/session` vérifie le jeton (`200 { "authenticated": true }` ou `401`). Le port
 admin sert aussi, sans jeton, `/api/health`, `/api/ready` et `/api/openapi.json` (spec complète ;
 celle du port public omet les routes admin). Le worker répond sur `/health` (et `/api/health`)

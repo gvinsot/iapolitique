@@ -1,4 +1,4 @@
-import { BotIcon, ShieldCheckIcon } from "lucide-react";
+import { BotIcon, InfoIcon, ShieldCheckIcon } from "lucide-react";
 import { Link } from "react-router";
 
 import { paths, SITE_NAME } from "@/app/paths";
@@ -6,6 +6,10 @@ import { Separator } from "@/components/ui/separator";
 
 import { Container } from "./container";
 import { legalNavItems } from "./nav-items";
+
+/** Persistent mention required on every page (AGENTS.md §7.5). */
+export const NON_OFFICIAL_NOTICE =
+  "Site citoyen indépendant et non officiel, sans lien avec l’État ni aucune administration";
 
 const linkClass =
   "rounded-sm text-sm text-muted-foreground underline-offset-4 hover:text-foreground hover:underline";
@@ -17,9 +21,9 @@ export function SiteFooter() {
         <div className="space-y-2 sm:col-span-2">
           <p className="font-semibold">{SITE_NAME}</p>
           <p className="max-w-md text-sm text-muted-foreground">
-            Une plateforme indépendante et apolitique qui recueille des idées anonymes pour réduire
-            les dépenses ou augmenter les recettes publiques, puis les fait analyser, chiffrer et
-            classer par intelligence artificielle.
+            Une initiative citoyenne indépendante et apolitique qui recueille des idées anonymes
+            pour réduire les dépenses ou augmenter les recettes publiques, puis les fait analyser,
+            chiffrer et classer par intelligence artificielle.
           </p>
         </div>
 
@@ -57,20 +61,22 @@ export function SiteFooter() {
         <Separator />
         <div className="flex flex-col gap-3 py-6 text-sm text-muted-foreground">
           <p className="flex items-start gap-2">
+            <InfoIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            <strong className="font-semibold text-foreground">{NON_OFFICIAL_NOTICE}</strong>
+          </p>
+          <p className="flex items-start gap-2">
             <BotIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
             <span>
               <strong className="font-semibold text-foreground">Analyses générées par IA.</strong>{" "}
-              Le filtrage, les reformulations et les chiffrages sont produits automatiquement et
-              peuvent comporter des erreurs : vérifiez toujours les sources citées.
+              Le filtrage, les reformulations et les chiffrages sont produits automatiquement, sans
+              relecture humaine, et peuvent comporter des erreurs : vérifiez toujours les sources
+              citées. Le score de classement est calculé par un algorithme ; ce n’est ni un sondage
+              ni une mesure d’opinion.
             </span>
           </p>
           <p className="flex items-start gap-2">
             <ShieldCheckIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-            <span>
-              <strong className="font-semibold text-foreground">Site non officiel</strong>, sans
-              lien avec l’État, une administration publique ou un parti politique. Aucun compte,
-              aucun cookie, aucun traceur.
-            </span>
+            <span>Aucun compte, aucun cookie, aucun traceur, aucune adresse IP enregistrée.</span>
           </p>
         </div>
       </Container>

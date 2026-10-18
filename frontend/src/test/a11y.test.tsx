@@ -35,8 +35,9 @@ const publicRoutes: [path: string, heading: string][] = [
   ["/methodologie", "Méthodologie"],
   ["/a-propos", "À propos d’iapolitique"],
   ["/mentions-legales", "Mentions légales"],
-  ["/confidentialite", "Confidentialité"],
-  ["/cgu", "Conditions générales d’utilisation"],
+  ["/confidentialite", "Politique de confidentialité"],
+  ["/regles", "Règles du site"],
+  ["/licence", "Licence et réutilisation"],
   ["/introuvable", "Page introuvable"],
 ];
 

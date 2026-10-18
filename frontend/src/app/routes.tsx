@@ -1,6 +1,8 @@
 import type { RouteObject } from "react-router";
 
+import { paths } from "@/app/paths";
 import { PageLoading } from "@/components/common/page-loading";
+import { RedirectWithHash } from "@/components/common/redirect-with-hash";
 import { SiteLayout } from "@/components/layout/site-layout";
 import { AboutPage } from "@/pages/about-page";
 import { HomePage } from "@/pages/home-page";
@@ -45,11 +47,19 @@ export const routes: RouteObject[] = [
             }),
           },
           {
-            path: "cgu",
+            path: "regles",
             lazy: async () => ({
               Component: (await import("@/pages/legal/terms-page")).TermsPage,
             }),
           },
+          {
+            path: "licence",
+            lazy: async () => ({
+              Component: (await import("@/pages/legal/licence-page")).LicencePage,
+            }),
+          },
+          // Former address of the rules page: keep old links working (anchors included).
+          { path: "cgu", element: <RedirectWithHash to={paths.terms} /> },
           { path: "*", Component: NotFoundPage },
         ],
       },

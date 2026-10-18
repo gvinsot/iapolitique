@@ -57,13 +57,21 @@ describe("SiteLayout", () => {
       "href",
       "/confidentialite",
     );
-    expect(within(legal).getByRole("link", { name: "Conditions d’utilisation" })).toHaveAttribute(
+    expect(within(legal).getByRole("link", { name: "Règles du site (CGU)" })).toHaveAttribute(
       "href",
-      "/cgu",
+      "/regles",
     );
-    expect(within(footer).getByText("Site non officiel")).toBeInTheDocument();
-    expect(within(footer).getByText(/sans lien avec l’État/)).toBeInTheDocument();
+    expect(within(legal).getByRole("link", { name: "Licence et réutilisation" })).toHaveAttribute(
+      "href",
+      "/licence",
+    );
+    expect(
+      within(footer).getByText(
+        "Site citoyen indépendant et non officiel, sans lien avec l’État ni aucune administration",
+      ),
+    ).toBeInTheDocument();
     expect(within(footer).getByText("Analyses générées par IA.")).toBeInTheDocument();
+    expect(within(footer).getByText(/ni un sondage ni une mesure d’opinion/)).toBeInTheDocument();
   });
 
   it("opens and closes the mobile menu", async () => {

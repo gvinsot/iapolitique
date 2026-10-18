@@ -114,7 +114,7 @@
   .prose-content li {
     @apply mb-1;
   }
-  .prose-content a {
+  .prose-content a:not([data-slot="button"]) {
     @apply font-medium text-primary underline underline-offset-4 hover:no-underline;
   }
 }

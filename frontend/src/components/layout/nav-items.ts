@@ -17,5 +17,6 @@ export const mainNavItems: readonly NavItem[] = [
 export const legalNavItems: readonly NavItem[] = [
   { to: paths.legalNotice, label: "Mentions légales" },
   { to: paths.privacy, label: "Confidentialité" },
-  { to: paths.terms, label: "Conditions d’utilisation" },
+  { to: paths.terms, label: "Règles du site (CGU)" },
+  { to: paths.licence, label: "Licence et réutilisation" },
 ];

@@ -8,7 +8,10 @@ export const paths = {
   about: "/a-propos",
   legalNotice: "/mentions-legales",
   privacy: "/confidentialite",
-  terms: "/cgu",
+  terms: "/regles",
+  licence: "/licence",
+  /** Former address of the rules page, redirected to `terms`. */
+  legacyTerms: "/cgu",
   admin: {
     dashboard: "/admin",
     moderation: "/admin/moderation",

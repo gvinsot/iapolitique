@@ -11,6 +11,7 @@ beforeEach(() => {
 
 afterEach(() => {
   cleanup();
+  Reflect.deleteProperty(window.navigator, "clipboard");
   window.localStorage.clear();
   window.sessionStorage.clear();
   document.documentElement.className = "";

@@ -16,8 +16,9 @@ describe("routes", () => {
     ["/methodologie", "Méthodologie"],
     ["/a-propos", "À propos d’iapolitique"],
     ["/mentions-legales", "Mentions légales"],
-    ["/confidentialite", "Confidentialité"],
-    ["/cgu", "Conditions générales d’utilisation"],
+    ["/confidentialite", "Politique de confidentialité"],
+    ["/regles", "Règles du site"],
+    ["/licence", "Licence et réutilisation"],
   ])("%s renders its page heading", async (path, heading) => {
     renderRoute(path);
     expect(await screen.findByRole("heading", { level: 1, name: heading })).toBeInTheDocument();
@@ -60,12 +61,6 @@ describe("routes", () => {
     await screen.findByRole("heading", { level: 1, name: "Page introuvable" });
     expect(screen.getByRole("banner")).toBeInTheDocument();
     expect(screen.getByRole("contentinfo")).toBeInTheDocument();
-  });
-
-  it("marks legal pages as drafts to complete", async () => {
-    renderRoute("/mentions-legales");
-    expect(await screen.findByText("Contenu juridique à compléter")).toBeInTheDocument();
-    expect(screen.getAllByText("À compléter :").length).toBeGreaterThan(0);
   });
 
   it("explains the four-step process on the about page", async () => {

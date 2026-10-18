@@ -4,7 +4,7 @@
  * a cookie and never reaches the public API. Every access is guarded: storage may be blocked.
  */
 
-const ADMIN_TOKEN_KEY = "iapolitique-admin-token";
+export const ADMIN_TOKEN_KEY = "iapolitique-admin-token";
 
 export function readAdminToken(): string | null {
   try {

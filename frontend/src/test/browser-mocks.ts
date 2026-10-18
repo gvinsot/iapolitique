@@ -53,6 +53,18 @@ export function mockColorScheme(initiallyDark = false): ColorSchemeMock {
   };
 }
 
+/**
+ * Replaces navigator.clipboard (undefined simulates an insecure context). Call it after
+ * userEvent.setup(), which installs its own clipboard stub. Removed after each test (setup.ts).
+ */
+export function mockClipboard(clipboard: Pick<Clipboard, "writeText"> | undefined): void {
+  Object.defineProperty(window.navigator, "clipboard", {
+    value: clipboard,
+    configurable: true,
+    writable: true,
+  });
+}
+
 class ResizeObserverStub implements ResizeObserver {
   observe(): void {
     // jsdom has no layout: nothing to observe.
@@ -65,8 +77,15 @@ class ResizeObserverStub implements ResizeObserver {
   }
 }
 
+/** Default network: tests never reach a real server. Use stubFetch (fetch-mock.ts) to answer. */
+function offlineFetch(input: RequestInfo | URL): Promise<Response> {
+  const url = input instanceof Request ? input.url : String(input);
+  return Promise.reject(new TypeError(`Network disabled in tests (${url})`));
+}
+
 export function installBrowserMocks(): void {
   mockColorScheme(false);
+  vi.stubGlobal("fetch", vi.fn(offlineFetch));
   vi.stubGlobal("ResizeObserver", ResizeObserverStub);
   window.scrollTo = vi.fn();
   Element.prototype.scrollIntoView = vi.fn();

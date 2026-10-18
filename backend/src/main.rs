@@ -1,12 +1,13 @@
 //! `iapolitique` command line: see `iapolitique --help` and AGENTS.md §13.1.
 
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
 use iapolitique::config::{self, Config, Role};
+use iapolitique::http::openapi;
 use iapolitique::{app, db, healthcheck, telemetry};
 
 #[derive(Debug, Parser)]
@@ -18,10 +19,22 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Public API on PUBLIC_PORT (8080) and admin API on ADMIN_PORT (8081); applies migrations
+    /// at startup.
+    Api,
     /// Background worker: consumes the job queue; internal health on WORKER_HEALTH_PORT (8082).
     Worker,
     /// Apply pending database migrations, then exit.
     Migrate,
+    /// Print the OpenAPI specification (public and admin routes) as JSON.
+    Openapi {
+        /// Write to this file instead of stdout (UTF-8, LF line endings).
+        #[arg(long, short)]
+        output: Option<PathBuf>,
+        /// Only the public routes, as served on the public port.
+        #[arg(long)]
+        public: bool,
+    },
     /// HTTP GET on a local health URL; exit code 0 when it answers 2xx (Docker healthcheck).
     Healthcheck {
         /// URL to check (plain http).
@@ -34,11 +47,13 @@ enum Command {
 }
 
 impl Command {
+    /// Role of the command when it needs the configuration, `None` for offline commands.
     fn role(&self) -> Option<Role> {
         match self {
+            Self::Api => Some(Role::Api),
             Self::Worker => Some(Role::Worker),
             Self::Migrate => Some(Role::Migrate),
-            Self::Healthcheck { .. } => None,
+            Self::Openapi { .. } | Self::Healthcheck { .. } => None,
         }
     }
 }
@@ -85,6 +100,27 @@ fn main() -> ExitCode {
 /// Commands that need neither configuration nor database.
 fn run_offline(command: Command) -> ExitCode {
     match command {
+        Command::Openapi { output, public } => {
+            let spec = if public {
+                openapi::public_spec()
+            } else {
+                openapi::full_spec()
+            };
+            let json = openapi::to_json(&spec);
+            match output {
+                None => {
+                    print!("{json}");
+                    ExitCode::SUCCESS
+                }
+                Some(path) => match std::fs::write(&path, json) {
+                    Ok(()) => ExitCode::SUCCESS,
+                    Err(err) => {
+                        eprintln!("cannot write {}: {err}", path.display());
+                        ExitCode::FAILURE
+                    }
+                },
+            }
+        }
         Command::Healthcheck { url, timeout_secs } => {
             match healthcheck::check(&url, Duration::from_secs(timeout_secs)) {
                 Ok(_) => ExitCode::SUCCESS,
@@ -94,12 +130,15 @@ fn run_offline(command: Command) -> ExitCode {
                 }
             }
         }
-        Command::Worker | Command::Migrate => unreachable!("needs the configuration"),
+        Command::Api | Command::Worker | Command::Migrate => {
+            unreachable!("needs the configuration")
+        }
     }
 }
 
 async fn run(command: Command, config: Config) -> anyhow::Result<()> {
     match command {
+        Command::Api => app::run_api(config).await,
         Command::Worker => app::run_worker(config).await,
         Command::Migrate => {
             let pool = db::connect(&config.database, "iapolitique-migrate").await?;
@@ -108,7 +147,7 @@ async fn run(command: Command, config: Config) -> anyhow::Result<()> {
             pool.close().await;
             Ok(())
         }
-        Command::Healthcheck { .. } => unreachable!("handled offline"),
+        Command::Openapi { .. } | Command::Healthcheck { .. } => unreachable!("handled offline"),
     }
 }
 
@@ -123,11 +162,15 @@ mod tests {
     }
 
     #[test]
-    fn offline_commands_need_no_role() {
-        let cli =
-            Cli::try_parse_from(["iapolitique", "healthcheck", "--url", "http://x/"]).unwrap();
-        assert_eq!(cli.command.role(), None);
-        let cli = Cli::try_parse_from(["iapolitique", "migrate"]).unwrap();
-        assert_eq!(cli.command.role(), Some(Role::Migrate));
+    fn roles_of_commands() {
+        let role = |args: &[&str]| Cli::try_parse_from(args).unwrap().command.role();
+        assert_eq!(role(&["iapolitique", "api"]), Some(Role::Api));
+        assert_eq!(role(&["iapolitique", "worker"]), Some(Role::Worker));
+        assert_eq!(role(&["iapolitique", "migrate"]), Some(Role::Migrate));
+        assert_eq!(role(&["iapolitique", "openapi", "--public"]), None);
+        assert_eq!(
+            role(&["iapolitique", "healthcheck", "--url", "http://x/"]),
+            None
+        );
     }
 }

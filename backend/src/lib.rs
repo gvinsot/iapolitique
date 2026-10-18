@@ -7,5 +7,6 @@ pub mod config;
 pub mod db;
 pub mod domain;
 pub mod healthcheck;
+pub mod http;
 pub mod jobs;
 pub mod telemetry;

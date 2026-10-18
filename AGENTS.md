@@ -587,6 +587,14 @@ API publique (port 8080) :
 API admin (port 8081, `Authorization: Bearer $ADMIN_API_TOKEN`), sous `/api/admin/…` :
 tableau de bord, file de jobs, coûts IA, idées masquées et signalements, masquer/republier,
 relancer une analyse, décisions de filtrage avec étiquetage, réglages des seuils.
+`GET /api/admin/session` vérifie le jeton (`200 { "authenticated": true }` ou `401`). Le port
+admin sert aussi, sans jeton, `/api/health`, `/api/ready` et `/api/openapi.json` (spec complète ;
+celle du port public omet les routes admin). Le worker répond sur `/health` (et `/api/health`)
+du port 8082 : `503` si sa boucle est bloquée.
+
+Erreurs : toute réponse 4xx/5xx a le corps JSON du §4.1, y compris 404, 405, 413 (corps au-delà
+de `HTTP_BODY_LIMIT_BYTES`), 504 (`timeout`, au-delà de `HTTP_REQUEST_TIMEOUT_SECS`) et 500.
+Chaque réponse porte un en-tête `x-request-id` généré par le serveur.
 
 Le frontend appelle toujours des chemins relatifs `/api/...`. En dev, Vite proxifie `/api` vers
 `localhost:8080` (et vers `8081` pour `/api/admin`). En production, Traefik fait de même sur

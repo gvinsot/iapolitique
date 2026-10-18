@@ -10,6 +10,7 @@ use tokio::sync::watch;
 
 use crate::config::Config;
 use crate::db;
+use crate::http::{self, AppState};
 use crate::jobs::health::{self, Liveness};
 use crate::jobs::worker::{self, JobContext, Worker, WorkerOptions};
 
@@ -96,4 +97,53 @@ pub async fn shutdown_signal() {
         () = terminate => {}
     }
     tracing::info!("shutdown requested");
+}
+
+/// `iapolitique api`: public API on PUBLIC_PORT (8080) and admin API on ADMIN_PORT (8081).
+pub async fn run_api(config: Config) -> anyhow::Result<()> {
+    let admin_token = config
+        .http
+        .admin_api_token
+        .clone()
+        .context("ADMIN_API_TOKEN is required by the api")?;
+    let config = Arc::new(config);
+    let pool = db::connect(&config.database, "iapolitique-api").await?;
+    db::migrate(&pool).await?;
+    tracing::info!("database migrations up to date");
+
+    let state = AppState {
+        pool: pool.clone(),
+        config: Arc::clone(&config),
+    };
+    let public = http::public_router(state.clone());
+    let admin = http::admin_router(state, admin_token);
+
+    let bind = config.http.bind_address;
+    let public_address = SocketAddr::new(bind, config.http.public_port);
+    let admin_address = SocketAddr::new(bind, config.http.admin_port);
+    let public_listener = TcpListener::bind(public_address)
+        .await
+        .with_context(|| format!("cannot listen on {public_address}"))?;
+    let admin_listener = TcpListener::bind(admin_address)
+        .await
+        .with_context(|| format!("cannot listen on {admin_address}"))?;
+    tracing::info!(%public_address, %admin_address, "api listening");
+
+    let shutdown = shutdown_channel();
+    let public_server = axum::serve(
+        public_listener,
+        public.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(wait_for_shutdown(shutdown.clone()));
+    let admin_server = axum::serve(
+        admin_listener,
+        admin.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .with_graceful_shutdown(wait_for_shutdown(shutdown));
+    let result = tokio::try_join!(
+        async { public_server.await.context("public server failed") },
+        async { admin_server.await.context("admin server failed") },
+    );
+    pool.close().await;
+    result.map(|_| tracing::info!("api stopped"))
 }

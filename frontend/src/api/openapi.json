@@ -1,0 +1,195 @@
+{
+  "openapi": "3.1.0",
+  "info": {
+    "title": "iapolitique API",
+    "description": "API de la plateforme iapolitique : dépôt, filtrage, analyse et classement d'idées pour réduire les dépenses ou augmenter les recettes publiques.",
+    "license": {
+      "name": "MIT"
+    },
+    "version": "0.1.0"
+  },
+  "paths": {
+    "/api/admin/session": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Checks the admin token (used by the admin pages to validate the token typed by the user).",
+        "operationId": "getAdminSession",
+        "responses": {
+          "200": {
+            "description": "Jeton valide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminSession"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
+    "/api/health": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Liveness: the process answers.",
+        "operationId": "getHealth",
+        "responses": {
+          "200": {
+            "description": "Le service répond.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/openapi.json": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "The OpenAPI specification of this API.",
+        "operationId": "getOpenApi",
+        "responses": {
+          "200": {
+            "description": "Spécification OpenAPI.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/ready": {
+      "get": {
+        "tags": [
+          "system"
+        ],
+        "summary": "Readiness: the database is reachable.",
+        "operationId": "getReady",
+        "responses": {
+          "200": {
+            "description": "Le service est prêt.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/HealthResponse"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Base de données injoignable.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "schemas": {
+      "AdminSession": {
+        "type": "object",
+        "required": [
+          "authenticated"
+        ],
+        "properties": {
+          "authenticated": {
+            "type": "boolean"
+          }
+        }
+      },
+      "ErrorBody": {
+        "type": "object",
+        "description": "Body of every error response.",
+        "required": [
+          "error"
+        ],
+        "properties": {
+          "error": {
+            "$ref": "#/components/schemas/ErrorDetail"
+          }
+        }
+      },
+      "ErrorDetail": {
+        "type": "object",
+        "required": [
+          "code",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "Stable machine-readable code, in snake_case.",
+            "example": "not_found"
+          },
+          "message": {
+            "type": "string",
+            "description": "Human-readable message, in French when shown to visitors.",
+            "example": "Ressource introuvable."
+          }
+        }
+      },
+      "HealthResponse": {
+        "type": "object",
+        "required": [
+          "status"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "example": "ok"
+          }
+        }
+      }
+    },
+    "securitySchemes": {
+      "admin_token": {
+        "type": "http",
+        "scheme": "bearer",
+        "description": "ADMIN_API_TOKEN"
+      }
+    }
+  },
+  "tags": [
+    {
+      "name": "system",
+      "description": "Santé du service et spécification"
+    },
+    {
+      "name": "admin",
+      "description": "Administration (réseau local uniquement, jeton requis)"
+    }
+  ]
+}

@@ -1,30 +1,11 @@
 import { screen } from "@testing-library/react";
-import axe from "axe-core";
 import { describe, expect, it } from "vitest";
 
 import { storeAdminToken } from "@/api/admin-token";
 
+import { audit } from "./axe";
 import { adminApi, stubFetch } from "./fetch-mock";
 import { renderRoute } from "./render-route";
-
-/**
- * Automated accessibility audit (axe-core, WCAG 2.x A/AA rules) of every route, both themes.
- * jsdom has no layout engine: colour contrast is covered by src/styles/contrast.test.ts instead.
- */
-async function audit(): Promise<string[]> {
-  const results = await axe.run(document.body, {
-    runOnly: { type: "tag", values: ["wcag2a", "wcag2aa", "wcag21a", "wcag21aa", "best-practice"] },
-    rules: {
-      "color-contrast": { enabled: false },
-      // Radix portals render outside landmarks by design (toasts, popovers).
-      region: { enabled: false },
-    },
-  });
-  return results.violations.map(
-    (violation) =>
-      `${violation.id}: ${violation.help} (${violation.nodes.map((node) => node.target.join(" ")).join(", ")})`,
-  );
-}
 
 const publicRoutes: [path: string, heading: string][] = [
   ["/", "Des idées concrètes pour des finances publiques plus saines"],

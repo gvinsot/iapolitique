@@ -146,6 +146,29 @@ async fn publish(pool: &PgPool, idea: Uuid, slug: &str, title: &str, summary: &s
 }
 
 #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn analyses_store_both_analysis_prompt_versions(pool: PgPool) {
+    let idea = insert_idea(&pool, "Mutualiser les achats de fournitures.").await;
+    let analysis = publish(&pool, idea, "mutualiser-achats", "Mutualiser", "Résumé").await;
+    // Single-call mode: no research step, hence no research prompt version.
+    let (research,): (Option<String>,) =
+        sqlx::query_as("SELECT research_prompt_version FROM analyses WHERE id = $1")
+            .bind(analysis)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(research, None);
+    let (prompt, research): (String, Option<String>) = sqlx::query_as(
+        "UPDATE analyses SET research_prompt_version = '1.0.0' WHERE id = $1
+         RETURNING prompt_version, research_prompt_version",
+    )
+    .bind(analysis)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!((prompt.as_str(), research.as_deref()), ("1", Some("1.0.0")));
+}
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
 async fn idea_defaults_and_integrity_constraints(pool: PgPool) {
     let id = insert_idea(&pool, "Mutualiser les achats.").await;
     let (status, proposals, created_v7): (String, i32, bool) = sqlx::query_as(

@@ -60,6 +60,10 @@ export default defineConfig({
     include: ["src/**/*.test.{ts,tsx}"],
     restoreMocks: true,
     unstubGlobals: true,
+    // The CI builder runs these tests while it compiles the backend: simulated typing of long
+    // texts can take several seconds there, so the default 5 s limit is too tight.
+    testTimeout: 30_000,
+    hookTimeout: 30_000,
     // CSS is not processed in tests, except the design tokens read by the contrast test.
     css: { include: [/tokens\.css/] },
   },

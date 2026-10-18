@@ -55,6 +55,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/ideas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Submits an idea: screened at once by the decision model, answered with its status and a
+         *     tracking token.
+         */
+        post: operations["submitIdea"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/openapi.json": {
         parameters: {
             query?: never;
@@ -93,6 +113,11 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /**
+         * @description Administrative level targeted by an idea (§6.2 `admin_level`).
+         * @enum {string}
+         */
+        AdminLevel: "Etat" | "SecuriteSociale" | "Region" | "Departement" | "Intercommunalite" | "Commune" | "Multi";
         AdminSession: {
             authenticated: boolean;
         };
@@ -135,6 +160,93 @@ export interface components {
             /** @example ok */
             status: string;
         };
+        /** @description A new idea (§5.1). */
+        IdeaSubmission: {
+            /**
+             * @description Text of the idea, 50 to 4 000 characters. Personal data (e-mails, phone numbers…) is
+             *     masked before storage.
+             */
+            text: string;
+            admin_level?: components["schemas"]["AdminLevel"] | null;
+            /**
+             * @description Territory concerned (free text, 120 characters at most).
+             * @example Métropole de Lyon
+             */
+            territory?: string | null;
+            /** @description Acceptance of the licence clause of the rules (box never pre-checked). */
+            accept_licence: boolean;
+            /** @description « Je comprends que mon texte sera publié s'il est accepté » (box never pre-checked). */
+            accept_publication: boolean;
+            /** @description Solution of the ALTCHA widget (base64), accepted once. */
+            altcha: string;
+        };
+        /**
+         * @description Measure taken against the text.
+         * @enum {string}
+         */
+        Measure: "Rejected" | "Hidden";
+        /** @description Rule at stake in a decision, as sent to the author. */
+        RuleReference: {
+            /**
+             * @description Article number in the rules page, e.g. `4.3`.
+             * @example 4.5
+             */
+            article: string;
+            /** @example Une mesure pour les finances publiques */
+            title: string;
+            /**
+             * @description Relative link to the article, e.g. `/regles#critere-sujet`.
+             * @example /regles#critere-sujet
+             */
+            url: string;
+        };
+        /** @description Statement of reasons, given with a refusal and on the tracking page. */
+        StatementOfReasons: {
+            measure: components["schemas"]["Measure"];
+            /**
+             * @description `reason_code` of `prompts/screening.yaml` (refusal) or `hidden` (masking).
+             * @example off_topic
+             */
+            reason_code: string;
+            /** @description Explanation in French, with an invitation to rephrase for a refusal. */
+            reason_message: string;
+            /** @description Article of the rules applied. */
+            rule: components["schemas"]["RuleReference"];
+            /** @description The decision was taken automatically by an AI, without human review. */
+            automated: boolean;
+            /** @description The decision followed a Mistral second opinion (gray zone). */
+            second_opinion: boolean;
+            /**
+             * Format: date
+             * @description Day of the decision (Europe/Paris).
+             */
+            decided_on: string;
+            /**
+             * Format: date
+             * @description Day from which the text is erased, when an erasure is scheduled.
+             */
+            purge_on: string | null;
+        };
+        /** @description Immediate answer to a submission. */
+        SubmissionResponse: {
+            /**
+             * @description Status right after the synchronous screening: `accepted`, `rejected`,
+             *     `second_opinion` (« en cours de vérification ») or `submitted` (decision model
+             *     unavailable: the screening is retried, follow it with the tracking link).
+             * @example accepted
+             */
+            status: string;
+            /**
+             * @description Tracking token (256 bits, base64url), returned only this once: the tracking link is
+             *     `/suivi#<token>`.
+             */
+            tracking_token: string;
+            /** @description Refusal reason (`reason_code` of `prompts/screening.yaml`). */
+            reason_code: string | null;
+            /** @description Refusal explanation in French, with an invitation to rephrase. */
+            reason_message: string | null;
+            statement: components["schemas"]["StatementOfReasons"] | null;
+        };
     };
     responses: never;
     parameters: never;
@@ -142,11 +254,17 @@ export interface components {
     headers: never;
     pathItems: never;
 }
+export type SchemaAdminLevel = components['schemas']['AdminLevel'];
 export type SchemaAdminSession = components['schemas']['AdminSession'];
 export type SchemaAltchaChallenge = components['schemas']['AltchaChallenge'];
 export type SchemaErrorBody = components['schemas']['ErrorBody'];
 export type SchemaErrorDetail = components['schemas']['ErrorDetail'];
 export type SchemaHealthResponse = components['schemas']['HealthResponse'];
+export type SchemaIdeaSubmission = components['schemas']['IdeaSubmission'];
+export type SchemaMeasure = components['schemas']['Measure'];
+export type SchemaRuleReference = components['schemas']['RuleReference'];
+export type SchemaStatementOfReasons = components['schemas']['StatementOfReasons'];
+export type SchemaSubmissionResponse = components['schemas']['SubmissionResponse'];
 export type $defs = Record<string, never>;
 export interface operations {
     getAdminSession: {
@@ -214,6 +332,66 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    submitIdea: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["IdeaSubmission"];
+            };
+        };
+        responses: {
+            /** @description Idée enregistrée et filtrée. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["SubmissionResponse"];
+                };
+            };
+            /** @description Consentements manquants ou vérification anti-robot invalide (`consent_required`, `altcha_*`). */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Texte ou champ invalide. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Limite d'envois atteinte (`rate_limited`). */
+            429: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Service momentanément surchargé. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
                 };
             };
         };

@@ -4,6 +4,7 @@
 //!   backoff, reclaim abandoned locks.
 //! - [`worker`]: the consuming loop, its handler registry and graceful shutdown.
 //! - [`schedule`]: daily recurring jobs, enqueued once whatever the number of replicas.
+//! - [`pipeline`]: payloads, dedupe keys and constructors of the submission pipeline jobs.
 //! - [`purge`]: the daily retention job (AGENTS.md §7.3).
 //!
 //! Payloads and error messages carry **internal identifiers only**, never user text, IPs or
@@ -16,6 +17,7 @@ use serde_json::Value;
 use crate::domain::text_enum;
 
 pub mod health;
+pub mod pipeline;
 pub mod purge;
 pub mod queue;
 pub mod schedule;

@@ -11,4 +11,8 @@ pub mod domain;
 pub mod healthcheck;
 pub mod http;
 pub mod jobs;
+pub mod moderation;
 pub mod telemetry;
+
+#[cfg(test)]
+pub(crate) mod test_support;

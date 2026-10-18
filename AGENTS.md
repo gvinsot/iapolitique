@@ -124,7 +124,8 @@ iapolitique/
 │       ├── domain/         # types métier, machine à états, scoring (sans I/O)
 │       ├── http/           # routes publiques, routes admin, erreurs
 │       ├── ai/             # clients decision service et Mistral, prompts chargés depuis /prompts
-│       ├── jobs/           # file de jobs et handlers
+│       ├── jobs/           # file de jobs et handlers (charges utiles : jobs/pipeline.rs)
+│       ├── moderation/     # filtrage, second avis, exposé des motifs (partagé api / worker)
 │       └── antispam/       # ALTCHA, rate limit
 ├── frontend/
 │   ├── Dockerfile          # build Vite puis nginx
@@ -195,7 +196,13 @@ iapolitique/
 ### 5.1 Dépôt
 
 Formulaire : texte libre (50 à 4 000 caractères), niveau administratif facultatif, territoire
-facultatif. Protégé par ALTCHA et rate limit ([§7](#7-anonymat-anti-abus-et-données)).
+facultatif (120 caractères). Protégé par ALTCHA et rate limit ([§7](#7-anonymat-anti-abus-et-données)).
+
+Ordre de traitement de tout formulaire public (`http/submissions.rs`) : validation du corps
+(consentements, longueurs : une erreur ne consomme ni la solution ALTCHA ni le quota), rate
+limit, ALTCHA, masquage des données personnelles, enregistrement (création historisée, jeton de
+suivi, job de filtrage différé de 60 s en filet de sécurité), filtrage synchrone. Toute erreur
+après l'enregistrement laisse le texte `submitted` et rend quand même le jeton : le job reprend.
 
 ### 5.2 Machine à états
 
@@ -219,7 +226,12 @@ published ─▶ hidden (après revue d'un signalement ou action admin) ─▶ p
 - Réponse immédiate à l'auteur : `accepted` (« Votre idée est conservée, elle va être améliorée
   et chiffrée par IA »), `rejected` + motif lisible + invitation à reformuler, ou
   `second_opinion` (« en cours de vérification ») si l'avis Mistral n'est pas rendu dans le
-  délai (10 s).
+  délai (10 s), ou `submitted` si le modèle de décision est indisponible.
+- Second avis : l'api le tente en ligne si `MISTRAL_API_KEY` est défini et le budget du jour
+  non atteint (une tentative, 30 s au plus ; l'auteur attend 10 s, l'appel continue ensuite en
+  arrière-plan et règle le texte). Le job `second_opinion` créé avec la zone grise (différé de
+  2 min dans ce cas, immédiat sinon) prend le relais en cas d'échec ; chaque étape vérifie le
+  statut sous verrou, un texte déjà réglé n'est jamais modifié.
 - Lien de suivi : voir [§7.1](#71-anonymat).
 
 ### 5.3 Filtrage par le modèle de décision
@@ -243,7 +255,7 @@ n'appeler que `/v1/systemone`.
   deux : **zone grise** → second avis Mistral avec la même grille (`prompts/second_opinion.md`).
 - Motif de refus = premier critère en échec selon l'ordre ci-dessus ; libellés en français
   définis dans `screening.yaml`.
-- `state` limité au texte de l'idée (< 2 000 tokens). Timeout 5 s ; si le service est
+- `state` limité au texte (masqué) de l'idée (< 2 000 tokens). Timeout 5 s ; si le service est
   indisponible, l'idée reste en `submitted`, un job réessaie, et l'auteur est informé via son lien
   de suivi.
 - Les scores bruts sont stockés pour **calibrer les seuils** (l'admin peut étiqueter des
@@ -468,10 +480,13 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
   bloqué sans elles : acceptation de la clause de licence des CGU, et « je comprends que mon
   texte sera publié s'il est accepté ». Avertissement « Ne signez pas, ne nommez aucun agent ni
   particulier » et mention du traitement par IA (modèle local puis Mistral AI). On stocke
-  `cgu_version` et `cgu_accepted_at` (au jour près) avec chaque contribution, rien d'autre.
+  `cgu_version` (version courante : `domain::rules::CGU_VERSION`, à incrémenter avec la page
+  `/regles`) et `cgu_accepted_at` (date Europe/Paris) avec chaque idée et contribution, rien
+  d'autre. Sans les deux cases : `400 consent_required`.
 - **Données personnelles dans les textes** : avant tout appel à Mistral et avant publication,
   masquage déterministe (e-mails, téléphones, IBAN, NIR, adresses postales, URL nominatives →
-  `[donnée masquée]`) ; et critère de filtrage `personal_data` (§5.3) qui refuse un texte
+  `[donnée masquée]`), appliqué dès la réception : le texte non masqué n'est **jamais**
+  conservé ni transmis, le filtrage d3-mini porte lui aussi sur la version masquée ; et critère de filtrage `personal_data` (§5.3) qui refuse un texte
   désignant un particulier identifiable, avec invitation à reformuler. Les élus et ministres
   agissant dans leur fonction ne sont pas des particuliers, mais le critère `targeted` refuse
   toute attaque ou promotion d'un parti, d'un candidat ou d'un élu. Le texte « original »
@@ -684,7 +699,7 @@ API publique (port 8080) :
 |---|---|---|
 | GET | `/api/health`, `/api/ready` | vivacité, base joignable |
 | GET | `/api/altcha/challenge` | défi proof-of-work |
-| POST | `/api/ideas` | dépôt d'une idée → statut du filtrage + jeton de suivi |
+| POST | `/api/ideas` | dépôt d'une idée `{ text, admin_level?, territory?, accept_licence, accept_publication, altcha }` → `201 { status, tracking_token, reason_code, reason_message, statement }` (`statement` : exposé des motifs d'un refus `{ measure, reason_code, reason_message, rule: { article, title, url }, automated, second_opinion, decided_on, purge_on }`) ; erreurs `consent_required`, `altcha_*` (400), `text_*`, `field_too_long`, `invalid_body` (422), `rate_limited` (429) |
 | POST | `/api/track` | suivi d'une idée, contribution ou signalement (corps `{ "token" }`, jamais dans l'URL) |
 | POST | `/api/track/delete` | suppression par l'auteur (corps `{ "token" }`) |
 | POST | `/api/track/review-request` | demande de réexamen humain (corps `{ "token", "message"? }`) |

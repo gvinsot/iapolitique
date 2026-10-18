@@ -46,6 +46,18 @@ pub trait StateMachine: Copy + Eq + 'static {
     }
 }
 
+/// Statuses of the entities screened by the decision model (§5.3): ideas, contributions and
+/// reports share the same screening steps.
+pub trait ScreenedStatus: StateMachine {
+    /// Received, waiting for (or retrying) the decision model.
+    const SUBMITTED: Self;
+    const SCREENING: Self;
+    /// Gray zone: waiting for the Mistral second opinion.
+    const SECOND_OPINION: Self;
+    const ACCEPTED: Self;
+    const REJECTED: Self;
+}
+
 text_enum! {
     /// Lifecycle of an idea.
     ///
@@ -118,6 +130,14 @@ impl StateMachine for IdeaStatus {
     }
 }
 
+impl ScreenedStatus for IdeaStatus {
+    const SUBMITTED: Self = Self::Submitted;
+    const SCREENING: Self = Self::Screening;
+    const SECOND_OPINION: Self = Self::SecondOpinion;
+    const ACCEPTED: Self = Self::Accepted;
+    const REJECTED: Self = Self::Rejected;
+}
+
 impl IdeaStatus {
     /// Whether the idea appears on the public portal.
     pub const fn is_public(self) -> bool {
@@ -166,6 +186,14 @@ impl StateMachine for ContributionStatus {
     }
 }
 
+impl ScreenedStatus for ContributionStatus {
+    const SUBMITTED: Self = Self::Submitted;
+    const SCREENING: Self = Self::Screening;
+    const SECOND_OPINION: Self = Self::SecondOpinion;
+    const ACCEPTED: Self = Self::Accepted;
+    const REJECTED: Self = Self::Rejected;
+}
+
 text_enum! {
     /// Lifecycle of a report (§5.6).
     pub enum ReportStatus {
@@ -200,6 +228,14 @@ impl StateMachine for ReportStatus {
     fn label(self) -> &'static str {
         self.as_str()
     }
+}
+
+impl ScreenedStatus for ReportStatus {
+    const SUBMITTED: Self = Self::Submitted;
+    const SCREENING: Self = Self::Screening;
+    const SECOND_OPINION: Self = Self::SecondOpinion;
+    const ACCEPTED: Self = Self::Accepted;
+    const REJECTED: Self = Self::Rejected;
 }
 
 #[cfg(test)]
@@ -355,6 +391,29 @@ mod tests {
             ],
         );
         assert_all_reachable(ReportStatus::ALL);
+    }
+
+    /// The screening path is allowed for every screened entity.
+    fn assert_screening_path<S: ScreenedStatus + std::fmt::Debug>() {
+        assert_eq!(S::INITIAL, S::SUBMITTED);
+        for (from, to) in [
+            (S::SUBMITTED, S::SCREENING),
+            (S::SCREENING, S::SUBMITTED),
+            (S::SCREENING, S::ACCEPTED),
+            (S::SCREENING, S::REJECTED),
+            (S::SCREENING, S::SECOND_OPINION),
+            (S::SECOND_OPINION, S::ACCEPTED),
+            (S::SECOND_OPINION, S::REJECTED),
+        ] {
+            assert!(from.can_transition_to(to), "{from:?} -> {to:?}");
+        }
+    }
+
+    #[test]
+    fn screened_statuses_share_the_screening_path() {
+        assert_screening_path::<IdeaStatus>();
+        assert_screening_path::<ContributionStatus>();
+        assert_screening_path::<ReportStatus>();
     }
 
     #[test]

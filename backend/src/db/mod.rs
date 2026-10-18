@@ -16,6 +16,7 @@ pub mod ai_calls;
 pub mod screenings;
 pub mod settings;
 pub mod status;
+pub mod submissions;
 pub mod tracking;
 
 /// Migrations of `backend/migrations`, embedded in the binary.

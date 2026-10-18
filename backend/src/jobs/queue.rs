@@ -66,6 +66,37 @@ pub async fn enqueue<'e>(
     Ok(id.map(|(id,)| id))
 }
 
+/// Removes the queued job with this dedupe key; a running job is left alone (its handler sees
+/// that there is nothing left to do). Returns whether a job was removed.
+pub async fn cancel_queued<'e>(
+    executor: impl PgExecutor<'e>,
+    dedupe_key: &str,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query("DELETE FROM jobs WHERE dedupe_key = $1 AND status = 'queued'")
+        .bind(dedupe_key)
+        .execute(executor)
+        .await?;
+    Ok(result.rows_affected() > 0)
+}
+
+/// Makes the queued job with this dedupe key due at `at` at the latest. Returns whether a
+/// queued job exists.
+pub async fn bring_forward<'e>(
+    executor: impl PgExecutor<'e>,
+    dedupe_key: &str,
+    at: DateTime<Utc>,
+) -> Result<bool, sqlx::Error> {
+    let result = sqlx::query(
+        "UPDATE jobs SET run_after = least(run_after, $2)
+         WHERE dedupe_key = $1 AND status = 'queued'",
+    )
+    .bind(dedupe_key)
+    .bind(at)
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected() > 0)
+}
+
 /// Claims the most urgent due job among `kinds`: highest priority, then oldest `run_after`.
 /// Concurrent workers never get the same job (`FOR UPDATE SKIP LOCKED`).
 pub async fn claim(

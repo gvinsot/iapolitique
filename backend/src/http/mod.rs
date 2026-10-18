@@ -8,10 +8,11 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::FromRef;
-use axum::routing::get;
+use axum::routing::{get, post};
 use sqlx::PgPool;
 
 use crate::ai::decision::Screener;
+use crate::ai::mistral::MistralClient;
 use crate::ai::prompts::Prompts;
 use crate::antispam::altcha::Altcha;
 use crate::antispam::rate_limit::RateLimiter;
@@ -25,6 +26,10 @@ pub mod extract;
 pub mod health;
 pub mod middleware;
 pub mod openapi;
+pub mod submissions;
+
+#[cfg(test)]
+mod submission_tests;
 
 use admin::AdminToken;
 use client_ip::TrustedProxyHops;
@@ -43,6 +48,9 @@ pub struct AppState {
     pub altcha: Arc<Altcha>,
     /// Per-client limits of the public forms (§7.2).
     pub rate_limiter: Arc<RateLimiter>,
+    /// Inline second opinions (§5.2); `None` without `MISTRAL_API_KEY` (the worker's job then
+    /// handles them).
+    pub mistral: Option<MistralClient>,
 }
 
 impl FromRef<AppState> for TrustedProxyHops {
@@ -67,6 +75,7 @@ pub fn public_router(state: AppState) -> Router {
     let router = system_routes()
         .route("/api/openapi.json", get(openapi::openapi_json))
         .route("/api/altcha/challenge", get(antispam::altcha_challenge))
+        .route("/api/ideas", post(submissions::submit_idea))
         .fallback(not_found)
         .with_state(state.clone());
     middleware::with_common_layers(router, &state.config.http)
@@ -123,6 +132,7 @@ mod tests {
             screener,
             altcha: Arc::new(Altcha::new(Secret::new(TOKEN))),
             rate_limiter,
+            mistral: None,
         }
     }
 

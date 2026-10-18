@@ -18,6 +18,25 @@ pub const IDEA_TEXT_LIMITS: TextLimits = TextLimits {
     max: 4_000,
 };
 
+/// Contribution text (improvement or objection, AGENTS.md §5.5): 30 to 2 000 characters.
+pub const CONTRIBUTION_TEXT_LIMITS: TextLimits = TextLimits {
+    min: 30,
+    max: 2_000,
+};
+
+/// Optional details of a report (§5.6): up to 1 000 characters.
+pub const REPORT_DETAILS_LIMITS: TextLimits = TextLimits { min: 0, max: 1_000 };
+
+/// Optional message of a human review request (§7.1): up to 1 000 characters.
+pub const REVIEW_MESSAGE_LIMITS: TextLimits = TextLimits { min: 0, max: 1_000 };
+
+/// Optional territory of an idea (§5.1).
+pub const TERRITORY_MAX_CHARS: usize = 120;
+/// Optional name of the author of a report (§7.5).
+pub const REPORTER_NAME_MAX_CHARS: usize = 100;
+/// Optional e-mail of the author of a report (§7.5), RFC 5321 bound.
+pub const REPORTER_EMAIL_MAX_CHARS: usize = 254;
+
 /// A text outside its limits. Messages are in French: they are shown to the author.
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
 pub enum TextError {
@@ -141,6 +160,97 @@ pub fn validate_idea_text(raw: &str) -> Result<String, TextError> {
     validate_text(raw, IDEA_TEXT_LIMITS)
 }
 
+/// Validates the text of a contribution (30 to 2 000 characters after normalization).
+pub fn validate_contribution_text(raw: &str) -> Result<String, TextError> {
+    validate_text(raw, CONTRIBUTION_TEXT_LIMITS)
+}
+
+/// Validates an optional free text (`None` or blank: `None`).
+pub fn validate_optional_text(
+    raw: Option<&str>,
+    limits: TextLimits,
+) -> Result<Option<String>, TextError> {
+    match raw {
+        None => Ok(None),
+        Some(raw) => validate_text(raw, limits).map(|text| Some(text).filter(|t| !t.is_empty())),
+    }
+}
+
+/// A short form field (territory, name, e-mail) that cannot be accepted. Messages are in
+/// French: they are shown to the visitor.
+#[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
+pub enum FieldError {
+    #[error("{label} doit contenir au plus {max} caractères (actuellement {actual}).")]
+    TooLong {
+        /// French name of the field, capitalized (« Le territoire »).
+        label: &'static str,
+        max: usize,
+        actual: usize,
+    },
+    #[error("L'adresse électronique indiquée n'est pas valide.")]
+    InvalidEmail,
+}
+
+impl FieldError {
+    pub const fn code(&self) -> &'static str {
+        match self {
+            Self::TooLong { .. } => "field_too_long",
+            Self::InvalidEmail => "invalid_email",
+        }
+    }
+}
+
+/// Normalizes an optional single-line field: line breaks become spaces, blank becomes `None`.
+pub fn validate_line(
+    raw: Option<&str>,
+    label: &'static str,
+    max: usize,
+) -> Result<Option<String>, FieldError> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let line = normalize_text(raw)
+        .split('\n')
+        .filter(|part| !part.is_empty())
+        .collect::<Vec<_>>()
+        .join(" ");
+    let actual = line.chars().count();
+    if actual == 0 {
+        Ok(None)
+    } else if actual > max {
+        Err(FieldError::TooLong { label, max, actual })
+    } else {
+        Ok(Some(line))
+    }
+}
+
+/// Plausible e-mail address: `local@domain.tld`, no whitespace, at most 254 characters. The
+/// address is never contacted automatically; this only catches typing mistakes.
+pub fn validate_email(raw: Option<&str>) -> Result<Option<String>, FieldError> {
+    let Some(email) = validate_line(raw, "L'adresse électronique", REPORTER_EMAIL_MAX_CHARS)?
+    else {
+        return Ok(None);
+    };
+    let plausible = match email.split_once('@') {
+        Some((local, domain)) => {
+            !local.is_empty()
+                && local.chars().count() <= 64
+                && !domain.contains('@')
+                && !email.contains(char::is_whitespace)
+                && domain.contains('.')
+                && domain.split('.').all(|label| {
+                    !label.is_empty() && !label.starts_with('-') && !label.ends_with('-')
+                })
+        }
+        None => false,
+    };
+    if plausible {
+        Ok(Some(email))
+    } else {
+        Err(FieldError::InvalidEmail)
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -241,6 +351,85 @@ mod tests {
         // Padding with spaces does not count once collapsed.
         let padded = format!("{}{}", "x ".repeat(1_990), " ".repeat(5_000));
         assert!(validate_idea_text(&padded).is_ok());
+    }
+
+    #[test]
+    fn contribution_limits() {
+        assert!(validate_contribution_text(&"x".repeat(30)).is_ok());
+        assert_eq!(
+            validate_contribution_text(&"x".repeat(29)),
+            Err(TextError::TooShort {
+                min: 30,
+                actual: 29
+            })
+        );
+        assert!(validate_contribution_text(&"x".repeat(2_001)).is_err());
+    }
+
+    #[test]
+    fn optional_texts() {
+        assert_eq!(
+            validate_optional_text(None, REPORT_DETAILS_LIMITS),
+            Ok(None)
+        );
+        assert_eq!(
+            validate_optional_text(Some(" \n "), REPORT_DETAILS_LIMITS),
+            Ok(None)
+        );
+        assert_eq!(
+            validate_optional_text(Some(" Le chiffre est faux. "), REPORT_DETAILS_LIMITS),
+            Ok(Some("Le chiffre est faux.".to_owned()))
+        );
+        assert!(validate_optional_text(Some(&"x".repeat(1_001)), REPORT_DETAILS_LIMITS).is_err());
+    }
+
+    #[test]
+    fn single_line_fields() {
+        assert_eq!(validate_line(None, "Le territoire", 10), Ok(None));
+        assert_eq!(validate_line(Some("   "), "Le territoire", 10), Ok(None));
+        assert_eq!(
+            validate_line(Some(" Saint-\r\n  Étienne\u{200B} "), "Le territoire", 20),
+            Ok(Some("Saint- Étienne".to_owned()))
+        );
+        let err = validate_line(Some("abcdefghijk"), "Le territoire", 10).unwrap_err();
+        assert_eq!(
+            err.to_string(),
+            "Le territoire doit contenir au plus 10 caractères (actuellement 11)."
+        );
+        assert_eq!(err.code(), "field_too_long");
+    }
+
+    #[test]
+    fn email_addresses() {
+        for ok in [
+            "a@b.fr",
+            " prenom.nom+tag@exemple.co.uk ",
+            "élise@exemple.fr",
+        ] {
+            assert!(validate_email(Some(ok)).unwrap().is_some(), "{ok}");
+        }
+        assert_eq!(validate_email(Some("")), Ok(None));
+        for bad in [
+            "pas une adresse",
+            "@exemple.fr",
+            "a@",
+            "a@b",
+            "a@@b.fr",
+            "a@b..fr",
+            "a@-b.fr",
+            "a b@c.fr",
+        ] {
+            assert_eq!(
+                validate_email(Some(bad)),
+                Err(FieldError::InvalidEmail),
+                "{bad}"
+            );
+        }
+        let long = format!("{}@exemple.fr", "a".repeat(250));
+        assert!(matches!(
+            validate_email(Some(&long)),
+            Err(FieldError::TooLong { .. })
+        ));
     }
 
     #[test]

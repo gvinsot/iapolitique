@@ -12,7 +12,11 @@ use super::admin::{self, AdminSession};
 use super::antispam;
 use super::error::{ErrorBody, ErrorDetail};
 use super::health::{self, HealthResponse};
+use super::submissions::{self, IdeaSubmission, SubmissionResponse};
 use crate::antispam::altcha::AltchaChallenge;
+use crate::domain::rules::RuleReference;
+use crate::domain::types::AdminLevel;
+use crate::moderation::statement::{Measure, StatementOfReasons};
 
 /// Prefix of the admin routes, removed from the spec served on the public port.
 pub const ADMIN_PREFIX: &str = "/api/admin";
@@ -30,13 +34,27 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         health::ready,
         openapi_json,
         antispam::altcha_challenge,
+        submissions::submit_idea,
         admin::session
     ),
-    components(schemas(ErrorBody, ErrorDetail, HealthResponse, AdminSession, AltchaChallenge)),
+    components(schemas(
+        ErrorBody,
+        ErrorDetail,
+        HealthResponse,
+        AdminSession,
+        AltchaChallenge,
+        AdminLevel,
+        IdeaSubmission,
+        SubmissionResponse,
+        StatementOfReasons,
+        Measure,
+        RuleReference
+    )),
     modifiers(&AdminSecurity),
     tags(
         (name = "system", description = "Santé du service et spécification"),
         (name = "antispam", description = "Protection anti-abus des formulaires (ALTCHA)"),
+        (name = "submissions", description = "Dépôt d'idées, de contributions et de signalements"),
         (name = "admin", description = "Administration (réseau local uniquement, jeton requis)")
     )
 )]
@@ -148,6 +166,7 @@ mod tests {
             "/api/ready",
             "/api/openapi.json",
             "/api/altcha/challenge",
+            "/api/ideas",
             "/api/admin/session",
         ] {
             assert!(paths.contains(&path), "{path} missing");

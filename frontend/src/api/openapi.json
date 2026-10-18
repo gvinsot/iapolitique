@@ -87,6 +87,77 @@
         }
       }
     },
+    "/api/ideas": {
+      "post": {
+        "tags": [
+          "submissions"
+        ],
+        "summary": "Submits an idea: screened at once by the decision model, answered with its status and a\ntracking token.",
+        "operationId": "submitIdea",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/IdeaSubmission"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "description": "Idée enregistrée et filtrée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/SubmissionResponse"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Consentements manquants ou vérification anti-robot invalide (`consent_required`, `altcha_*`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Texte ou champ invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "429": {
+            "description": "Limite d'envois atteinte (`rate_limited`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "503": {
+            "description": "Service momentanément surchargé.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/openapi.json": {
       "get": {
         "tags": [
@@ -140,6 +211,19 @@
   },
   "components": {
     "schemas": {
+      "AdminLevel": {
+        "type": "string",
+        "description": "Administrative level targeted by an idea (§6.2 `admin_level`).",
+        "enum": [
+          "Etat",
+          "SecuriteSociale",
+          "Region",
+          "Departement",
+          "Intercommunalite",
+          "Commune",
+          "Multi"
+        ]
+      },
       "AdminSession": {
         "type": "object",
         "required": [
@@ -229,6 +313,186 @@
             "example": "ok"
           }
         }
+      },
+      "IdeaSubmission": {
+        "type": "object",
+        "description": "A new idea (§5.1).",
+        "required": [
+          "text",
+          "accept_licence",
+          "accept_publication",
+          "altcha"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "Text of the idea, 50 to 4 000 characters. Personal data (e-mails, phone numbers…) is\nmasked before storage."
+          },
+          "admin_level": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AdminLevel",
+                "description": "Administrative level targeted, if the author knows it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "territory": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Territory concerned (free text, 120 characters at most).",
+            "example": "Métropole de Lyon"
+          },
+          "accept_licence": {
+            "type": "boolean",
+            "description": "Acceptance of the licence clause of the rules (box never pre-checked)."
+          },
+          "accept_publication": {
+            "type": "boolean",
+            "description": "« Je comprends que mon texte sera publié s'il est accepté » (box never pre-checked)."
+          },
+          "altcha": {
+            "type": "string",
+            "description": "Solution of the ALTCHA widget (base64), accepted once."
+          }
+        }
+      },
+      "Measure": {
+        "type": "string",
+        "description": "Measure taken against the text.",
+        "enum": [
+          "Rejected",
+          "Hidden"
+        ]
+      },
+      "RuleReference": {
+        "type": "object",
+        "description": "Rule at stake in a decision, as sent to the author.",
+        "required": [
+          "article",
+          "title",
+          "url"
+        ],
+        "properties": {
+          "article": {
+            "type": "string",
+            "description": "Article number in the rules page, e.g. `4.3`.",
+            "example": "4.5"
+          },
+          "title": {
+            "type": "string",
+            "example": "Une mesure pour les finances publiques"
+          },
+          "url": {
+            "type": "string",
+            "description": "Relative link to the article, e.g. `/regles#critere-sujet`.",
+            "example": "/regles#critere-sujet"
+          }
+        }
+      },
+      "StatementOfReasons": {
+        "type": "object",
+        "description": "Statement of reasons, given with a refusal and on the tracking page.",
+        "required": [
+          "measure",
+          "reason_code",
+          "reason_message",
+          "rule",
+          "automated",
+          "second_opinion",
+          "decided_on",
+          "purge_on"
+        ],
+        "properties": {
+          "measure": {
+            "$ref": "#/components/schemas/Measure"
+          },
+          "reason_code": {
+            "type": "string",
+            "description": "`reason_code` of `prompts/screening.yaml` (refusal) or `hidden` (masking).",
+            "example": "off_topic"
+          },
+          "reason_message": {
+            "type": "string",
+            "description": "Explanation in French, with an invitation to rephrase for a refusal."
+          },
+          "rule": {
+            "$ref": "#/components/schemas/RuleReference",
+            "description": "Article of the rules applied."
+          },
+          "automated": {
+            "type": "boolean",
+            "description": "The decision was taken automatically by an AI, without human review."
+          },
+          "second_opinion": {
+            "type": "boolean",
+            "description": "The decision followed a Mistral second opinion (gray zone)."
+          },
+          "decided_on": {
+            "type": "string",
+            "format": "date",
+            "description": "Day of the decision (Europe/Paris)."
+          },
+          "purge_on": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "Day from which the text is erased, when an erasure is scheduled."
+          }
+        }
+      },
+      "SubmissionResponse": {
+        "type": "object",
+        "description": "Immediate answer to a submission.",
+        "required": [
+          "status",
+          "tracking_token",
+          "reason_code",
+          "reason_message",
+          "statement"
+        ],
+        "properties": {
+          "status": {
+            "type": "string",
+            "description": "Status right after the synchronous screening: `accepted`, `rejected`,\n`second_opinion` (« en cours de vérification ») or `submitted` (decision model\nunavailable: the screening is retried, follow it with the tracking link).",
+            "example": "accepted"
+          },
+          "tracking_token": {
+            "type": "string",
+            "description": "Tracking token (256 bits, base64url), returned only this once: the tracking link is\n`/suivi#<token>`."
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Refusal reason (`reason_code` of `prompts/screening.yaml`)."
+          },
+          "reason_message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Refusal explanation in French, with an invitation to rephrase."
+          },
+          "statement": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/StatementOfReasons",
+                "description": "Statement of reasons of a refusal (DSA art. 17)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -247,6 +511,10 @@
     {
       "name": "antispam",
       "description": "Protection anti-abus des formulaires (ALTCHA)"
+    },
+    {
+      "name": "submissions",
+      "description": "Dépôt d'idées, de contributions et de signalements"
     },
     {
       "name": "admin",

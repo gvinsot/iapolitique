@@ -72,11 +72,7 @@ pub async fn run_worker(config: Config) -> anyhow::Result<()> {
                 .context("cannot build the decision service client")?,
             Arc::clone(&prompts),
         ),
-        mistral: match MistralClient::new(&config.mistral) {
-            Ok(client) => Some(client),
-            Err(MistralError::MissingApiKey) => None,
-            Err(err) => return Err(err).context("cannot build the Mistral client"),
-        },
+        mistral: mistral_client(&config)?,
         prompts,
     };
     let worker = Worker::new(ctx, worker::default_registry(), options, liveness);
@@ -85,6 +81,15 @@ pub async fn run_worker(config: Config) -> anyhow::Result<()> {
     health_server.abort();
     pool.close().await;
     result
+}
+
+/// The Mistral client, `None` without `MISTRAL_API_KEY`.
+fn mistral_client(config: &Config) -> anyhow::Result<Option<MistralClient>> {
+    match MistralClient::new(&config.mistral) {
+        Ok(client) => Ok(Some(client)),
+        Err(MistralError::MissingApiKey) => Ok(None),
+        Err(err) => Err(err).context("cannot build the Mistral client"),
+    }
 }
 
 /// Loads and validates `PROMPTS_DIR` (§13.4): an invalid file prevents the process from starting.
@@ -157,6 +162,7 @@ pub async fn run_api(config: Config) -> anyhow::Result<()> {
                 .context("ALTCHA_HMAC_KEY is required by the api")?,
         )),
         rate_limiter: Arc::new(RateLimiter::new(RateLimits::from(&config.antispam))),
+        mistral: mistral_client(&config)?,
         prompts,
     };
     let public = http::public_router(state.clone());

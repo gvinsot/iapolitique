@@ -503,6 +503,27 @@
         }
       }
     },
+    "/api/legal": {
+      "get": {
+        "tags": [
+          "reference"
+        ],
+        "summary": "Publisher details, version of the rules and dates of the legal pages.",
+        "operationId": "getLegal",
+        "responses": {
+          "200": {
+            "description": "Mentions légales.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/LegalInfo"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/methodology": {
       "get": {
         "tags": [
@@ -1738,6 +1759,99 @@
           "count": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "LegalInfo": {
+        "type": "object",
+        "required": [
+          "publisher",
+          "contact_email",
+          "privacy_email",
+          "cgu_version",
+          "pages"
+        ],
+        "properties": {
+          "publisher": {
+            "$ref": "#/components/schemas/LegalPublisher"
+          },
+          "contact_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "privacy_email": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Address for personal data requests."
+          },
+          "cgu_version": {
+            "type": "string",
+            "description": "Version of the publication rules accepted with each idea and contribution.",
+            "example": "1.0"
+          },
+          "pages": {
+            "$ref": "#/components/schemas/LegalPages"
+          }
+        }
+      },
+      "LegalPages": {
+        "type": "object",
+        "description": "Day of the last update of each legal page.",
+        "required": [
+          "mentions_legales",
+          "confidentialite",
+          "regles",
+          "licence"
+        ],
+        "properties": {
+          "mentions_legales": {
+            "type": "string",
+            "format": "date"
+          },
+          "confidentialite": {
+            "type": "string",
+            "format": "date"
+          },
+          "regles": {
+            "type": "string",
+            "format": "date"
+          },
+          "licence": {
+            "type": "string",
+            "format": "date"
+          }
+        }
+      },
+      "LegalPublisher": {
+        "type": "object",
+        "description": "The publisher (a natural person, LCEN art. 1-1); also the host of the site.",
+        "required": [
+          "name",
+          "address",
+          "phone"
+        ],
+        "properties": {
+          "name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "address": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "phone": {
+            "type": [
+              "string",
+              "null"
+            ]
           }
         }
       },

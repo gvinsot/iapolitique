@@ -1,6 +1,6 @@
 //! Runtime configuration.
 //!
-//! Every setting comes from an environment variable (see AGENTS.md §10.3 and §13.6). At startup,
+//! Every setting comes from an environment variable (see AGENTS.md §10.3 and §13.1). At startup,
 //! [`load_secrets_into_env`] copies each file of `/run/secrets/` into the environment when the
 //! variable is not already set (PulsarCD convention), then [`Config::from_env`] parses and
 //! validates everything once. Secrets are wrapped in [`Secret`] so they never end up in logs.
@@ -94,6 +94,43 @@ pub struct Config {
     pub public_host: Option<String>,
     /// Admin host (`ADMIN_HOST`), informative only.
     pub admin_host: Option<String>,
+    /// Publisher details served by `GET /api/legal` (§7.5).
+    pub legal: LegalConfig,
+}
+
+/// Identity and contacts of the publisher (LCEN art. 1-1, AGENTS.md §7.5), shown by the legal
+/// pages through `GET /api/legal`. Not secret, but never committed (public repository): they
+/// come from the `LEGAL_*` variables. Optional so that a deployment without them still starts;
+/// the api then warns and the pages show « coordonnées momentanément indisponibles ».
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct LegalConfig {
+    /// `LEGAL_PUBLISHER_NAME`: name of the publisher (a natural person).
+    pub publisher_name: Option<String>,
+    /// `LEGAL_PUBLISHER_ADDRESS`: postal address.
+    pub publisher_address: Option<String>,
+    /// `LEGAL_PUBLISHER_PHONE`: phone number.
+    pub publisher_phone: Option<String>,
+    /// `LEGAL_CONTACT_EMAIL`: contact address (also in `security.txt`).
+    pub contact_email: Option<String>,
+    /// `LEGAL_PRIVACY_EMAIL`: address for personal data requests.
+    pub privacy_email: Option<String>,
+}
+
+impl LegalConfig {
+    /// Names of the `LEGAL_*` variables that are not set.
+    pub fn missing(&self) -> Vec<&'static str> {
+        [
+            ("LEGAL_PUBLISHER_NAME", &self.publisher_name),
+            ("LEGAL_PUBLISHER_ADDRESS", &self.publisher_address),
+            ("LEGAL_PUBLISHER_PHONE", &self.publisher_phone),
+            ("LEGAL_CONTACT_EMAIL", &self.contact_email),
+            ("LEGAL_PRIVACY_EMAIL", &self.privacy_email),
+        ]
+        .into_iter()
+        .filter(|(_, value)| value.is_none())
+        .map(|(key, _)| key)
+        .collect()
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -304,6 +341,14 @@ impl Config {
             format: env.parse("LOG_FORMAT", LogFormat::Json),
         };
 
+        let legal = LegalConfig {
+            publisher_name: env.bounded_line("LEGAL_PUBLISHER_NAME", 200),
+            publisher_address: env.bounded_line("LEGAL_PUBLISHER_ADDRESS", 300),
+            publisher_phone: env.bounded_line("LEGAL_PUBLISHER_PHONE", 40),
+            contact_email: env.email("LEGAL_CONTACT_EMAIL"),
+            privacy_email: env.email("LEGAL_PRIVACY_EMAIL"),
+        };
+
         let config = Config {
             database,
             http,
@@ -316,6 +361,7 @@ impl Config {
             log,
             public_host: env.opt_string("TRAEFIK_HOST"),
             admin_host: env.opt_string("ADMIN_HOST"),
+            legal,
         };
 
         if role == Role::Api {
@@ -359,6 +405,30 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
 
     fn opt_string(&self, key: &str) -> Option<String> {
         self.raw(key).map(|v| v.trim().to_owned())
+    }
+
+    /// Optional single-line text of at most `max` characters.
+    fn bounded_line(&mut self, key: &str, max: usize) -> Option<String> {
+        let value = self.opt_string(key)?;
+        if value.chars().count() > max || value.chars().any(char::is_control) {
+            self.problem(format!(
+                "{key}: expected a single line of at most {max} characters"
+            ));
+            return None;
+        }
+        Some(value)
+    }
+
+    /// Optional e-mail address.
+    fn email(&mut self, key: &str) -> Option<String> {
+        let value = self.opt_string(key)?;
+        match crate::domain::validation::validate_email(Some(&value)) {
+            Ok(Some(email)) if email == value => Some(email),
+            _ => {
+                self.problem(format!("{key}: expected an e-mail address"));
+                None
+            }
+        }
     }
 
     fn string(&self, key: &str, default: &str) -> String {
@@ -607,6 +677,50 @@ mod tests {
         assert_eq!(
             config.decision_service.url,
             "http://192.168.1.27:8001/v1/systemone"
+        );
+    }
+
+    #[test]
+    fn legal_details_are_optional_and_validated() {
+        let config = Config::from_lookup(Role::Api, lookup(&api_env())).unwrap();
+        assert_eq!(config.legal, LegalConfig::default());
+        assert_eq!(config.legal.missing().len(), 5);
+
+        let mut env = api_env();
+        env.extend([
+            ("LEGAL_PUBLISHER_NAME", " Camille Exemple "),
+            ("LEGAL_PUBLISHER_ADDRESS", "1 rue de l'Exemple, 75000 Paris"),
+            ("LEGAL_PUBLISHER_PHONE", "01 23 45 67 89"),
+            ("LEGAL_CONTACT_EMAIL", "contact@example.org"),
+            ("LEGAL_PRIVACY_EMAIL", "rgpd@example.org"),
+        ]);
+        let config = Config::from_lookup(Role::Api, lookup(&env)).unwrap();
+        assert_eq!(
+            config.legal.publisher_name.as_deref(),
+            Some("Camille Exemple")
+        );
+        assert_eq!(
+            config.legal.privacy_email.as_deref(),
+            Some("rgpd@example.org")
+        );
+        assert!(config.legal.missing().is_empty());
+
+        let mut env = api_env();
+        let long: &'static str = Box::leak("x".repeat(201).into_boxed_str());
+        env.extend([
+            ("LEGAL_CONTACT_EMAIL", "not an e-mail"),
+            ("LEGAL_PUBLISHER_NAME", long),
+        ]);
+        let err = Config::from_lookup(Role::Api, lookup(&env)).unwrap_err();
+        assert!(
+            err.problems
+                .iter()
+                .any(|p| p.contains("LEGAL_CONTACT_EMAIL"))
+        );
+        assert!(
+            err.problems
+                .iter()
+                .any(|p| p.contains("LEGAL_PUBLISHER_NAME"))
         );
     }
 

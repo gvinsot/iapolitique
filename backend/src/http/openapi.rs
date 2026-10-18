@@ -18,6 +18,7 @@ use super::ideas::{
     ImpactAssessment, OriginalText, RightOfReply, ScoreComponents, SearchMatch, SourceReference,
     TerritoryRef,
 };
+use super::legal::{self, LegalInfo, LegalPages, LegalPublisher};
 use super::reference::{
     self, AdminLevelItem, CategoryItem, ConfidenceFactor, KeyCount, MethodologyResponse,
     PublicStats, RejectionReason, ScoringMethod, ScreeningCriterion, ScreeningMethod,
@@ -59,6 +60,7 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         antispam::altcha_challenge,
         ideas::list,
         ideas::detail,
+        legal::legal,
         reference::methodology,
         reference::taxonomy,
         reference::stats,
@@ -134,7 +136,10 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         CategoryItem,
         RejectionReason,
         PublicStats,
-        KeyCount
+        KeyCount,
+        LegalInfo,
+        LegalPublisher,
+        LegalPages
     )),
     modifiers(&AdminSecurity),
     tags(
@@ -259,6 +264,7 @@ mod tests {
             "/api/ideas/{slug}",
             "/api/ideas/{slug}/contributions",
             "/api/ideas/{slug}/reports",
+            "/api/legal",
             "/api/methodology",
             "/api/taxonomy",
             "/api/stats",

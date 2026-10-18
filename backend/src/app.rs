@@ -141,6 +141,13 @@ pub async fn run_api(config: Config) -> anyhow::Result<()> {
         .clone()
         .context("ADMIN_API_TOKEN is required by the api")?;
     let prompts = load_prompts(&config)?;
+    let missing_legal = config.legal.missing();
+    if !missing_legal.is_empty() {
+        tracing::warn!(
+            variables = ?missing_legal,
+            "publisher details not configured: the legal pages show them as unavailable"
+        );
+    }
     let config = Arc::new(config);
     let pool = db::connect(&config.database, "iapolitique-api").await?;
     db::migrate(&pool).await?;

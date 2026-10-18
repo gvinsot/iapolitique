@@ -137,6 +137,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/legal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Publisher details, version of the rules and dates of the legal pages. */
+        get: operations["getLegal"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/methodology": {
         parameters: {
             query?: never;
@@ -640,6 +657,35 @@ export interface components {
             /** Format: int64 */
             count: number;
         };
+        LegalInfo: {
+            publisher: components["schemas"]["LegalPublisher"];
+            contact_email: string | null;
+            /** @description Address for personal data requests. */
+            privacy_email: string | null;
+            /**
+             * @description Version of the publication rules accepted with each idea and contribution.
+             * @example 1.0
+             */
+            cgu_version: string;
+            pages: components["schemas"]["LegalPages"];
+        };
+        /** @description Day of the last update of each legal page. */
+        LegalPages: {
+            /** Format: date */
+            mentions_legales: string;
+            /** Format: date */
+            confidentialite: string;
+            /** Format: date */
+            regles: string;
+            /** Format: date */
+            licence: string;
+        };
+        /** @description The publisher (a natural person, LCEN art. 1-1); also the host of the site. */
+        LegalPublisher: {
+            name: string | null;
+            address: string | null;
+            phone: string | null;
+        };
         /**
          * @description Legal instrument needed to implement an idea (§6.2 `legal_vehicle`).
          * @enum {string}
@@ -1084,6 +1130,9 @@ export type SchemaIdeaSubmission = components['schemas']['IdeaSubmission'];
 export type SchemaImpactAssessment = components['schemas']['ImpactAssessment'];
 export type SchemaImpactDirection = components['schemas']['ImpactDirection'];
 export type SchemaKeyCount = components['schemas']['KeyCount'];
+export type SchemaLegalInfo = components['schemas']['LegalInfo'];
+export type SchemaLegalPages = components['schemas']['LegalPages'];
+export type SchemaLegalPublisher = components['schemas']['LegalPublisher'];
 export type SchemaLegalVehicle = components['schemas']['LegalVehicle'];
 export type SchemaMeasure = components['schemas']['Measure'];
 export type SchemaMethodologyFile = components['schemas']['MethodologyFile'];
@@ -1482,6 +1531,26 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getLegal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Mentions légales. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["LegalInfo"];
                 };
             };
         };

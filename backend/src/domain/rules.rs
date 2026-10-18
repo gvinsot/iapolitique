@@ -12,6 +12,29 @@ use utoipa::ToSchema;
 /// with the rules page whenever the accepted clauses change; `GET /api/legal` serves it.
 pub const CGU_VERSION: &str = "1.0";
 
+/// Day of the last update of each legal page (`YYYY-MM-DD`), served by `GET /api/legal` and
+/// shown by the pages. Update the date with the text of the page
+/// (`frontend/src/pages/legal`), and [`CGU_VERSION`] too when the clauses of `/regles` change.
+pub const LEGAL_PAGES_UPDATED_ON: LegalPagesDates = LegalPagesDates {
+    mentions_legales: "2026-10-18",
+    confidentialite: "2026-10-18",
+    regles: "2026-10-18",
+    licence: "2026-10-18",
+};
+
+/// Dates of the legal pages, by page.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct LegalPagesDates {
+    /// `/mentions-legales`.
+    pub mentions_legales: &'static str,
+    /// `/confidentialite`.
+    pub confidentialite: &'static str,
+    /// `/regles` (CGU).
+    pub regles: &'static str,
+    /// `/licence`.
+    pub licence: &'static str,
+}
+
 /// Path of the rules page.
 pub const RULES_PATH: &str = "/regles";
 
@@ -150,6 +173,22 @@ mod tests {
             assert!(
                 article_for_reason(code).is_some(),
                 "reason code `{code}` of screening.yaml has no article in domain::rules"
+            );
+        }
+    }
+
+    #[test]
+    fn legal_page_dates_are_valid() {
+        let dates = LEGAL_PAGES_UPDATED_ON;
+        for date in [
+            dates.mentions_legales,
+            dates.confidentialite,
+            dates.regles,
+            dates.licence,
+        ] {
+            assert!(
+                chrono::NaiveDate::parse_from_str(date, "%Y-%m-%d").is_ok(),
+                "{date}"
             );
         }
     }

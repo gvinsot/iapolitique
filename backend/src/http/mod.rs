@@ -26,6 +26,7 @@ pub mod error;
 pub mod extract;
 pub mod health;
 pub mod ideas;
+pub mod legal;
 pub mod middleware;
 pub mod openapi;
 pub mod reference;
@@ -96,6 +97,7 @@ pub fn public_router(state: AppState) -> Router {
             "/api/ideas/{slug}/reports",
             post(submissions::submit_report),
         )
+        .route("/api/legal", get(legal::legal))
         .route("/api/methodology", get(reference::methodology))
         .route("/api/taxonomy", get(reference::taxonomy))
         .route("/api/stats", get(reference::stats))

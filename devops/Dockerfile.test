@@ -1,0 +1,75 @@
+# syntax=docker/dockerfile:1.7
+#
+# CI image of iapolitique (AGENTS.md §9 and §13.5), service `test` of docker-compose.swarm.yml.
+# PulsarCD runs, from devops/:
+#   docker compose -f docker-compose.swarm.yml build test       # every static check, below
+#   docker compose -f docker-compose.swarm.yml run --rm test    # cargo test against test-db
+#
+# Build context: the repository root (devops/Dockerfile.test.dockerignore keeps target/,
+# node_modules/ and the .env files out of it).
+
+# Keep RUST_VERSION aligned with backend/Dockerfile: clippy lints change between releases.
+ARG RUST_VERSION=1.99
+ARG NODE_VERSION=22
+
+# ---------------------------------------------------------------------------------------------
+# 1. Frontend: ESLint + Prettier, tsc, Vitest, production build.
+# ---------------------------------------------------------------------------------------------
+FROM node:${NODE_VERSION}-alpine AS frontend-check
+WORKDIR /app
+ENV CI=true
+COPY frontend/package.json frontend/package-lock.json frontend/.npmrc* ./
+RUN --mount=type=cache,id=iapolitique-npm,target=/root/.npm,sharing=locked \
+    npm ci --no-audit --no-fund
+COPY frontend/ ./
+RUN npm run lint \
+    && npm run typecheck \
+    && npm test \
+    && npm run build \
+    && mkdir -p /frontend-out/api \
+    && if [ -f src/api/openapi.json ]; then cp src/api/openapi.json /frontend-out/api/; fi \
+    && touch /frontend-ok
+
+# ---------------------------------------------------------------------------------------------
+# 2. Backend: rustfmt, clippy, test compilation. The test binaries run later, at `docker compose
+#    run`, because the integration tests need the test-db service.
+# ---------------------------------------------------------------------------------------------
+FROM rust:${RUST_VERSION}-trixie AS backend-test
+RUN rustup component add rustfmt clippy
+# CI profile: no incremental artifacts, line tables only (readable backtraces, smaller target/).
+ENV CARGO_TERM_COLOR=always \
+    CARGO_INCREMENTAL=0 \
+    CARGO_PROFILE_DEV_DEBUG=line-tables-only \
+    CARGO_PROFILE_TEST_DEBUG=line-tables-only \
+    RUST_BACKTRACE=1
+WORKDIR /src
+# Witness file: without a dependency on frontend-check, BuildKit would skip that stage entirely.
+COPY --from=frontend-check /frontend-ok /tmp/frontend-ok
+# Same layout as the repository: tests resolve ../prompts and ../frontend/src/api/openapi.json
+# from CARGO_MANIFEST_DIR.
+COPY --from=frontend-check /frontend-out/api/ frontend/src/api/
+COPY prompts/ prompts/
+COPY backend/ backend/
+WORKDIR /src/backend
+# The registry and target/ live in cache mounts between builds, but `cargo test` runs from the
+# image: copy them in before compiling and back out afterwards, so the image holds a ready target/
+# at the same absolute path (no rebuild at run time) and the next build starts warm, even after a
+# failed check.
+RUN --mount=type=cache,id=iapolitique-cargo-registry,target=/cache/registry,sharing=locked \
+    --mount=type=cache,id=iapolitique-cargo-target,target=/cache/target,sharing=locked \
+    set -eu; \
+    mkdir -p "$CARGO_HOME/registry" target; \
+    cp -a /cache/registry/. "$CARGO_HOME/registry/"; \
+    cp -a /cache/target/. target/; \
+    rc=0; \
+    { cargo fmt --check \
+      && cargo clippy --locked --all-targets -- -D warnings \
+      && cargo test --locked --no-run; } || rc=$?; \
+    find /cache/registry /cache/target -mindepth 1 -maxdepth 1 -exec rm -rf {} +; \
+    cp -a "$CARGO_HOME/registry/." /cache/registry/; \
+    cp -a target/. /cache/target/; \
+    exit "$rc"
+
+COPY --chmod=0755 devops/run-tests.sh /usr/local/bin/run-tests
+ENTRYPOINT ["/usr/local/bin/run-tests"]
+CMD []

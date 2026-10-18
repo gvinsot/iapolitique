@@ -1,0 +1,11 @@
+# Build context of devops/Dockerfile.test (the repository root): only sources go in.
+.git
+**/target
+**/node_modules
+frontend/dist
+frontend/coverage
+**/.vite
+**/*.tsbuildinfo
+**/.env
+**/.env.qa
+devops/*.deploy.yml

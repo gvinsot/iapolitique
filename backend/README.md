@@ -32,7 +32,7 @@ depuis `backend/` : `PROMPTS_DIR=../prompts`.
 | `migrations/` | schéma complet (§5 à §8), migrations additives uniquement |
 | `src/jobs/` | file de jobs PostgreSQL, worker, planification quotidienne, purge (§7.3) |
 | `src/ai/` | prompts versionnés (`prompts.rs` : chargement, validation, rendu, méthodologie), modèle de décision (`decision.rs` : client `/v1/systemone`, règles de seuils et zone grise, enregistrement dans `screenings` et `ai_calls`), Mistral (`mistral.rs` : sorties JSON strictes, recherche web via l'API Conversations, embeddings, retries bornés, coût estimé et `ai_calls`), sorties typées et leurs contrôles (`outputs.rs`), budget IA journalier (`budget.rs` : au-delà de `MISTRAL_DAILY_BUDGET_EUR`, le worker reporte les jobs Mistral au prochain minuit Europe/Paris sans consommer de tentative) |
-| `src/antispam/` | ALTCHA (`altcha.rs` : défis signés, vérification, anti-rejeu en mémoire) |
+| `src/antispam/` | ALTCHA (`altcha.rs` : défis signés, vérification, anti-rejeu en mémoire), limite par client (`rate_limit.rs` : empreinte `HMAC(sel du jour, IP)`, sel et compteurs en mémoire seulement, détruits toutes les 24 h) |
 | `src/http/` | routeurs public et admin, erreurs JSON unifiées, extracteurs, IP client, OpenAPI |
 | `src/app.rs` | démarrage des processus api et worker, arrêt propre sur SIGTERM |
 

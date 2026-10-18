@@ -12,6 +12,7 @@ use crate::ai::decision::{DecisionClient, Screener};
 use crate::ai::mistral::{MistralClient, MistralError};
 use crate::ai::prompts::Prompts;
 use crate::antispam::altcha::Altcha;
+use crate::antispam::rate_limit::{RateLimiter, RateLimits};
 use crate::config::Config;
 use crate::db;
 use crate::http::{self, AppState};
@@ -155,6 +156,7 @@ pub async fn run_api(config: Config) -> anyhow::Result<()> {
                 .clone()
                 .context("ALTCHA_HMAC_KEY is required by the api")?,
         )),
+        rate_limiter: Arc::new(RateLimiter::new(RateLimits::from(&config.antispam))),
         prompts,
     };
     let public = http::public_router(state.clone());

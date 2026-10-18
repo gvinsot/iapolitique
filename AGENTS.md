@@ -408,7 +408,9 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
   `X-Forwarded-For` posé par Traefik (ports publiés en mode `host` : Traefik voit l'IP réelle).
 - Aucune empreinte HMAC n'est stockée avec une idée, une contribution ou un signalement.
 - Limites par défaut (configurables) : 5 idées / heure et 20 / jour, 20 contributions / jour,
-  20 signalements / jour par empreinte.
+  20 signalements / jour par empreinte. Fenêtres fixes ouvertes par la première requête
+  comptée ; une IPv6 est comptée par préfixe /64 ; un refus répond `429` (`rate_limited`,
+  message en français, `Retry-After`) et n'est pas compté.
 - Le WAF et le rate limit global de Traefik (`global@file`) s'appliquent en plus.
 
 ### 7.3 Rétention

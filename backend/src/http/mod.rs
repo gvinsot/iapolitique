@@ -14,6 +14,7 @@ use sqlx::PgPool;
 use crate::ai::decision::Screener;
 use crate::ai::prompts::Prompts;
 use crate::antispam::altcha::Altcha;
+use crate::antispam::rate_limit::RateLimiter;
 use crate::config::{Config, Secret};
 
 pub mod admin;
@@ -40,6 +41,8 @@ pub struct AppState {
     pub screener: Screener,
     /// ALTCHA proof of work of the public forms (§7.2).
     pub altcha: Arc<Altcha>,
+    /// Per-client limits of the public forms (§7.2).
+    pub rate_limiter: Arc<RateLimiter>,
 }
 
 impl FromRef<AppState> for TrustedProxyHops {
@@ -110,12 +113,16 @@ mod tests {
             crate::ai::decision::DecisionClient::new(&config.decision_service).unwrap(),
             Arc::clone(&prompts),
         );
+        let rate_limiter = Arc::new(RateLimiter::new(
+            crate::antispam::rate_limit::RateLimits::from(&config.antispam),
+        ));
         AppState {
             pool,
             config: Arc::new(config),
             prompts,
             screener,
             altcha: Arc::new(Altcha::new(Secret::new(TOKEN))),
+            rate_limiter,
         }
     }
 

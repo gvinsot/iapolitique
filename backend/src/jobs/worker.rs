@@ -19,6 +19,7 @@ use super::purge::PurgeHandler;
 use super::schedule::{self, DailySchedule};
 use super::{Job, JobError, JobKind, JobOutcome, queue};
 use crate::ai::decision::Screener;
+use crate::ai::mistral::MistralClient;
 use crate::ai::prompts::Prompts;
 use crate::config::{Config, WorkerConfig};
 
@@ -35,6 +36,8 @@ pub struct JobContext {
     pub prompts: Arc<Prompts>,
     /// Screening retries when the decision service was unavailable (§5.3).
     pub screener: Screener,
+    /// `None` without `MISTRAL_API_KEY`: the kinds that need it are not claimed.
+    pub mistral: Option<MistralClient>,
 }
 
 /// Processing of one [`JobKind`].
@@ -462,6 +465,7 @@ mod tests {
             config: test_config(false),
             prompts: crate::ai::prompts::test_prompts(),
             screener: test_screener(),
+            mistral: None,
         };
         let worker = Worker::new(
             ctx,
@@ -516,6 +520,7 @@ mod tests {
             config: test_config(false),
             prompts: crate::ai::prompts::test_prompts(),
             screener: test_screener(),
+            mistral: None,
         };
         let worker = Worker::new(
             ctx,
@@ -583,6 +588,7 @@ mod tests {
             config: test_config(true),
             prompts: crate::ai::prompts::test_prompts(),
             screener: test_screener(),
+            mistral: None,
         };
         let worker = Worker::new(
             ctx,

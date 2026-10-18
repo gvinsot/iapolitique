@@ -3,10 +3,15 @@
 //! - [`prompts`]: the versioned files of `prompts/`, loaded and validated at startup, rendered
 //!   with their variables, and exposed for the public methodology page.
 //! - [`decision`]: client of the decision model (`POST /v1/systemone`) and screening rules.
+//! - [`mistral`]: Mistral client (structured outputs, web research, embeddings) with retries,
+//!   cost estimation and `ai_calls` records.
+//! - [`outputs`]: typed Mistral outputs and the checks a JSON schema cannot express.
 
 use std::time::Duration;
 
 pub mod decision;
+pub mod mistral;
+pub mod outputs;
 pub mod prompts;
 
 /// Installs `ring` as the process-wide rustls crypto provider (reqwest is built without one, so

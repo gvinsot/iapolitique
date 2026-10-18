@@ -31,7 +31,7 @@ depuis `backend/` : `PROMPTS_DIR=../prompts`.
 | `src/db/` | pool PostgreSQL, migrations embarquées (`MIGRATOR`), tests du schéma, requêtes par table (`ai_calls`, `screenings`, `settings`) |
 | `migrations/` | schéma complet (§5 à §8), migrations additives uniquement |
 | `src/jobs/` | file de jobs PostgreSQL, worker, planification quotidienne, purge (§7.3) |
-| `src/ai/` | prompts versionnés (`prompts.rs` : chargement, validation, rendu, méthodologie), modèle de décision (`decision.rs` : client `/v1/systemone`, règles de seuils et zone grise, enregistrement dans `screenings` et `ai_calls`) |
+| `src/ai/` | prompts versionnés (`prompts.rs` : chargement, validation, rendu, méthodologie), modèle de décision (`decision.rs` : client `/v1/systemone`, règles de seuils et zone grise, enregistrement dans `screenings` et `ai_calls`), Mistral (`mistral.rs` : sorties JSON strictes, recherche web via l'API Conversations, embeddings, retries bornés, coût estimé et `ai_calls`), sorties typées et leurs contrôles (`outputs.rs`) |
 | `src/http/` | routeurs public et admin, erreurs JSON unifiées, extracteurs, IP client, OpenAPI |
 | `src/app.rs` | démarrage des processus api et worker, arrêt propre sur SIGTERM |
 

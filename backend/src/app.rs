@@ -9,6 +9,7 @@ use tokio::net::TcpListener;
 use tokio::sync::watch;
 
 use crate::ai::decision::{DecisionClient, Screener};
+use crate::ai::mistral::{MistralClient, MistralError};
 use crate::ai::prompts::Prompts;
 use crate::config::Config;
 use crate::db;
@@ -69,6 +70,11 @@ pub async fn run_worker(config: Config) -> anyhow::Result<()> {
                 .context("cannot build the decision service client")?,
             Arc::clone(&prompts),
         ),
+        mistral: match MistralClient::new(&config.mistral) {
+            Ok(client) => Some(client),
+            Err(MistralError::MissingApiKey) => None,
+            Err(err) => return Err(err).context("cannot build the Mistral client"),
+        },
         prompts,
     };
     let worker = Worker::new(ctx, worker::default_registry(), options, liveness);

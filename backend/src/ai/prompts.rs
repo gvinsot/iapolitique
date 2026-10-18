@@ -1371,11 +1371,17 @@ mod tests {
         dir
     }
 
-    fn edit(dir: &Path, file: &str, from: &str, to: &str) {
+    /// Replaces the first match of `pattern` (a regex) in a copied file.
+    fn edit_re(dir: &Path, file: &str, pattern: &str, to: &str) {
         let path = dir.join(file);
         let text = std::fs::read_to_string(&path).unwrap();
-        assert!(text.contains(from), "{file} does not contain {from:?}");
-        std::fs::write(&path, text.replacen(from, to, 1)).unwrap();
+        let re = Regex::new(pattern).unwrap();
+        assert!(re.is_match(&text), "{file} does not match {pattern:?}");
+        std::fs::write(&path, re.replacen(&text, 1, regex::NoExpand(to)).as_ref()).unwrap();
+    }
+
+    fn edit(dir: &Path, file: &str, from: &str, to: &str) {
+        edit_re(dir, file, &regex::escape(from), to);
     }
 
     fn problems_of(dir: &Path) -> Vec<String> {
@@ -1639,13 +1645,18 @@ mod tests {
     #[test]
     fn invalid_screening_grid_is_reported() {
         let dir = copy_prompts();
-        edit(
+        edit_re(
             dir.path(),
             SCREENING_FILE,
-            "reject_below: 0.2",
-            "reject_below: 0.9",
+            r"reject_below: [0-9.]+",
+            "reject_below: 0.99",
         );
-        edit(dir.path(), SCREENING_FILE, "pass_when: 1", "pass_when: 7");
+        edit_re(
+            dir.path(),
+            SCREENING_FILE,
+            r"pass_when: [0-9]+",
+            "pass_when: 7",
+        );
         edit(dir.path(), SCREENING_FILE, "type: noul", "type: choice");
         let problems = problems_of(dir.path());
         assert!(
@@ -1666,10 +1677,10 @@ mod tests {
         );
 
         let dir = copy_prompts();
-        edit(
+        edit_re(
             dir.path(),
             SCREENING_FILE,
-            "version: \"1.0.0\"",
+            r#"version: "[^"]*""#,
             "version: [1]",
         );
         assert!(problems_of(dir.path())[0].contains("invalid YAML"));
@@ -1740,17 +1751,21 @@ mod tests {
     #[test]
     fn invalid_prompt_files_are_reported() {
         let dir = copy_prompts();
-        edit(
+        edit_re(
             dir.path(),
             "second_opinion.md",
-            "version: \"1.",
-            "version: \"v1.",
+            r#"version: "[^"]*""#,
+            r#"version: "v1""#,
         );
         edit(
             dir.path(),
             "second_opinion.md",
-            "Tu es modérateur",
-            "Tu es {{section}} modérateur",
+            "
+---
+",
+            "
+---
+{{section}} ",
         );
         edit(
             dir.path(),

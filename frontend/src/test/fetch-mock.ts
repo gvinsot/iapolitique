@@ -8,7 +8,12 @@ type Handler = (request: Request) => Response | Promise<Response>;
  */
 export function stubFetch(handler: Handler) {
   const fetch = vi.fn(async (input: RequestInfo | URL, init?: RequestInit) =>
-    handler(input instanceof Request ? input : new Request(input, init)),
+    handler(
+      input instanceof Request
+        ? input
+        : // Relative URLs resolve against the page, as in a browser.
+          new Request(new URL(input, window.location.href), init),
+    ),
   );
   vi.stubGlobal("fetch", fetch);
   return fetch;

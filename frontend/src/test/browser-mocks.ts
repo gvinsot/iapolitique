@@ -83,7 +83,21 @@ function offlineFetch(input: RequestInfo | URL): Promise<Response> {
   return Promise.reject(new TypeError(`Network disabled in tests (${url})`));
 }
 
+/**
+ * jsdom's crypto has no `subtle`: expose Node's Web Crypto implementation instead (used by the
+ * ALTCHA widget, which hashes in the main thread when Web Workers are unavailable, as in jsdom).
+ */
+function installWebCrypto(): void {
+  if ("subtle" in globalThis.crypto) return;
+  const nodeProcess = (globalThis as { process?: { getBuiltinModule?: (id: string) => unknown } })
+    .process;
+  const nodeCrypto = nodeProcess?.getBuiltinModule?.("node:crypto") as
+    { webcrypto?: Crypto } | undefined;
+  if (nodeCrypto?.webcrypto) vi.stubGlobal("crypto", nodeCrypto.webcrypto);
+}
+
 export function installBrowserMocks(): void {
+  installWebCrypto();
   mockColorScheme(false);
   vi.stubGlobal("fetch", vi.fn(offlineFetch));
   vi.stubGlobal("ResizeObserver", ResizeObserverStub);

@@ -231,5 +231,26 @@ async fn hidden_ideas_have_a_statement(pool: PgPool) {
     assert_eq!(statement.measure, statement::Measure::Hidden);
     assert_eq!(statement.rule.url, "/regles#mesures");
     assert!(statement.automated);
+    // The text is purged by the first daily purge 12 months after the masking (§7.3).
+    let (in_a_year,): (chrono::NaiveDate,) =
+        sqlx::query_as("SELECT ((now() + interval '12 months') AT TIME ZONE 'Europe/Paris')::date")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let purge_on = statement.purge_on.unwrap();
+    assert!(
+        purge_on == in_a_year || purge_on == in_a_year.succ_opt().unwrap(),
+        "{purge_on}"
+    );
+    // A pending human review holds the purge.
+    sqlx::query("INSERT INTO review_requests (target_kind, target_id) VALUES ('idea', $1)")
+        .bind(idea)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let statement = statement::load(&pool, &app.state.prompts, target)
+        .await
+        .unwrap()
+        .unwrap();
     assert_eq!(statement.purge_on, None);
 }

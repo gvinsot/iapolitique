@@ -65,7 +65,7 @@ text_enum! {
     /// submitted ─▶ screening ─┬─▶ rejected ─▶ purged
     ///                         ├─▶ second_opinion ─▶ rejected | accepted
     ///                         ├─▶ accepted ─▶ dedup ─┬─▶ merged
-    ///                         │                      └─▶ queued_analysis ─▶ analyzing ─┬─▶ published ⇄ hidden
+    ///                         │                      └─▶ queued_analysis ─▶ analyzing ─┬─▶ published ⇄ hidden ─▶ purged
     ///                         │                                                        └─▶ analysis_failed ─▶ queued_analysis
     ///                         └─▶ submitted (decision service unavailable, retried by a job)
     /// ```
@@ -81,13 +81,15 @@ text_enum! {
         SecondOpinion => "second_opinion",
         /// Refused; the text is purged 30 days later.
         Rejected => "rejected",
-        /// Refused and purged: only aggregated data remains.
+        /// Text purged (refused 30 days ago, hidden 12 months ago, or merged into a purged
+        /// idea): only aggregated data remains.
         Purged => "purged",
         /// Kept by the screening, waiting for duplicate detection.
         Accepted => "accepted",
         /// Duplicate detection in progress (embedding + nearest neighbour).
         Dedup => "dedup",
-        /// Duplicate of a published idea, merged into it as a contribution.
+        /// Duplicate of a published idea, merged into it as a contribution; purged with it if
+        /// that idea is purged after being hidden.
         Merged => "merged",
         /// Waiting for the Mistral analysis.
         QueuedAnalysis => "queued_analysis",
@@ -116,12 +118,14 @@ impl StateMachine for IdeaStatus {
             Purged => &[],
             Accepted => &[Dedup],
             Dedup => &[Merged, QueuedAnalysis],
-            Merged => &[],
+            // Merged duplicates are purged with the hidden idea they were merged into.
+            Merged => &[Purged],
             QueuedAnalysis => &[Analyzing],
             Analyzing => &[Published, AnalysisFailed, QueuedAnalysis],
             AnalysisFailed => &[QueuedAnalysis],
             Published => &[Hidden],
-            Hidden => &[Published],
+            // Hidden 12 months: the text is purged (§7.3).
+            Hidden => &[Published, Purged],
         }
     }
 
@@ -314,8 +318,10 @@ mod tests {
                 (Analyzing, AnalysisFailed),
                 (Analyzing, QueuedAnalysis),
                 (AnalysisFailed, QueuedAnalysis),
+                (Merged, Purged),
                 (Published, Hidden),
                 (Hidden, Published),
+                (Hidden, Purged),
             ],
         );
         assert_all_reachable(IdeaStatus::ALL);
@@ -328,7 +334,7 @@ mod tests {
             .filter(|s| s.is_terminal())
             .copied()
             .collect();
-        assert_eq!(terminal, vec![IdeaStatus::Purged, IdeaStatus::Merged]);
+        assert_eq!(terminal, vec![IdeaStatus::Purged]);
     }
 
     #[test]

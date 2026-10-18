@@ -5,6 +5,12 @@
 //!   are deleted, the second opinion explanation (which may paraphrase the text) is erased, and
 //!   the status becomes `purged`. Aggregated data stays: date, reason, level, decision model
 //!   scores. A text whose human review is still pending waits for the administrator.
+//! - Hidden ideas (§7.3): 12 months after their masking (and without a pending human review)
+//!   their text and everything derived from it are erased and the status becomes `purged`: the
+//!   original text, the territory, the title, summary and slug, the text of their analyses
+//!   (amounts, category and scores stay for statistics), the explanations of their report
+//!   reviews, their embedding; their contributions are deleted (with their tracking tokens) and
+//!   the duplicates merged into them are purged too.
 //! - Handled review requests are deleted one year after their handling.
 //! - Reports: the optional name and e-mail of the reporter are erased 6 months after the report;
 //!   reviewed reports lose their details and their tracking token 6 months after the review.
@@ -13,7 +19,8 @@
 //! - Finished jobs and superseded exports are removed after a while.
 
 use serde::Serialize;
-use sqlx::PgPool;
+use sqlx::{PgConnection, PgPool};
+use uuid::Uuid;
 
 use super::schedule::DailySchedule;
 use super::worker::{HandlerFuture, JobContext, JobHandler};
@@ -24,6 +31,8 @@ use crate::domain::status::{ContributionStatus, IdeaStatus, ReportStatus, StateM
 pub const REJECTED_TEXT_RETENTION_DAYS: i32 = 30;
 /// Months the contact of a reporter and the details of a reviewed report are kept (§7.3).
 pub const REPORT_RETENTION_MONTHS: i32 = 6;
+/// Months a hidden idea keeps its text (§7.3).
+pub const HIDDEN_TEXT_RETENTION_MONTHS: i32 = 12;
 /// Months a handled review request is kept (requests about rights: one year).
 pub const REVIEW_REQUEST_RETENTION_MONTHS: i32 = 12;
 /// Days a succeeded job is kept (debugging).
@@ -41,6 +50,12 @@ pub struct PurgeReport {
     pub ideas: i64,
     pub contributions: i64,
     pub reports: i64,
+    /// Hidden ideas purged after 12 months.
+    pub hidden_ideas: i64,
+    /// Duplicates purged with the hidden idea they were merged into.
+    pub merged_duplicates: i64,
+    /// Contributions deleted with their hidden idea.
+    pub hidden_idea_contributions: i64,
     /// Reports whose reporter contact was erased.
     pub report_contacts: i64,
     /// Reviewed reports whose details were erased.
@@ -71,8 +86,16 @@ pub async fn run(pool: &PgPool) -> Result<PurgeReport, sqlx::Error> {
             ReportStatus::Rejected.can_transition_to(ReportStatus::Purged),
             "report",
         ),
+        (
+            IdeaStatus::Hidden.can_transition_to(IdeaStatus::Purged),
+            "hidden idea",
+        ),
+        (
+            IdeaStatus::Merged.can_transition_to(IdeaStatus::Purged),
+            "merged idea",
+        ),
     ] {
-        assert!(allowed, "{entity}: rejected -> purged must be allowed");
+        assert!(allowed, "{entity}: -> purged must be allowed");
     }
 
     let mut tx = pool.begin().await?;
@@ -181,6 +204,8 @@ pub async fn run(pool: &PgPool) -> Result<PurgeReport, sqlx::Error> {
     report.tracking_tokens += tokens;
     report.review_requests += requests;
 
+    purge_hidden_ideas(&mut tx, &mut report).await?;
+
     report.report_contacts = sqlx::query(
         "UPDATE reports SET reporter_name = NULL, reporter_email = NULL,
              reporter_purged_at = now()
@@ -267,6 +292,142 @@ pub async fn run(pool: &PgPool) -> Result<PurgeReport, sqlx::Error> {
     Ok(report)
 }
 
+/// Purge of the ideas hidden for [`HIDDEN_TEXT_RETENTION_MONTHS`] (see the module documentation).
+async fn purge_hidden_ideas(
+    conn: &mut PgConnection,
+    report: &mut PurgeReport,
+) -> Result<(), sqlx::Error> {
+    let ideas: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM ideas
+         WHERE status = 'hidden'
+           AND coalesce(hidden_at, status_changed_at) < now() - make_interval(months => $1)
+           AND NOT EXISTS (SELECT 1 FROM review_requests q
+                           WHERE q.target_kind = 'idea' AND q.target_id = ideas.id
+                             AND q.status = 'pending')
+         FOR UPDATE",
+    )
+    .bind(HIDDEN_TEXT_RETENTION_MONTHS)
+    .fetch_all(&mut *conn)
+    .await?;
+    if ideas.is_empty() {
+        return Ok(());
+    }
+
+    // Contributions (improvements, objections, duplicates): deleted with their traces.
+    let contributions: Vec<Uuid> =
+        sqlx::query_scalar("SELECT id FROM contributions WHERE idea_id = ANY($1) FOR UPDATE")
+            .bind(&ideas)
+            .fetch_all(&mut *conn)
+            .await?;
+    let (tokens, requests) = erase_traces(conn, "contribution", &contributions).await?;
+    report.tracking_tokens += tokens;
+    report.review_requests += requests;
+    report.hidden_idea_contributions = sqlx::query("DELETE FROM contributions WHERE id = ANY($1)")
+        .bind(&contributions)
+        .execute(&mut *conn)
+        .await?
+        .rows_affected() as i64;
+
+    // Duplicates merged into them: same purge as the ideas, without publication columns.
+    let duplicates: Vec<Uuid> = sqlx::query_scalar(
+        "UPDATE ideas SET status = 'purged', status_changed_at = now(), parent_idea_id = NULL,
+             original_text = NULL, submitted_territory = NULL, original_text_purged_at = now()
+         WHERE parent_idea_id = ANY($1) AND status = 'merged'
+         RETURNING id",
+    )
+    .bind(&ideas)
+    .fetch_all(&mut *conn)
+    .await?;
+    sqlx::query(
+        "INSERT INTO idea_events (idea_id, from_status, to_status, actor, reason_code)
+         SELECT id, 'merged', 'purged', 'worker', 'retention' FROM unnest($1::uuid[]) AS id",
+    )
+    .bind(&duplicates)
+    .execute(&mut *conn)
+    .await?;
+    report.merged_duplicates = duplicates.len() as i64;
+
+    sqlx::query(
+        "UPDATE ideas SET status = 'purged', status_changed_at = now(),
+             original_text = NULL, submitted_territory = NULL, original_text_purged_at = now(),
+             title = NULL, summary = NULL, slug = NULL, territory_name = NULL
+         WHERE id = ANY($1)",
+    )
+    .bind(&ideas)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "INSERT INTO idea_events (idea_id, from_status, to_status, actor, reason_code)
+         SELECT id, 'hidden', 'purged', 'worker', 'retention' FROM unnest($1::uuid[]) AS id",
+    )
+    .bind(&ideas)
+    .execute(&mut *conn)
+    .await?;
+    report.hidden_ideas = ideas.len() as i64;
+
+    // Texts generated from them: the figures stay for statistics.
+    sqlx::query(
+        "UPDATE analyses SET content = '{}'::jsonb, title = '', summary = '',
+             sources = '[]'::jsonb, territory_name = NULL
+         WHERE idea_id = ANY($1)",
+    )
+    .bind(&ideas)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "UPDATE report_reviews SET explanation = '', corrections = '' WHERE idea_id = ANY($1)",
+    )
+    .bind(&ideas)
+    .execute(&mut *conn)
+    .await?;
+    let mut purged = ideas;
+    purged.extend(duplicates);
+    sqlx::query("DELETE FROM idea_embeddings WHERE idea_id = ANY($1)")
+        .bind(&purged)
+        .execute(&mut *conn)
+        .await?;
+    let (tokens, requests) = erase_traces(conn, "idea", &purged).await?;
+    report.tracking_tokens += tokens;
+    report.review_requests += requests;
+    Ok(())
+}
+
+/// Deletes the tracking tokens and the review requests of purged texts of kind `kind` and
+/// erases their second opinion explanations. Returns the numbers of tokens and requests deleted.
+async fn erase_traces(
+    conn: &mut PgConnection,
+    kind: &str,
+    ids: &[Uuid],
+) -> Result<(i64, i64), sqlx::Error> {
+    if ids.is_empty() {
+        return Ok((0, 0));
+    }
+    let tokens =
+        sqlx::query("DELETE FROM tracking_tokens WHERE target_kind = $1 AND target_id = ANY($2)")
+            .bind(kind)
+            .bind(ids)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected() as i64;
+    let requests =
+        sqlx::query("DELETE FROM review_requests WHERE target_kind = $1 AND target_id = ANY($2)")
+            .bind(kind)
+            .bind(ids)
+            .execute(&mut *conn)
+            .await?
+            .rows_affected() as i64;
+    sqlx::query(
+        "UPDATE screenings SET second_opinion_explanation = NULL
+         WHERE target_kind = $1 AND target_id = ANY($2)
+           AND second_opinion_explanation IS NOT NULL",
+    )
+    .bind(kind)
+    .bind(ids)
+    .execute(&mut *conn)
+    .await?;
+    Ok((tokens, requests))
+}
+
 /// Worker handler of [`JobKind::Purge`].
 #[derive(Debug, Default, Clone, Copy)]
 pub struct PurgeHandler;
@@ -287,6 +448,9 @@ impl JobHandler for PurgeHandler {
                 ideas = report.ideas,
                 contributions = report.contributions,
                 reports = report.reports,
+                hidden_ideas = report.hidden_ideas,
+                merged_duplicates = report.merged_duplicates,
+                hidden_idea_contributions = report.hidden_idea_contributions,
                 report_contacts = report.report_contacts,
                 reviewed_reports = report.reviewed_reports,
                 tracking_tokens = report.tracking_tokens,
@@ -671,5 +835,192 @@ mod tests {
         .await
         .unwrap();
         assert_eq!((salts, tokens, jobs, exports), (1, 2, 2, 2));
+    }
+
+    /// A published idea hidden `months` ago, with a tracking token.
+    async fn hidden_idea(pool: &PgPool, slug: &str, months: i32) -> Uuid {
+        let id = crate::test_support::published_idea(pool, slug).await;
+        sqlx::query(
+            "UPDATE ideas SET status = 'hidden', hidden_reason = 'report_review',
+                 hidden_at = now() - make_interval(months => $2)
+             WHERE id = $1",
+        )
+        .bind(id)
+        .bind(months)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO tracking_tokens (token_hash, target_kind, target_id)
+             VALUES (sha256(uuid_send($1)), 'idea', $1)",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+        id
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn purges_hidden_ideas_after_12_months(pool: PgPool) {
+        use crate::db::status::Change;
+        use crate::domain::types::Actor;
+
+        let old = hidden_idea(&pool, "ancienne", 13).await;
+        let recent = hidden_idea(&pool, "recente", 11).await;
+        let reviewed = hidden_idea(&pool, "en-reexamen", 13).await;
+        sqlx::query("INSERT INTO review_requests (target_kind, target_id) VALUES ('idea', $1)")
+            .bind(reviewed)
+            .execute(&pool)
+            .await
+            .unwrap();
+        sqlx::query("UPDATE analyses SET content = $2 WHERE idea_id = $1")
+            .bind(old)
+            .bind(crate::test_support::analysis_output())
+            .execute(&pool)
+            .await
+            .unwrap();
+        crate::db::embeddings::upsert(
+            &pool,
+            old,
+            "mistral-embed",
+            &crate::test_support::unit_vector(0.0),
+            &crate::db::embeddings::content_hash("texte"),
+        )
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO report_reviews (idea_id, outcome, explanation, model, prompt_version)
+             VALUES ($1, 'hide', 'Le texte nomme un particulier.', 'm', '1.1.0')",
+        )
+        .bind(old)
+        .execute(&pool)
+        .await
+        .unwrap();
+        // A contribution taken into account and a duplicate merged into the old idea.
+        let contribution: Uuid = sqlx::query_scalar(
+            "INSERT INTO contributions (idea_id, kind, status, text)
+             VALUES ($1, 'objection', 'accepted', 'Objection.') RETURNING id",
+        )
+        .bind(old)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO tracking_tokens (token_hash, target_kind, target_id)
+             VALUES (sha256(uuid_send($1)), 'contribution', $1)",
+        )
+        .bind(contribution)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let duplicate = crate::test_support::idea_with_status(&pool, "dedup").await;
+        sqlx::query("UPDATE ideas SET status = 'published' WHERE id = $1")
+            .bind(old)
+            .execute(&pool)
+            .await
+            .unwrap();
+        let mut tx = pool.begin().await.unwrap();
+        crate::db::ideas::merge(&mut tx, duplicate, old, &Change::by(Actor::Worker))
+            .await
+            .unwrap();
+        tx.commit().await.unwrap();
+        sqlx::query("UPDATE ideas SET status = 'hidden' WHERE id = $1")
+            .bind(old)
+            .execute(&pool)
+            .await
+            .unwrap();
+
+        let report = run(&pool).await.unwrap();
+        assert_eq!(
+            (
+                report.hidden_ideas,
+                report.merged_duplicates,
+                report.hidden_idea_contributions
+            ),
+            (1, 1, 2)
+        );
+        assert_eq!(report.tracking_tokens, 2);
+
+        let idea: serde_json::Value =
+            sqlx::query_scalar("SELECT to_jsonb(i) FROM ideas i WHERE id = $1")
+                .bind(old)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(idea["status"], "purged");
+        for field in [
+            "original_text",
+            "title",
+            "summary",
+            "slug",
+            "territory_name",
+        ] {
+            assert_eq!(idea[field], serde_json::Value::Null, "{field}");
+        }
+        // Figures stay for statistics.
+        assert_eq!(idea["score_eur"], 1000);
+        assert!(idea["original_text_purged_at"].is_string());
+        let (content, title, sources): (serde_json::Value, String, serde_json::Value) =
+            sqlx::query_as("SELECT content, title, sources FROM analyses WHERE idea_id = $1")
+                .bind(old)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(
+            (content, title.as_str(), sources),
+            (serde_json::json!({}), "", serde_json::json!([]))
+        );
+        let (explanation,): (String,) =
+            sqlx::query_as("SELECT explanation FROM report_reviews WHERE idea_id = $1")
+                .bind(old)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(explanation, "");
+        let (status, parent, text): (String, Option<Uuid>, Option<String>) =
+            sqlx::query_as("SELECT status, parent_idea_id, original_text FROM ideas WHERE id = $1")
+                .bind(duplicate)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((status.as_str(), parent, text), ("purged", None, None));
+        let (contributions, embeddings, tokens): (i64, i64, i64) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM contributions),
+                    (SELECT count(*) FROM idea_embeddings),
+                    (SELECT count(*) FROM tracking_tokens WHERE target_id = ANY($1))",
+        )
+        .bind(vec![old, duplicate, contribution])
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!((contributions, embeddings, tokens), (0, 0, 0));
+        let events: Vec<(Uuid, Option<String>, String)> = sqlx::query_as(
+            "SELECT idea_id, from_status, to_status FROM idea_events
+             WHERE reason_code = 'retention' ORDER BY idea_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let mut expected = vec![
+            (old, Some("hidden".to_owned()), "purged".to_owned()),
+            (duplicate, Some("merged".to_owned()), "purged".to_owned()),
+        ];
+        expected.sort();
+        assert_eq!(events, expected);
+
+        // Hidden for less than 12 months, or with a pending human review: kept.
+        for id in [recent, reviewed] {
+            let (status, text): (String, Option<String>) =
+                sqlx::query_as("SELECT status, original_text FROM ideas WHERE id = $1")
+                    .bind(id)
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            assert_eq!(status, "hidden");
+            assert!(text.is_some());
+        }
+        // Idempotent.
+        assert_eq!(run(&pool).await.unwrap().hidden_ideas, 0);
     }
 }

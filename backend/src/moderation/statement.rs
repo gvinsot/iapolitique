@@ -13,7 +13,9 @@ use crate::ai::prompts::Prompts;
 use crate::domain::rules::{self, RuleReference};
 use crate::domain::text_enum;
 use crate::domain::types::TargetKind;
-use crate::jobs::purge::{REJECTED_TEXT_RETENTION_DAYS, SCHEDULE as PURGE_SCHEDULE};
+use crate::jobs::purge::{
+    HIDDEN_TEXT_RETENTION_MONTHS, REJECTED_TEXT_RETENTION_DAYS, SCHEDULE as PURGE_SCHEDULE,
+};
 
 /// Message of a refusal whose reason code is no longer in the grid.
 const UNKNOWN_REASON_MESSAGE: &str =
@@ -21,7 +23,21 @@ const UNKNOWN_REASON_MESSAGE: &str =
 /// Reason code of a masking.
 const HIDDEN_REASON_CODE: &str = "hidden";
 /// `ideas.hidden_reason` of a masking decided by the administrator.
-const ADMIN_HIDDEN_REASON: &str = "admin";
+const ADMIN_HIDDEN_REASON: &str = crate::domain::types::HiddenReason::Admin.as_str();
+
+/// Masking of an idea: reason, day of the masking, first day the daily purge erases the text
+/// (the next purge run, Paris time, after `hidden_at + 12 months`, §7.3), whether a human review
+/// is pending (the purge then waits). `$1` id, `$2` retention months, `$3`/`$4` purge hour and
+/// minute.
+const HIDDEN_SQL: &str = "SELECT hidden_reason, (masked_at AT TIME ZONE 'Europe/Paris')::date,
+        ((masked_at + make_interval(months => $2)) AT TIME ZONE 'Europe/Paris')::date
+        + CASE WHEN ((masked_at + make_interval(months => $2)) AT TIME ZONE 'Europe/Paris')::time
+                    >= make_time($3, $4, 0)
+               THEN 1 ELSE 0 END,
+        EXISTS (SELECT 1 FROM review_requests q
+                WHERE q.target_kind = 'idea' AND q.target_id = i.id AND q.status = 'pending')
+    FROM (SELECT id, hidden_reason, coalesce(hidden_at, status_changed_at) AS masked_at
+          FROM ideas WHERE id = $1 AND status = 'hidden') i";
 const HIDDEN_AFTER_REPORT_MESSAGE: &str = "L'idée a été masquée après l'examen automatisé d'un \
     signalement : elle n'apparaît plus sur le site ni dans les exports suivants.";
 const HIDDEN_BY_ADMIN_MESSAGE: &str = "L'idée a été masquée par l'éditeur du site : elle \
@@ -140,30 +156,32 @@ pub async fn load(
     if target.kind != TargetKind::Idea {
         return Ok(None);
     }
-    let hidden: Option<(Option<String>, NaiveDate)> = sqlx::query_as(
-        "SELECT hidden_reason, (coalesce(hidden_at, status_changed_at) AT TIME ZONE 'Europe/Paris')::date
-         FROM ideas WHERE id = $1 AND status = 'hidden'",
-    )
-    .bind(target.id)
-    .fetch_optional(pool)
-    .await?;
-    Ok(hidden.map(|(reason, decided_on)| {
-        let by_admin = reason.as_deref() == Some(ADMIN_HIDDEN_REASON);
-        StatementOfReasons {
-            measure: Measure::Hidden,
-            reason_code: HIDDEN_REASON_CODE.to_owned(),
-            reason_message: if by_admin {
-                HIDDEN_BY_ADMIN_MESSAGE
-            } else {
-                HIDDEN_AFTER_REPORT_MESSAGE
+    let hidden: Option<(Option<String>, NaiveDate, NaiveDate, bool)> = sqlx::query_as(HIDDEN_SQL)
+        .bind(target.id)
+        .bind(HIDDEN_TEXT_RETENTION_MONTHS)
+        .bind(i32::from(PURGE_SCHEDULE.hour))
+        .bind(i32::from(PURGE_SCHEDULE.minute))
+        .fetch_optional(pool)
+        .await?;
+    Ok(
+        hidden.map(|(reason, decided_on, purge_on, review_pending)| {
+            let by_admin = reason.as_deref() == Some(ADMIN_HIDDEN_REASON);
+            StatementOfReasons {
+                measure: Measure::Hidden,
+                reason_code: HIDDEN_REASON_CODE.to_owned(),
+                reason_message: if by_admin {
+                    HIDDEN_BY_ADMIN_MESSAGE
+                } else {
+                    HIDDEN_AFTER_REPORT_MESSAGE
+                }
+                .to_owned(),
+                rule: rules::MEASURES_ARTICLE.into(),
+                automated: !by_admin,
+                second_opinion: false,
+                decided_on,
+                // A pending human review keeps the text until the administrator handles it.
+                purge_on: (!review_pending).then_some(purge_on),
             }
-            .to_owned(),
-            rule: rules::MEASURES_ARTICLE.into(),
-            automated: !by_admin,
-            second_opinion: false,
-            decided_on,
-            // The purge of masked texts (12 months, §7.3) is not scheduled by this version.
-            purge_on: None,
-        }
-    }))
+        }),
+    )
 }

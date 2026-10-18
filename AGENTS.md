@@ -218,6 +218,8 @@ submitted
                     └─▶ queued_analysis ─▶ analyzing ─▶ published
                                                   └─▶ analysis_failed (retries puis admin)
 published ─▶ hidden (après revue d'un signalement ou action admin) ─▶ published
+                                                                └─▶ purged (12 mois après le masquage)
+merged ─▶ purged (avec l'idée masquée dans laquelle il a été fusionné)
 ```
 
 - Les transitions sont définies **uniquement** dans `backend/src/domain/` et testées. Toute
@@ -503,7 +505,12 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
   agrégées sont conservées (date, motif, niveau, scores du modèle de décision pour la calibration
   sans le texte).
 - Idées publiées : conservées avec leur texte original (version masquée, voir §7.5).
-- Contenus masqués (`hidden`) : texte purgé après 12 mois.
+- Contenus masqués (`hidden`) : texte purgé après 12 mois (`hidden → purged`, sauf réexamen
+  humain en attente) avec tout ce qui en dérive : titre, résumé, slug, territoire, contenu
+  textuel des analyses (montants, catégorie et scores gardés pour les statistiques),
+  explications des revues de signalement, embedding, jetons ; ses contributions sont supprimées
+  et les doublons qui y ont été fusionnés purgés (`merged → purged`). L'exposé des motifs du
+  masquage donne la date de purge.
 - Signalements : nom et e-mail facultatifs du signalant effacés 6 mois après le signalement ;
   précision et jeton d'un signalement traité (`reviewed`) effacés 6 mois après la revue.
 - Contribution supprimée par son auteur : effacement immédiat (§7.1).

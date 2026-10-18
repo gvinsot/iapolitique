@@ -169,6 +169,15 @@ text_enum! {
 }
 
 text_enum! {
+    /// Service that answered an AI call, recorded in `ai_calls` (§6.4).
+    pub enum AiProvider {
+        /// Local decision model (d3-mini), free.
+        DecisionService => "decision_service",
+        Mistral => "mistral",
+    }
+}
+
+text_enum! {
     /// Outcome of an AI call.
     pub enum AiCallStatus {
         Success => "success",

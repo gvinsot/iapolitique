@@ -28,10 +28,10 @@ depuis `backend/` : `PROMPTS_DIR=../prompts`.
 |---|---|
 | `src/domain/` | sans I/O : machines à états (`status.rs`), score (`scoring.rs`), montants, slugs, validation des textes, masquage des données personnelles (`redaction.rs`, §7.5), énumérations partagées |
 | `src/config.rs` | configuration typée, secrets masqués dans les logs |
-| `src/db/` | pool PostgreSQL, migrations embarquées (`MIGRATOR`), tests du schéma |
+| `src/db/` | pool PostgreSQL, migrations embarquées (`MIGRATOR`), tests du schéma, requêtes par table (`ai_calls`, `screenings`, `settings`) |
 | `migrations/` | schéma complet (§5 à §8), migrations additives uniquement |
 | `src/jobs/` | file de jobs PostgreSQL, worker, planification quotidienne, purge (§7.3) |
-| `src/ai/` | prompts versionnés (`prompts.rs` : chargement, validation, rendu, méthodologie) |
+| `src/ai/` | prompts versionnés (`prompts.rs` : chargement, validation, rendu, méthodologie), modèle de décision (`decision.rs` : client `/v1/systemone`, règles de seuils et zone grise, enregistrement dans `screenings` et `ai_calls`) |
 | `src/http/` | routeurs public et admin, erreurs JSON unifiées, extracteurs, IP client, OpenAPI |
 | `src/app.rs` | démarrage des processus api et worker, arrêt propre sur SIGTERM |
 
@@ -55,7 +55,8 @@ cargo clippy --all-targets -- -D warnings
 ```
 
 `#[sqlx::test]` crée une base temporaire par test et y applique les migrations. Aucun test
-n'appelle le modèle de décision ni Mistral.
+n'appelle le modèle de décision ni Mistral : leurs réponses sont simulées avec `wiremock`, à partir de
+réponses réelles enregistrées dans `tests/fixtures/` (avec la grille utilisée pour les obtenir).
 
 ## Image Docker
 

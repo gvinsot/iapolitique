@@ -12,6 +12,10 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 
 use crate::config::DatabaseConfig;
 
+pub mod ai_calls;
+pub mod screenings;
+pub mod settings;
+
 /// Migrations of `backend/migrations`, embedded in the binary.
 ///
 /// `ignore_missing`: after an automatic rollback (PulsarCD redeploys the previous image on the

@@ -7,9 +7,9 @@ use uuid::Uuid;
 
 use crate::domain::status::{ContributionStatus, IdeaStatus, ReportStatus};
 use crate::domain::types::{
-    Actor, AdminLevel, AiCallStatus, AiPurpose, AnalysisTrigger, Confidence, ContributionKind,
-    Decision, ExportFormat, IdeaKind, LegalVehicle, ReportReason, ReviewOutcome, ScreeningOutcome,
-    TargetKind,
+    Actor, AdminLevel, AiCallStatus, AiProvider, AiPurpose, AnalysisTrigger, Confidence,
+    ContributionKind, Decision, ExportFormat, IdeaKind, LegalVehicle, ReportReason, ReviewOutcome,
+    ScreeningOutcome, TargetKind,
 };
 
 /// Values quoted in the definition of a CHECK constraint.
@@ -74,6 +74,7 @@ async fn check_constraints_match_domain_enums(pool: PgPool) {
     assert_check_matches!(pool, "screenings", "second_opinion_decision", Decision);
     assert_check_matches!(pool, "screenings", "final_decision", Decision);
     assert_check_matches!(pool, "screenings", "human_label", Decision);
+    assert_check_matches!(pool, "ai_calls", "provider", AiProvider);
     assert_check_matches!(pool, "ai_calls", "purpose", AiPurpose);
     assert_check_matches!(pool, "ai_calls", "status", AiCallStatus);
     assert_check_matches!(pool, "ai_calls", "target_kind", TargetKind);

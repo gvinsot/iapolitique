@@ -263,6 +263,17 @@ enum RawPassWhen {
     Level(i64),
 }
 
+impl ScreeningGrid {
+    /// Parses and validates a grid in the `screening.yaml` format.
+    pub fn from_yaml(text: &str) -> Result<Self, Vec<String>> {
+        let mut problems = Vec::new();
+        match parse_grid(text, &mut problems) {
+            Some(grid) if problems.is_empty() => Ok(grid),
+            _ => Err(problems),
+        }
+    }
+}
+
 fn parse_grid(text: &str, problems: &mut Vec<String>) -> Option<ScreeningGrid> {
     let raw: RawGrid = match serde_saphyr::from_str(text) {
         Ok(raw) => raw,

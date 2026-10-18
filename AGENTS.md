@@ -764,3 +764,13 @@ Rust de `Dockerfile.test` (`RUST_VERSION`) suit celle de `backend/Dockerfile`.
 En local, sans Node installé : `docker run --rm -v "<repo>/frontend:/app" -v iapolitique_node_modules:/app/node_modules -w /app node:22-alpine npm …`.
 Postgres local de test : `docker run -d --name iapolitique-test-pg -e POSTGRES_PASSWORD=postgres -p 55432:5432 pgvector/pgvector:pg18`
 puis `DATABASE_URL=postgres://postgres:postgres@localhost:55432/postgres cargo test`.
+
+### 13.6 Réglages d'exécution (table `settings`)
+
+Valeurs JSON modifiables depuis l'admin, prioritaires sur les défauts de `prompts/` et de
+l'environnement. Une valeur illisible ou incohérente est ignorée (avertissement dans les logs) et
+le défaut s'applique.
+
+| Clé | Valeur | Rôle |
+|---|---|---|
+| `screening.thresholds` | `{ "<section>": { "<clé du critère>": { "reject_below"?: nombre, "accept_above"?: nombre } } }`, sections `idea`, `contribution`, `report` | Surcharge, critère par critère, des seuils de `screening.yaml` (§5.3). Un seuil omis garde la valeur du fichier ; il faut `0 ≤ reject_below ≤ accept_above ≤ 1`. Les seuils appliqués sont enregistrés avec chaque décision (`screenings.thresholds`). |

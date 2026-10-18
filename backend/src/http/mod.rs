@@ -11,6 +11,7 @@ use axum::extract::FromRef;
 use axum::routing::get;
 use sqlx::PgPool;
 
+use crate::ai::decision::Screener;
 use crate::ai::prompts::Prompts;
 use crate::config::{Config, Secret};
 
@@ -33,6 +34,8 @@ pub struct AppState {
     pub config: Arc<Config>,
     /// Versioned prompts, validated at startup.
     pub prompts: Arc<Prompts>,
+    /// Synchronous screening by the decision model (§5.3).
+    pub screener: Screener,
 }
 
 impl FromRef<AppState> for TrustedProxyHops {
@@ -97,10 +100,16 @@ mod tests {
             _ => None,
         })
         .unwrap();
+        let prompts = crate::ai::prompts::test_prompts();
+        let screener = Screener::new(
+            crate::ai::decision::DecisionClient::new(&config.decision_service).unwrap(),
+            Arc::clone(&prompts),
+        );
         AppState {
             pool,
             config: Arc::new(config),
-            prompts: crate::ai::prompts::test_prompts(),
+            prompts,
+            screener,
         }
     }
 

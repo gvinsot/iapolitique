@@ -8,6 +8,7 @@ use anyhow::Context;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 
+use crate::ai::decision::{DecisionClient, Screener};
 use crate::ai::prompts::Prompts;
 use crate::config::Config;
 use crate::db;
@@ -63,6 +64,11 @@ pub async fn run_worker(config: Config) -> anyhow::Result<()> {
     let ctx = JobContext {
         pool: pool.clone(),
         config: Arc::clone(&config),
+        screener: Screener::new(
+            DecisionClient::new(&config.decision_service)
+                .context("cannot build the decision service client")?,
+            Arc::clone(&prompts),
+        ),
         prompts,
     };
     let worker = Worker::new(ctx, worker::default_registry(), options, liveness);
@@ -130,6 +136,11 @@ pub async fn run_api(config: Config) -> anyhow::Result<()> {
     let state = AppState {
         pool: pool.clone(),
         config: Arc::clone(&config),
+        screener: Screener::new(
+            DecisionClient::new(&config.decision_service)
+                .context("cannot build the decision service client")?,
+            Arc::clone(&prompts),
+        ),
         prompts,
     };
     let public = http::public_router(state.clone());

@@ -18,6 +18,7 @@ use super::health::Liveness;
 use super::purge::PurgeHandler;
 use super::schedule::{self, DailySchedule};
 use super::{Job, JobError, JobKind, JobOutcome, queue};
+use crate::ai::decision::Screener;
 use crate::ai::prompts::Prompts;
 use crate::config::{Config, WorkerConfig};
 
@@ -32,6 +33,8 @@ pub struct JobContext {
     pub config: Arc<Config>,
     /// Versioned prompts, validated at startup.
     pub prompts: Arc<Prompts>,
+    /// Screening retries when the decision service was unavailable (§5.3).
+    pub screener: Screener,
 }
 
 /// Processing of one [`JobKind`].
@@ -362,6 +365,14 @@ mod tests {
         )
     }
 
+    fn test_screener() -> Screener {
+        let config = test_config(false);
+        Screener::new(
+            crate::ai::decision::DecisionClient::new(&config.decision_service).unwrap(),
+            crate::ai::prompts::test_prompts(),
+        )
+    }
+
     fn options() -> WorkerOptions {
         WorkerOptions {
             id: "test-worker".into(),
@@ -450,6 +461,7 @@ mod tests {
             pool: pool.clone(),
             config: test_config(false),
             prompts: crate::ai::prompts::test_prompts(),
+            screener: test_screener(),
         };
         let worker = Worker::new(
             ctx,
@@ -503,6 +515,7 @@ mod tests {
             pool: pool.clone(),
             config: test_config(false),
             prompts: crate::ai::prompts::test_prompts(),
+            screener: test_screener(),
         };
         let worker = Worker::new(
             ctx,
@@ -569,6 +582,7 @@ mod tests {
             pool: pool.clone(),
             config: test_config(true),
             prompts: crate::ai::prompts::test_prompts(),
+            screener: test_screener(),
         };
         let worker = Worker::new(
             ctx,

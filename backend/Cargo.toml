@@ -15,6 +15,8 @@ clap = { version = "4", features = ["derive", "env"] }
 indexmap = { version = "2", features = ["serde"] }
 jsonschema = { version = "0.59", default-features = false }
 regex = "1"
+reqwest = { version = "0.13", default-features = false, features = ["rustls-no-provider", "json", "http2"] }
+rustls = { version = "0.23", default-features = false, features = ["ring", "std"] }
 serde = { version = "1", features = ["derive"] }
 serde-saphyr = { version = "2", default-features = false, features = ["deserialize"] }
 serde_json = "1"
@@ -31,6 +33,7 @@ uuid = { version = "1", features = ["v4", "serde"] }
 [dev-dependencies]
 tempfile = "3"
 http-body-util = "0.1"
+wiremock = "0.6"
 
 [profile.release]
 # Keep symbol names (readable panic backtraces), drop the bulky debug info.

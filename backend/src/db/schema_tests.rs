@@ -58,6 +58,8 @@ async fn check_constraints_match_domain_enums(pool: PgPool) {
     assert_check_matches!(pool, "ideas", "kind", IdeaKind);
     assert_check_matches!(pool, "ideas", "confidence", Confidence);
     assert_check_matches!(pool, "idea_events", "actor", Actor);
+    assert_check_matches!(pool, "contribution_events", "actor", Actor);
+    assert_check_matches!(pool, "report_events", "actor", Actor);
     assert_check_matches!(pool, "analyses", "trigger", AnalysisTrigger);
     assert_check_matches!(pool, "analyses", "kind", IdeaKind);
     assert_check_matches!(pool, "analyses", "admin_level", AdminLevel);

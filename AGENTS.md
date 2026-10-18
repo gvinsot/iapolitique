@@ -213,7 +213,9 @@ published ─▶ hidden (après revue d'un signalement ou action admin) ─▶ p
 ```
 
 - Les transitions sont définies **uniquement** dans `backend/src/domain/` et testées. Toute
-  transition est horodatée dans une table d'historique.
+  transition est horodatée dans une table d'historique (`idea_events`, `contribution_events`,
+  `report_events`) : le code n'écrit un statut que par `db::status::transition`, dans la
+  transaction qui porte ses effets (champs de refus, jobs…).
 - Réponse immédiate à l'auteur : `accepted` (« Votre idée est conservée, elle va être améliorée
   et chiffrée par IA »), `rejected` + motif lisible + invitation à reformuler, ou
   `second_opinion` (« en cours de vérification ») si l'avis Mistral n'est pas rendu dans le

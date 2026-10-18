@@ -15,6 +15,7 @@ use crate::config::DatabaseConfig;
 pub mod ai_calls;
 pub mod screenings;
 pub mod settings;
+pub mod status;
 
 /// Migrations of `backend/migrations`, embedded in the binary.
 ///

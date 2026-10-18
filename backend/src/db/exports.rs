@@ -146,3 +146,27 @@ pub async fn insert(
     }
     Ok(generation_id)
 }
+
+/// The latest generated file of a format, as served by the api.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct StoredExport {
+    pub content: Vec<u8>,
+    pub content_sha256: Vec<u8>,
+    pub generated_at: chrono::DateTime<chrono::Utc>,
+    /// Day of the generation (Europe/Paris), used in the download name.
+    pub generated_on: NaiveDate,
+}
+
+/// The file of the latest generation of `format`, `None` before the first generation.
+pub async fn latest(pool: &PgPool, format: ExportFormat) -> sqlx::Result<Option<StoredExport>> {
+    sqlx::query_as(
+        "SELECT content, content_sha256, generated_at,
+                (generated_at AT TIME ZONE 'Europe/Paris')::date AS generated_on
+         FROM exports WHERE format = $1
+         ORDER BY generated_at DESC, id DESC
+         LIMIT 1",
+    )
+    .bind(format.as_str())
+    .fetch_optional(pool)
+    .await
+}

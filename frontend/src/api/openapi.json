@@ -66,6 +66,138 @@
         }
       }
     },
+    "/api/exports/LICENSE": {
+      "get": {
+        "tags": [
+          "exports"
+        ],
+        "summary": "Text of the Licence Ouverte 2.0.",
+        "operationId": "downloadLicense",
+        "responses": {
+          "200": {
+            "description": "Texte de la licence.",
+            "content": {
+              "text/plain": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Inchangé depuis la version en cache (`If-None-Match`)."
+          },
+          "503": {
+            "description": "Aucun export généré pour l'instant (`exports_unavailable`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/exports/ideas.csv": {
+      "get": {
+        "tags": [
+          "exports"
+        ],
+        "summary": "One row per published idea (CSV, UTF-8 with BOM).",
+        "operationId": "downloadIdeasCsv",
+        "responses": {
+          "200": {
+            "description": "Dernier export CSV.",
+            "content": {
+              "text/csv": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          },
+          "304": {
+            "description": "Inchangé depuis la version en cache (`If-None-Match`)."
+          },
+          "503": {
+            "description": "Aucun export généré pour l'instant (`exports_unavailable`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/exports/ideas.json": {
+      "get": {
+        "tags": [
+          "exports"
+        ],
+        "summary": "Published ideas with their analyses, metadata and licence (JSON).",
+        "operationId": "downloadIdeasJson",
+        "responses": {
+          "200": {
+            "description": "Dernier export JSON.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "304": {
+            "description": "Inchangé depuis la version en cache (`If-None-Match`)."
+          },
+          "503": {
+            "description": "Aucun export généré pour l'instant (`exports_unavailable`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/exports/metadata.json": {
+      "get": {
+        "tags": [
+          "exports"
+        ],
+        "summary": "Metadata of the exports (licence, producer, notices, files).",
+        "operationId": "downloadExportMetadata",
+        "responses": {
+          "200": {
+            "description": "Métadonnées du dernier export.",
+            "content": {
+              "application/json": {
+                "schema": {}
+              }
+            }
+          },
+          "304": {
+            "description": "Inchangé depuis la version en cache (`If-None-Match`)."
+          },
+          "503": {
+            "description": "Aucun export généré pour l'instant (`exports_unavailable`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/health": {
       "get": {
         "tags": [
@@ -2900,6 +3032,10 @@
     {
       "name": "reference",
       "description": "Méthodologie, taxonomie et compteurs publics"
+    },
+    {
+      "name": "exports",
+      "description": "Exports open data (Licence Ouverte 2.0)"
     },
     {
       "name": "submissions",

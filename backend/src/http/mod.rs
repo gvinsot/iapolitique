@@ -23,6 +23,7 @@ pub mod antispam;
 pub mod cache;
 pub mod client_ip;
 pub mod error;
+pub mod exports;
 pub mod extract;
 pub mod health;
 pub mod ideas;
@@ -98,6 +99,10 @@ pub fn public_router(state: AppState) -> Router {
             post(submissions::submit_report),
         )
         .route("/api/legal", get(legal::legal))
+        .route("/api/exports/ideas.json", get(exports::ideas_json))
+        .route("/api/exports/ideas.csv", get(exports::ideas_csv))
+        .route("/api/exports/LICENSE", get(exports::license))
+        .route("/api/exports/metadata.json", get(exports::metadata))
         .route("/api/methodology", get(reference::methodology))
         .route("/api/taxonomy", get(reference::taxonomy))
         .route("/api/stats", get(reference::stats))

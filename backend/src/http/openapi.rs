@@ -11,6 +11,7 @@ use utoipa::{Modify, OpenApi};
 use super::admin::{self, AdminSession};
 use super::antispam;
 use super::error::{ErrorBody, ErrorDetail};
+use super::exports;
 use super::health::{self, HealthResponse};
 use super::ideas::{
     self, AiMarking, AmountEstimate, CategoryRef, ContributionSummary, EuroRange,
@@ -61,6 +62,10 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         ideas::list,
         ideas::detail,
         legal::legal,
+        exports::ideas_json,
+        exports::ideas_csv,
+        exports::license,
+        exports::metadata,
         reference::methodology,
         reference::taxonomy,
         reference::stats,
@@ -147,6 +152,7 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         (name = "antispam", description = "Protection anti-abus des formulaires (ALTCHA)"),
         (name = "portal", description = "Classement et pages des idées publiées"),
         (name = "reference", description = "Méthodologie, taxonomie et compteurs publics"),
+        (name = "exports", description = "Exports open data (Licence Ouverte 2.0)"),
         (name = "submissions", description = "Dépôt d'idées, de contributions et de signalements"),
         (name = "tracking", description = "Suivi anonyme d'un envoi par son jeton"),
         (name = "admin", description = "Administration (réseau local uniquement, jeton requis)")
@@ -265,6 +271,10 @@ mod tests {
             "/api/ideas/{slug}/contributions",
             "/api/ideas/{slug}/reports",
             "/api/legal",
+            "/api/exports/ideas.json",
+            "/api/exports/ideas.csv",
+            "/api/exports/LICENSE",
+            "/api/exports/metadata.json",
             "/api/methodology",
             "/api/taxonomy",
             "/api/stats",

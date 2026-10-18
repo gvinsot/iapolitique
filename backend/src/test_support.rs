@@ -23,6 +23,7 @@ use crate::antispam::rate_limit::{RateLimiter, RateLimits};
 use crate::config::{Config, Role, Secret};
 use crate::domain::types::TargetKind;
 use crate::http::{AppState, public_router};
+use crate::jobs::worker::JobContext;
 
 pub const SECRET: &str = "0123456789abcdef0123456789abcdef";
 /// Address of the test client (documentation range).
@@ -172,6 +173,17 @@ impl TestApp {
             state,
             decision,
             mistral,
+        }
+    }
+
+    /// Job context sharing the mocks of this app.
+    pub fn job_context(&self) -> JobContext {
+        JobContext {
+            pool: self.pool.clone(),
+            config: Arc::clone(&self.state.config),
+            prompts: Arc::clone(&self.state.prompts),
+            screener: self.state.screener.clone(),
+            mistral: self.state.mistral.clone(),
         }
     }
 

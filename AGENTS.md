@@ -257,7 +257,10 @@ n'appeler que `/v1/systemone`.
   définis dans `screening.yaml`.
 - `state` limité au texte (masqué) de l'idée (< 2 000 tokens). Timeout 5 s ; si le service est
   indisponible, l'idée reste en `submitted`, un job réessaie, et l'auteur est informé via son lien
-  de suivi.
+  de suivi. Jobs `screen_idea` / `screen_contribution` / `screen_report` : backoff exponentiel
+  plafonné à 1 h, 20 tentatives (une panne d'environ une demi-journée), puis `dead` (admin). Le
+  job `second_opinion` (5 tentatives) échoue définitivement sur une erreur Mistral non
+  transitoire (4xx hors 408/429) ; le texte reste alors en `second_opinion` jusqu'à l'admin.
 - Les scores bruts sont stockés pour **calibrer les seuils** (l'admin peut étiqueter des
   décisions, voir [§8](#8-administration-lan-uniquement)). Les probabilités ne sont pas
   calibrées d'origine : ne jamais coder de seuil en dur.

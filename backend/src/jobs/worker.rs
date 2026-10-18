@@ -15,6 +15,7 @@ use tokio::sync::{Semaphore, watch};
 use tokio::time::Instant;
 
 use super::health::Liveness;
+use super::moderation::{ScreenHandler, SecondOpinionHandler};
 use super::purge::PurgeHandler;
 use super::schedule::{self, DailySchedule};
 use super::{Job, JobError, JobKind, JobOutcome, queue};
@@ -23,6 +24,7 @@ use crate::ai::decision::Screener;
 use crate::ai::mistral::MistralClient;
 use crate::ai::prompts::Prompts;
 use crate::config::{Config, WorkerConfig};
+use crate::domain::types::TargetKind;
 
 /// Future returned by [`JobHandler::handle`].
 pub type HandlerFuture<'a> =
@@ -111,7 +113,12 @@ impl Registry {
 /// Handlers of the production worker.
 pub fn default_registry() -> Registry {
     let mut registry = Registry::new();
-    registry.register(PurgeHandler);
+    registry
+        .register(ScreenHandler::new(TargetKind::Idea))
+        .register(ScreenHandler::new(TargetKind::Contribution))
+        .register(ScreenHandler::new(TargetKind::Report))
+        .register(SecondOpinionHandler)
+        .register(PurgeHandler);
     registry
 }
 
@@ -432,11 +439,32 @@ mod tests {
             kind: JobKind::AnalyzeIdea,
             calls,
         });
-        assert_eq!(registry.kinds(), vec![JobKind::AnalyzeIdea, JobKind::Purge]);
-        assert_eq!(registry.claimable_kinds(false), vec![JobKind::Purge]);
-        assert_eq!(registry.claimable_kinds(true).len(), 2);
+        assert_eq!(
+            registry.kinds(),
+            vec![
+                JobKind::ScreenIdea,
+                JobKind::SecondOpinion,
+                JobKind::AnalyzeIdea,
+                JobKind::ScreenContribution,
+                JobKind::ScreenReport,
+                JobKind::Purge
+            ]
+        );
+        assert_eq!(
+            registry.claimable_kinds(false),
+            vec![
+                JobKind::ScreenIdea,
+                JobKind::ScreenContribution,
+                JobKind::ScreenReport,
+                JobKind::Purge
+            ]
+        );
+        assert_eq!(registry.claimable_kinds(true).len(), 6);
         assert_eq!(registry.schedules(), vec![crate::jobs::purge::SCHEDULE]);
-        assert_eq!(format!("{registry:?}"), "[AnalyzeIdea, Purge]");
+        assert_eq!(
+            format!("{registry:?}"),
+            "[ScreenIdea, SecondOpinion, AnalyzeIdea, ScreenContribution, ScreenReport, Purge]"
+        );
     }
 
     #[test]

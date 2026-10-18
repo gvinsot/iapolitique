@@ -4,6 +4,23 @@
  */
 
 export interface paths {
+    "/api/admin/actions": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Journal of the admin actions. */
+        get: operations["listAdminActions"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/dashboard": {
         parameters: {
             query?: never;
@@ -113,6 +130,24 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/ideas/{id}/replies": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Rights of reply of an idea. */
+        get: operations["listAdminReplies"];
+        put?: never;
+        /** Publishes a right of reply under a published (or hidden) idea. */
+        post: operations["createAdminReply"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/ideas/{id}/republish": {
         parameters: {
             query?: never;
@@ -162,6 +197,24 @@ export interface paths {
          */
         post: operations["retryAdminJob"];
         delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/replies/{id}": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /** Replaces the content of a right of reply. */
+        put: operations["updateAdminReply"];
+        post?: never;
+        /** Removes a right of reply. */
+        delete: operations["deleteAdminReply"];
         options?: never;
         head?: never;
         patch?: never;
@@ -707,6 +760,33 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description A recorded admin action. */
+        AdminAction: {
+            /** Format: int64 */
+            id: number;
+            /** @description Dotted name: `idea.hide`, `job.retry`, `settings.screening_thresholds`… */
+            action: string;
+            target_kind: string | null;
+            target_id: string | null;
+            details: unknown;
+            /** Format: date-time */
+            created_at: string;
+        };
+        /** @description A page of admin actions, most recent first. */
+        AdminActionPage: {
+            items: components["schemas"]["AdminAction"][];
+            /** Format: int32 */
+            page: number;
+            /** Format: int32 */
+            per_page: number;
+            /**
+             * Format: int64
+             * @description Items matching the filters, all pages included.
+             */
+            total: number;
+            /** Format: int32 */
+            total_pages: number;
+        };
         /** @description Estimated AI costs (euros) of the Paris day and month, and the daily budget. */
         AdminAiCosts: {
             /** Format: double */
@@ -1011,6 +1091,41 @@ export interface components {
         AdminReason: {
             /** @description 1 to 1 000 characters. */
             reason: string;
+        };
+        /** @description A right of reply as edited by the administrator. */
+        AdminReply: {
+            /** Format: uuid */
+            id: string;
+            /** Format: uuid */
+            idea_id: string;
+            author_label: string;
+            body: string;
+            /**
+             * Format: date
+             * @description Day the request was received.
+             */
+            requested_on: string;
+            /**
+             * Format: date
+             * @description Last day of the legal 3-day delay.
+             */
+            due_on: string;
+            /** Format: date-time */
+            published_at: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        /** @description Content of a right of reply, published as plain text. */
+        AdminReplyContent: {
+            /** @description How the person replying is designated, as they asked (one line, 200 characters). */
+            author_label: string;
+            /** @description Text of the reply (8 000 characters). */
+            body: string;
+            /**
+             * Format: date
+             * @description Day the request was received (not in the future).
+             */
+            requested_on: string;
         };
         /**
          * @description A report. The reporter's name and e-mail (optional, erased after 6 months) are shown only
@@ -2092,6 +2207,8 @@ export interface components {
     headers: never;
     pathItems: never;
 }
+export type SchemaAdminAction = components['schemas']['AdminAction'];
+export type SchemaAdminActionPage = components['schemas']['AdminActionPage'];
 export type SchemaAdminAiCosts = components['schemas']['AdminAiCosts'];
 export type SchemaAdminCriterionScore = components['schemas']['AdminCriterionScore'];
 export type SchemaAdminCriterionThresholds = components['schemas']['AdminCriterionThresholds'];
@@ -2114,6 +2231,8 @@ export type SchemaAdminPurposeCost = components['schemas']['AdminPurposeCost'];
 export type SchemaAdminQueues = components['schemas']['AdminQueues'];
 export type SchemaAdminReanalysis = components['schemas']['AdminReanalysis'];
 export type SchemaAdminReason = components['schemas']['AdminReason'];
+export type SchemaAdminReply = components['schemas']['AdminReply'];
+export type SchemaAdminReplyContent = components['schemas']['AdminReplyContent'];
 export type SchemaAdminReport = components['schemas']['AdminReport'];
 export type SchemaAdminReportPage = components['schemas']['AdminReportPage'];
 export type SchemaAdminReportReview = components['schemas']['AdminReportReview'];
@@ -2209,6 +2328,51 @@ export type SchemaTrackingRequest = components['schemas']['TrackingRequest'];
 export type SchemaYesNoLabels = components['schemas']['YesNoLabels'];
 export type $defs = Record<string, never>;
 export interface operations {
+    listAdminActions: {
+        parameters: {
+            query?: {
+                /** @description Exact action name. */
+                action?: string;
+                /** @description Identifier of the target (idea, job, setting…). */
+                target_id?: string;
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Une page du journal. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminActionPage"];
+                };
+            };
+            /** @description Paramètre invalide. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     getAdminDashboard: {
         parameters: {
             query?: never;
@@ -2504,6 +2668,110 @@ export interface operations {
             };
         };
     };
+    listAdminReplies: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant de l'idée */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Droits de réponse de l'idée. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminReply"][];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Idée inconnue (`idea_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    createAdminReply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant de l'idée */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminReplyContent"];
+            };
+        };
+        responses: {
+            /** @description Réponse publiée. */
+            201: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminReply"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Idée inconnue (`idea_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Idée ni publiée ni masquée (`idea_not_published`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Champ invalide (`invalid_field`), corps invalide. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     republishAdminIdea: {
         parameters: {
             query?: never;
@@ -2651,6 +2919,99 @@ export interface operations {
             };
             /** @description Job non mort (`job_not_dead`) ou job équivalent déjà en file (`job_already_queued`). */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    updateAdminReply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant du droit de réponse */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminReplyContent"];
+            };
+        };
+        responses: {
+            /** @description Réponse modifiée. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminReply"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Réponse inconnue (`reply_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Champ invalide (`invalid_field`), corps invalide. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    deleteAdminReply: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant du droit de réponse */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Réponse retirée. */
+            204: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content?: never;
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Réponse inconnue (`reply_not_found`). */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

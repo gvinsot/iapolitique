@@ -4,11 +4,13 @@
 //! Every answer is `Cache-Control: no-store` and `X-Robots-Tag: noindex, nofollow` (§14.2).
 //! Every mutation is recorded in `admin_actions` in the transaction that applies it.
 //!
+//! - [`actions`]: journal of the admin actions;
 //! - [`dashboard`]: job queue, screening rates, AI costs, pending queues;
 //! - [`jobs`]: job list and retry of dead jobs;
 //! - [`ideas`]: ideas by status with search, hide / republish, re-analysis;
 //! - [`moderation`]: reports, escalations of serious content, human review requests;
 //! - [`screenings`]: screening decisions, labels and calibration export;
+//! - [`replies`]: rights of reply published under ideas;
 //! - [`settings`]: screening and duplicate thresholds.
 
 use std::sync::Arc;
@@ -27,10 +29,12 @@ use super::AppState;
 use super::error::{ApiError, ErrorBody};
 use crate::config::Secret;
 
+pub mod actions;
 pub mod dashboard;
 pub mod ideas;
 pub mod jobs;
 pub mod moderation;
+pub mod replies;
 pub mod screenings;
 pub mod settings;
 
@@ -40,6 +44,8 @@ mod api_tests;
 mod calibration_tests;
 #[cfg(test)]
 mod moderation_tests;
+#[cfg(test)]
+mod replies_tests;
 
 /// Routes of the admin API, relative to `/api/admin` (token checked by the caller).
 pub fn routes() -> Router<AppState> {
@@ -75,6 +81,15 @@ pub fn routes() -> Router<AppState> {
             put(settings::update_thresholds),
         )
         .route("/settings/dedup-threshold", put(settings::update_dedup))
+        .route(
+            "/ideas/{id}/replies",
+            get(replies::list).post(replies::create),
+        )
+        .route(
+            "/replies/{id}",
+            put(replies::update).delete(replies::delete),
+        )
+        .route("/actions", get(actions::list))
 }
 
 /// `404` with a specific code.

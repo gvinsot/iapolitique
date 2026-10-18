@@ -21,6 +21,7 @@ pub mod embeddings;
 pub mod exports;
 pub mod ideas;
 pub mod portal;
+pub mod replies;
 pub mod screenings;
 pub mod settings;
 pub mod status;

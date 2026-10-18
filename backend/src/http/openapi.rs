@@ -10,6 +10,7 @@ use axum::response::IntoResponse;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
+use super::admin::actions::{self as admin_actions, AdminAction, AdminActionPage};
 use super::admin::dashboard::{
     self as admin_dashboard, AdminAiCosts, AdminDashboard, AdminJobCount, AdminJobSummary,
     AdminPurposeCost, AdminQueues, AdminScreeningRates,
@@ -23,6 +24,7 @@ use super::admin::moderation::{
     AdminReport, AdminReportPage, AdminReportReview, AdminReviewRequest, AdminReviewRequestPage,
     AdminReviewResolution, AdminReviewedDecision,
 };
+use super::admin::replies::{self as admin_replies, AdminReply, AdminReplyContent};
 use super::admin::screenings::{
     self as admin_screenings, AdminCriterionScore, AdminScreening, AdminScreeningLabel,
     AdminScreeningLabelRequest, AdminScreeningPage, AdminSecondOpinion, CalibrationPart,
@@ -120,7 +122,12 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         admin_screenings::export,
         admin_settings::get,
         admin_settings::update_thresholds,
-        admin_settings::update_dedup
+        admin_settings::update_dedup,
+        admin_replies::list,
+        admin_replies::create,
+        admin_replies::update,
+        admin_replies::delete,
+        admin_actions::list
     ),
     components(schemas(
         ErrorBody,
@@ -237,7 +244,11 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         AdminDedupThreshold,
         AdminThresholdsUpdate,
         AdminThresholdOverride,
-        AdminDedupUpdate
+        AdminDedupUpdate,
+        AdminReply,
+        AdminReplyContent,
+        AdminAction,
+        AdminActionPage
     )),
     modifiers(&AdminSecurity),
     tags(
@@ -434,6 +445,9 @@ mod tests {
             "/api/admin/settings",
             "/api/admin/settings/screening-thresholds",
             "/api/admin/settings/dedup-threshold",
+            "/api/admin/ideas/{id}/replies",
+            "/api/admin/replies/{id}",
+            "/api/admin/actions",
         ] {
             assert!(paths.contains(&path), "{path} missing");
         }

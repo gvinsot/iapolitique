@@ -26,7 +26,9 @@ docker run --rm -v "<repo>/frontend:/app" -v iapolitique_node_modules:/app/node_
 Avant chaque commit : `lint`, `typecheck`, `test` et `build` doivent passer.
 
 En développement, Vite relaie `/api/admin` vers `localhost:8081` et le reste de `/api` vers
-`localhost:8080` (ports de l'api, AGENTS.md §13.1).
+`localhost:8080` (ports de l'api, AGENTS.md §13.1). Quand le serveur de dev tourne dans Docker et
+le backend sur l'hôte (`cargo run`), ajouter `-e API_PROXY_HOST=host.docker.internal` : dans le
+conteneur, `localhost` désigne le conteneur lui-même.
 
 ## Organisation
 

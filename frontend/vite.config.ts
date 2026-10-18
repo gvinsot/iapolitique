@@ -6,8 +6,11 @@ import { defineConfig } from "vitest/config";
 
 // Backend ports are defined in AGENTS.md §13.1: public API on 8080, admin API on 8081.
 // Order matters: the more specific /api/admin prefix must be matched first.
-const API_PUBLIC_TARGET = "http://localhost:8080";
-const API_ADMIN_TARGET = "http://localhost:8081";
+// Without local Node the dev server runs in a container, where localhost is the container itself:
+// API_PROXY_HOST=host.docker.internal then reaches the backend started with `cargo run` on the host.
+const API_PROXY_HOST = process.env.API_PROXY_HOST ?? "localhost";
+const API_PUBLIC_TARGET = `http://${API_PROXY_HOST}:8080`;
+const API_ADMIN_TARGET = `http://${API_PROXY_HOST}:8081`;
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],

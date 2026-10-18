@@ -53,7 +53,7 @@ avec les variables de [`devops/.env.example`](devops/.env.example) (au minimum
 redirige `/api` vers le backend :
 
 ```bash
-docker run --rm -it -p 5173:5173 -v "$PWD/frontend:/app" -v iapolitique_node_modules:/app/node_modules -w /app node:22-alpine npm run dev -- --host
+docker run --rm -it -p 5173:5173 -e API_PROXY_HOST=host.docker.internal -v "$PWD/frontend:/app" -v iapolitique_node_modules:/app/node_modules -w /app node:22-alpine npm run dev -- --host
 ```
 
 Le modèle de décision est joignable depuis le LAN : `DECISION_SERVICE_URL=http://192.168.1.27:8001/v1/systemone`.

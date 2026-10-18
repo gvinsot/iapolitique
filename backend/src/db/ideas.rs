@@ -7,7 +7,7 @@ use uuid::Uuid;
 
 use super::status::{self, Change, StatusError};
 use crate::domain::status::{ContributionStatus, IdeaStatus, StateMachine};
-use crate::domain::types::ContributionKind;
+use crate::domain::types::{ContributionKind, HiddenReason};
 
 /// Merges a duplicate into the published idea `parent` (`dedup → merged`, §5.4): the idea
 /// points to its parent, becomes an accepted contribution of kind `doublon` of the parent (its
@@ -56,6 +56,36 @@ pub async fn merge(
         .execute(&mut *conn)
         .await?;
     Ok(contribution_id)
+}
+
+/// Hides a published idea (`published → hidden`) with its reason; the day of the masking is
+/// kept for the statement of reasons and the 12-month purge (§7.3). Returns `false` (nothing
+/// changed) when the idea is not published.
+pub async fn hide(
+    conn: &mut PgConnection,
+    idea_id: Uuid,
+    reason: HiddenReason,
+    change: &Change,
+) -> Result<bool, StatusError> {
+    let Some(from) = status::lock::<IdeaStatus>(conn, idea_id).await? else {
+        return Ok(false);
+    };
+    if from != IdeaStatus::Published {
+        return Ok(false);
+    }
+    let to = from.transition(IdeaStatus::Hidden)?;
+    sqlx::query(
+        "UPDATE ideas SET status = $2, status_changed_at = now(), hidden_at = now(),
+             hidden_reason = $3
+         WHERE id = $1",
+    )
+    .bind(idea_id)
+    .bind(to.as_str())
+    .bind(reason.as_str())
+    .execute(&mut *conn)
+    .await?;
+    status::append_event(conn, idea_id, Some(from), to, change).await?;
+    Ok(true)
 }
 
 #[cfg(test)]
@@ -121,6 +151,35 @@ mod tests {
         .await
         .unwrap();
         assert_eq!((from.as_deref(), to.as_str()), (Some("dedup"), "merged"));
+
+        // Hiding: only a published idea.
+        let mut tx = pool.begin().await.unwrap();
+        let hidden = hide(&mut tx, parent, HiddenReason::ReportReview, &change)
+            .await
+            .unwrap();
+        assert!(hidden);
+        assert!(
+            !hide(&mut tx, parent, HiddenReason::Admin, &change)
+                .await
+                .unwrap()
+        );
+        assert!(
+            !hide(&mut tx, Uuid::nil(), HiddenReason::Admin, &change)
+                .await
+                .unwrap()
+        );
+        tx.commit().await.unwrap();
+        let (status, reason, at): (String, Option<String>, bool) = sqlx::query_as(
+            "SELECT status, hidden_reason, hidden_at IS NOT NULL FROM ideas WHERE id = $1",
+        )
+        .bind(parent)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            (status.as_str(), reason.as_deref(), at),
+            ("hidden", Some("report_review"), true)
+        );
 
         // Only from `dedup`.
         let other = idea_with_status(&pool, "accepted").await;

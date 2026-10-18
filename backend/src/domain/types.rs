@@ -95,6 +95,19 @@ text_enum! {
 }
 
 text_enum! {
+    /// Why a published idea was hidden (`ideas.hidden_reason`, §5.6, §7.5, §8).
+    pub enum HiddenReason {
+        /// Report review concluding `hide` (automated decision).
+        ReportReview => "report_review",
+        /// Report review flagging serious content: hidden at once and escalated to a human
+        /// (automated decision).
+        Escalation => "escalation",
+        /// Decision of the administrator.
+        Admin => "admin",
+    }
+}
+
+text_enum! {
     /// Kind of entity screened by the decision model or reachable through a tracking link.
     pub enum TargetKind {
         Idea => "idea",

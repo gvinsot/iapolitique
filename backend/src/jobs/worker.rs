@@ -19,6 +19,7 @@ use super::dedup::DedupHandler;
 use super::health::Liveness;
 use super::moderation::{ScreenHandler, SecondOpinionHandler};
 use super::purge::PurgeHandler;
+use super::reports::ReviewReportsHandler;
 use super::schedule::{self, DailySchedule};
 use super::{Job, JobError, JobKind, JobOutcome, queue};
 use crate::ai::budget;
@@ -122,6 +123,7 @@ pub fn default_registry() -> Registry {
         .register(SecondOpinionHandler)
         .register(DedupHandler)
         .register(AnalyzeHandler)
+        .register(ReviewReportsHandler)
         .register(PurgeHandler);
     registry
 }
@@ -447,6 +449,7 @@ mod tests {
                 JobKind::AnalyzeIdea,
                 JobKind::ScreenContribution,
                 JobKind::ScreenReport,
+                JobKind::ReviewReports,
                 JobKind::Purge
             ]
         );
@@ -459,11 +462,11 @@ mod tests {
                 JobKind::Purge
             ]
         );
-        assert_eq!(registry.claimable_kinds(true).len(), 7);
+        assert_eq!(registry.claimable_kinds(true).len(), 8);
         assert_eq!(registry.schedules(), vec![crate::jobs::purge::SCHEDULE]);
         assert_eq!(
             format!("{registry:?}"),
-            "[ScreenIdea, SecondOpinion, DedupIdea, AnalyzeIdea, ScreenContribution, ScreenReport, Purge]"
+            "[ScreenIdea, SecondOpinion, DedupIdea, AnalyzeIdea, ScreenContribution, ScreenReport, ReviewReports, Purge]"
         );
     }
 

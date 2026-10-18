@@ -306,6 +306,17 @@ Mise en œuvre : un seul job `review_reports` par idée (clé `review_reports:<i
 après `ideas.last_report_review_at`, avancé à l'instant par un signalement
 `contenu_problematique`. Un signalement sans précision n'a pas de texte à filtrer : il est
 accepté sans appel au modèle de décision.
+Revue (`jobs/reports.rs`) : les signalements `accepted` de l'idée (50 au plus par revue) sont
+examinés ensemble si la dernière revue date de plus de 24 h ou si l'un d'eux est
+`contenu_problematique` (sinon le job attend l'échéance) ; la revue est enregistrée dans
+`report_reviews` (avec `escalate`), les signalements passent `reviewed` (issue visible sur la
+page de suivi), `ideas.last_report_review_at` est mis à jour. `update` met en file la
+ré-analyse (déclencheur `report`, qui reçoit les `corrections`) ; `hide` masque l'idée publiée
+(`hidden_reason = report_review`) et régénère les exports ; `escalate` force `hide`
+(`hidden_reason = escalation`) et ajoute l'idée à la table `escalations` (`pending` puis `done`
+par l'admin, une seule entrée en attente par idée). `ideas.hidden_reason` vaut
+`report_review`, `escalation` (décisions automatisées) ou `admin`. Les signalements arrivés
+pendant une revue relancent le job (aussitôt si `contenu_problematique`, 24 h plus tard sinon).
 
 ### 5.7 Déclencheurs de ré-analyse
 

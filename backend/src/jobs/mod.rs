@@ -9,6 +9,7 @@
 //! - [`dedup`]: duplicate detection of accepted ideas (embeddings, pgvector).
 //! - [`guard`]: API key and daily budget checks of the handlers that call Mistral.
 //! - [`pipeline`]: payloads, dedupe keys and constructors of the submission pipeline jobs.
+//! - [`reports`]: grouped AI review of the reports of an idea, escalation of serious content.
 //! - [`purge`]: the daily retention job (AGENTS.md §7.3).
 //!
 //! Payloads and error messages carry **internal identifiers only**, never user text, IPs or
@@ -28,6 +29,7 @@ pub mod moderation;
 pub mod pipeline;
 pub mod purge;
 pub mod queue;
+pub mod reports;
 pub mod schedule;
 pub mod worker;
 

@@ -186,7 +186,9 @@ services:
     networks:
       - proxy
     healthcheck:
-      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/"]
+      # Dedicated nginx location (frontend/nginx.conf): no access log line every 30 s, and it does
+      # not depend on index.html being cacheable.
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/health"]
       interval: 30s
       timeout: 5s
       retries: 3

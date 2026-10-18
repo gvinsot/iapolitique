@@ -3,11 +3,211 @@
  * Do not make direct changes to the file.
  */
 
-// Placeholder: src/api/openapi.json does not exist yet. Run `npm run gen:api` once the
-// backend has committed its OpenAPI spec.
-
-export type paths = Record<string, never>;
+export interface paths {
+    "/api/admin/session": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Checks the admin token (used by the admin pages to validate the token typed by the user). */
+        get: operations["getAdminSession"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/health": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Liveness: the process answers. */
+        get: operations["getHealth"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/openapi.json": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The OpenAPI specification of this API. */
+        get: operations["getOpenApi"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/ready": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Readiness: the database is reachable. */
+        get: operations["getReady"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+}
 export type webhooks = Record<string, never>;
-export type components = Record<string, never>;
+export interface components {
+    schemas: {
+        AdminSession: {
+            authenticated: boolean;
+        };
+        /** @description Body of every error response. */
+        ErrorBody: {
+            error: components["schemas"]["ErrorDetail"];
+        };
+        ErrorDetail: {
+            /**
+             * @description Stable machine-readable code, in snake_case.
+             * @example not_found
+             */
+            code: string;
+            /**
+             * @description Human-readable message, in French when shown to visitors.
+             * @example Ressource introuvable.
+             */
+            message: string;
+        };
+        HealthResponse: {
+            /** @example ok */
+            status: string;
+        };
+    };
+    responses: never;
+    parameters: never;
+    requestBodies: never;
+    headers: never;
+    pathItems: never;
+}
+export type SchemaAdminSession = components['schemas']['AdminSession'];
+export type SchemaErrorBody = components['schemas']['ErrorBody'];
+export type SchemaErrorDetail = components['schemas']['ErrorDetail'];
+export type SchemaHealthResponse = components['schemas']['HealthResponse'];
 export type $defs = Record<string, never>;
-export type operations = Record<string, never>;
+export interface operations {
+    getAdminSession: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Jeton valide. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminSession"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getHealth: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Le service répond. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+        };
+    };
+    getOpenApi: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Spécification OpenAPI. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": unknown;
+                };
+            };
+        };
+    };
+    getReady: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Le service est prêt. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["HealthResponse"];
+                };
+            };
+            /** @description Base de données injoignable. */
+            503: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+}

@@ -12,6 +12,7 @@ beforeEach(() => {
 afterEach(() => {
   cleanup();
   window.localStorage.clear();
+  window.sessionStorage.clear();
   document.documentElement.className = "";
   document.documentElement.removeAttribute("style");
 });

@@ -1,12 +1,18 @@
-import { ExternalLinkIcon, LockKeyholeIcon } from "lucide-react";
+import { ExternalLinkIcon, LockKeyholeIcon, LogOutIcon } from "lucide-react";
 import { Link, NavLink, Outlet, ScrollRestoration } from "react-router";
 
+import { errorMessage } from "@/api/errors";
 import { paths, SITE_NAME } from "@/app/paths";
+import { AdminSignIn } from "@/components/admin/admin-sign-in";
+import { PageLoading } from "@/components/common/page-loading";
+import { ErrorState } from "@/components/common/states";
 import { BrandMark } from "@/components/layout/brand-mark";
 import { RouteFocus } from "@/components/layout/route-focus";
 import { MAIN_CONTENT_ID, SkipLink } from "@/components/layout/skip-link";
 import { ThemeToggle } from "@/components/theme/theme-toggle";
 import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { type AdminSessionState, useAdminSession } from "@/hooks/use-admin-session";
 import { cn } from "@/lib/utils";
 
 const adminNavItems = [
@@ -17,8 +23,39 @@ const adminNavItems = [
   { to: paths.admin.settings, label: "Réglages" },
 ] as const;
 
-/** Back-office shell. Only reachable from the LAN (Traefik allow-list, AGENTS.md §8). */
+function AdminContent({
+  state,
+  onSignIn,
+}: {
+  state: AdminSessionState;
+  onSignIn: (token: string) => void;
+}) {
+  switch (state.status) {
+    case "signed-out":
+      return <AdminSignIn onSubmit={onSignIn} rejected={state.rejected} />;
+    case "checking":
+      return <PageLoading />;
+    case "error":
+      return (
+        <ErrorState
+          title="Administration injoignable"
+          message={`${errorMessage(state.error)} L’administration n’est accessible que depuis le réseau local.`}
+          onRetry={state.retry}
+        />
+      );
+    case "authenticated":
+      return <Outlet />;
+  }
+}
+
+/**
+ * Back-office shell. Only reachable from the LAN (Traefik allow-list, AGENTS.md §8) and, as
+ * defence in depth, behind the admin token checked by the API.
+ */
 export function AdminLayout() {
+  const { state, signIn, signOut, hasToken } = useAdminSession();
+  const authenticated = state.status === "authenticated";
+
   return (
     <div className="flex min-h-dvh flex-col">
       <meta name="robots" content="noindex, nofollow" />
@@ -43,41 +80,49 @@ export function AdminLayout() {
               <ExternalLinkIcon className="size-3.5" aria-hidden="true" />
             </Link>
             <ThemeToggle />
+            {hasToken ? (
+              <Button type="button" variant="ghost" size="sm" onClick={signOut}>
+                <LogOutIcon aria-hidden="true" />
+                Se déconnecter
+              </Button>
+            ) : null}
           </div>
         </div>
       </header>
 
       <div className="flex flex-1 flex-col lg:flex-row">
-        <nav
-          aria-label="Navigation de l’administration"
-          className="border-b lg:w-60 lg:shrink-0 lg:border-r lg:border-b-0"
-        >
-          <ul className="flex gap-1 overflow-x-auto p-2 lg:flex-col lg:p-3">
-            {adminNavItems.map((item) => (
-              <li key={item.to} className="shrink-0">
-                <NavLink
-                  to={item.to}
-                  end={"end" in item ? item.end : false}
-                  className={({ isActive }) =>
-                    cn(
-                      "block rounded-md px-3 py-2 text-sm font-medium whitespace-nowrap hover:bg-accent hover:text-accent-foreground",
-                      isActive ? "bg-secondary text-foreground" : "text-muted-foreground",
-                    )
-                  }
-                >
-                  {item.label}
-                </NavLink>
-              </li>
-            ))}
-          </ul>
-        </nav>
+        {authenticated ? (
+          <nav
+            aria-label="Navigation de l’administration"
+            className="border-b lg:w-60 lg:shrink-0 lg:border-r lg:border-b-0"
+          >
+            <ul className="flex gap-1 overflow-x-auto p-2 lg:flex-col lg:p-3">
+              {adminNavItems.map((item) => (
+                <li key={item.to} className="shrink-0">
+                  <NavLink
+                    to={item.to}
+                    end={"end" in item ? item.end : false}
+                    className={({ isActive }) =>
+                      cn(
+                        "block rounded-md px-3 py-2 text-sm font-medium whitespace-nowrap hover:bg-accent hover:text-accent-foreground",
+                        isActive ? "bg-secondary text-foreground" : "text-muted-foreground",
+                      )
+                    }
+                  >
+                    {item.label}
+                  </NavLink>
+                </li>
+              ))}
+            </ul>
+          </nav>
+        ) : null}
 
         <main
           id={MAIN_CONTENT_ID}
           tabIndex={-1}
           className="min-w-0 flex-1 px-4 py-6 outline-none sm:px-6 lg:py-8"
         >
-          <Outlet />
+          <AdminContent state={state} onSignIn={signIn} />
         </main>
       </div>
       <ScrollRestoration />

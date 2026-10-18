@@ -60,7 +60,8 @@ export function createApiClient<Paths extends {} = paths>(
 ): Client<Paths> {
   const client = createFetchClient<Paths>({
     baseUrl: options.baseUrl ?? currentOrigin(),
-    ...(options.fetch ? { fetch: options.fetch } : {}),
+    // Resolved at call time (not captured at creation) so tests can stub the global fetch.
+    fetch: options.fetch ?? ((request: Request) => globalThis.fetch(request)),
     headers: { Accept: "application/json" },
     // Same-origin API, no cookie anyway (AGENTS.md §7.1): never send credentials.
     credentials: "omit",

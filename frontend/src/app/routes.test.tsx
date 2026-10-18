@@ -1,6 +1,8 @@
 import { screen } from "@testing-library/react";
 import { describe, expect, it } from "vitest";
 
+import { storeAdminToken } from "@/api/admin-token";
+import { adminApi, stubFetch } from "@/test/fetch-mock";
 import { renderRoute } from "@/test/render-route";
 
 const VALID_TOKEN = "AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcde";
@@ -16,12 +18,21 @@ describe("routes", () => {
     ["/mentions-legales", "Mentions légales"],
     ["/confidentialite", "Confidentialité"],
     ["/cgu", "Conditions générales d’utilisation"],
+  ])("%s renders its page heading", async (path, heading) => {
+    renderRoute(path);
+    expect(await screen.findByRole("heading", { level: 1, name: heading })).toBeInTheDocument();
+    expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
+  });
+
+  it.each([
     ["/admin", "Tableau de bord"],
     ["/admin/moderation", "Modération"],
     ["/admin/decisions", "Décisions de filtrage"],
     ["/admin/couts", "Coûts IA"],
     ["/admin/reglages", "Réglages"],
-  ])("%s renders its page heading", async (path, heading) => {
+  ])("%s renders its admin page once signed in", async (path, heading) => {
+    storeAdminToken("jeton");
+    stubFetch(adminApi("jeton"));
     renderRoute(path);
     expect(await screen.findByRole("heading", { level: 1, name: heading })).toBeInTheDocument();
     expect(screen.getAllByRole("heading", { level: 1 })).toHaveLength(1);
@@ -30,6 +41,8 @@ describe("routes", () => {
   it.each(["/n-existe-pas", "/idees", "/admin/inconnu"])(
     "%s renders the 404 page",
     async (path) => {
+      storeAdminToken("jeton");
+      stubFetch(adminApi("jeton"));
       renderRoute(path);
       expect(
         await screen.findByRole("heading", { level: 1, name: "Page introuvable" }),

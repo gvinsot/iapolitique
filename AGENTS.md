@@ -441,6 +441,10 @@ décidée par l'humain.
   redirection HTTP→HTTPS ; `/api` vers l'api avec strip prefix ; routeur admin sur `ADMIN_HOST`
   avec `dashboard-allowlist@file`. Hosts lus depuis `TRAEFIK_HOST` et `ADMIN_HOST` (le préfixe
   `qa.` est ajouté automatiquement en QA).
+- Domaine : `TRAEFIK_HOST=iapolitique.fr`, `ADMIN_HOST=admin.iapolitique.fr`. `www.iapolitique.fr`
+  redirige (301) vers `iapolitique.fr`. QA : `qa.iapolitique.fr` et `qa.admin.iapolitique.fr`.
+  Tous ces noms doivent avoir un enregistrement DNS A vers l'IP publique du cluster pour le
+  challenge Let's Encrypt HTTP-01 ; l'admin reste filtré par `dashboard-allowlist@file`.
 - Placement : `node.labels.gpu == none`. Healthchecks sur `/health`.
   `DEPLOY_HEALTHCHECK_PATH=/api/health` pour la vérification post-déploiement.
 - Migrations : appliquées par l'api au démarrage (`sqlx migrate`, verrou consultatif), jamais
@@ -451,6 +455,7 @@ décidée par l'humain.
 | | Production | QA |
 |---|---|---|
 | Stack | `iapolitique` | `qa-iapolitique` |
+| Host | `iapolitique.fr` | `qa.iapolitique.fr` |
 | Base | `iapolitique_prod` | `iapolitique_qa` (via `devops/.env.qa`) |
 | Réseau LLM | `llm-net` | `qa-llm-net` |
 | Budget Mistral | `MISTRAL_DAILY_BUDGET_EUR` de prod | plafond réduit |
@@ -476,7 +481,6 @@ décidée par l'humain.
 commentaires libres, ré-analyse périodique, API publique documentée, multi-pays, autres langues.
 
 **À décider** (ne pas trancher sans l'humain) :
-- nom de domaine (`TRAEFIK_HOST`, `ADMIN_HOST`) ;
 - licence des données exportées ;
 - valeurs initiales des seuils de filtrage et de doublon (à calibrer sur des exemples réels) ;
 - mentions légales et page de confidentialité (contenu juridique).

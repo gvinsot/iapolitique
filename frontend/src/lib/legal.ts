@@ -7,6 +7,8 @@
  * "unavailable" notice instead of rendering `undefined`.
  */
 
+import { formatDate } from "./format";
+
 /** Keys of the legal pages in `pages` (dates of their last update). */
 export const legalPageKeys = ["mentions_legales", "confidentialite", "regles", "licence"] as const;
 export type LegalPageKey = (typeof legalPageKeys)[number];
@@ -98,18 +100,5 @@ export function parseLegalInfo(value: unknown): LegalInfo | null {
   };
 }
 
-const longDate = new Intl.DateTimeFormat("fr-FR", {
-  day: "numeric",
-  month: "long",
-  year: "numeric",
-  timeZone: "Europe/Paris",
-});
-
-/** "18 octobre 2026". Accepts `YYYY-MM-DD` (read as a calendar day) or a full date-time. */
-export function formatLegalDate(value: string): string {
-  const dayOnly = /^\d{4}-\d{2}-\d{2}$/.test(value);
-  // A bare day is parsed as UTC midnight: format it in UTC so it never shifts by one day.
-  const date = new Date(dayOnly ? `${value}T12:00:00Z` : value);
-  if (Number.isNaN(date.getTime())) return value;
-  return longDate.format(date);
-}
+/** "18 octobre 2026" (see formatDate). */
+export const formatLegalDate = formatDate;

@@ -79,6 +79,7 @@ const pairs: [fg: string, bg: string, minimum: number][] = [
   ["destructive", "card", TEXT],
   ["warning", "warning-surface", TEXT],
   ["warning", "background", TEXT],
+  ["warning", "card", TEXT],
   ["input", "background", UI],
   ["input", "card", UI],
   ["ring", "background", UI],

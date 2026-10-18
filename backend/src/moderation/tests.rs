@@ -63,8 +63,7 @@ async fn accepted_contribution_requests_a_reanalysis(pool: PgPool) {
     let step = screen_now(&app, Target::new(TargetKind::Contribution, id)).await;
     assert_eq!(step, Step::Accepted);
     assert_eq!(
-        app.history("contribution_events", "contribution_id", id)
-            .await,
+        app.history(TargetKind::Contribution, id).await,
         ["screening", "accepted"]
     );
     let (kind, payload): (String, serde_json::Value) =

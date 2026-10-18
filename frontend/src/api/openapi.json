@@ -485,7 +485,8 @@
             "type": "string",
             "description": "Solution of the ALTCHA widget (base64), accepted once."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "ContributionSubmissionKind": {
         "type": "string",
@@ -583,7 +584,8 @@
             "type": "string",
             "description": "Solution of the ALTCHA widget (base64), accepted once."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "Measure": {
         "type": "string",
@@ -645,7 +647,8 @@
             "type": "string",
             "description": "Solution of the ALTCHA widget (base64), accepted once."
           }
-        }
+        },
+        "additionalProperties": false
       },
       "RuleReference": {
         "type": "object",

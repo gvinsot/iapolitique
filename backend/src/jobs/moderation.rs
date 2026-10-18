@@ -181,7 +181,7 @@ mod tests {
         assert_eq!(handler.handle(&ctx, &job).await, Ok(JobOutcome::Done));
         assert_eq!(status_of(&pool, idea).await, "accepted");
         assert_eq!(
-            app.history("idea_events", "idea_id", idea).await,
+            app.history(TargetKind::Idea, idea).await,
             ["submitted", "screening", "accepted"]
         );
         let (actor,): (String,) =

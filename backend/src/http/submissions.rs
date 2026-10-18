@@ -13,11 +13,14 @@
 //! 6. synchronous screening by the decision model, then, in the gray zone, the Mistral second
 //!    opinion within 10 s when possible.
 //!
-//! Texts, tokens and IP addresses are never logged.
+//! Texts, tokens and IP addresses are never logged; refused anti-abuse checks are logged as
+//! security events without them (AGENTS.md §14.6). Bodies reject unknown fields and every
+//! string is bounded (§14.1); answers carrying a token are never cached (§14.2).
 
 use axum::Json;
 use axum::extract::State;
-use axum::http::StatusCode;
+use axum::http::{HeaderValue, StatusCode, header};
+use axum::response::{IntoResponse, Response};
 use chrono::Utc;
 use serde::{Deserialize, Serialize};
 use utoipa::ToSchema;
@@ -30,6 +33,7 @@ use crate::antispam::rate_limit::RateAction;
 use crate::db::submissions::{self, NewContribution, NewIdea, NewReport};
 use crate::db::tracking::TrackingToken;
 use crate::domain::redaction::redact;
+use crate::domain::slug::is_valid_slug;
 use crate::domain::text_enum;
 use crate::domain::types::{Actor, AdminLevel, ContributionKind, ReportReason, TargetKind};
 use crate::domain::validation::{
@@ -48,6 +52,7 @@ pub const CONSENTS_REQUIRED_MESSAGE: &str =
 
 /// A new idea (§5.1).
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct IdeaSubmission {
     /// Text of the idea, 50 to 4 000 characters. Personal data (e-mails, phone numbers…) is
     /// masked before storage.
@@ -94,6 +99,7 @@ impl From<ContributionSubmissionKind> for ContributionKind {
 
 /// An improvement or an objection to a published idea (§5.5).
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ContributionSubmission {
     pub kind: ContributionSubmissionKind,
     /// Text of the contribution, 30 to 2 000 characters. Personal data is masked before
@@ -115,6 +121,7 @@ pub struct ContributionSubmission {
 
 /// A report about a published idea (§5.6, §7.5).
 #[derive(Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
 pub struct ReportSubmission {
     pub reason: ReportReason,
     /// Optional details, 1 000 characters at most (personal data masked). Also accepted as
@@ -159,17 +166,30 @@ pub struct SubmissionResponse {
     pub statement: Option<StatementOfReasons>,
 }
 
-/// The published idea behind a slug.
+/// The published idea behind a slug (a malformed slug is not looked up).
 async fn published_idea(state: &AppState, slug: &str) -> Result<uuid::Uuid, ApiError> {
-    submissions::published_idea_id(&state.pool, slug)
-        .await?
-        .ok_or_else(|| {
-            ApiError::new(
-                StatusCode::NOT_FOUND,
-                "idea_not_found",
-                "Cette idée n'existe pas ou n'est plus publiée.",
-            )
-        })
+    let found = if is_valid_slug(slug) {
+        submissions::published_idea_id(&state.pool, slug).await?
+    } else {
+        None
+    };
+    found.ok_or_else(|| {
+        ApiError::new(
+            StatusCode::NOT_FOUND,
+            "idea_not_found",
+            "Cette idée n'existe pas ou n'est plus publiée.",
+        )
+    })
+}
+
+/// A JSON answer that must never be stored by a browser or a proxy (it carries a token or the
+/// state of a tracked text).
+pub(crate) fn no_store(status: StatusCode, body: impl Serialize) -> Response {
+    let mut response = (status, Json(body)).into_response();
+    response
+        .headers_mut()
+        .insert(header::CACHE_CONTROL, HeaderValue::from_static("no-store"));
+    response
 }
 
 pub(crate) fn require_consents(licence: bool, publication: bool) -> Result<(), ApiError> {
@@ -211,8 +231,12 @@ pub(crate) fn check_abuse(
     action: RateAction,
     altcha: &str,
 ) -> Result<(), ApiError> {
-    state.rate_limiter.check(ip.ip(), action)?;
-    state.altcha.verify(altcha)?;
+    state.rate_limiter.check(ip.ip(), action).inspect_err(|_| {
+        tracing::warn!(action = ?action, "security: rate limit reached");
+    })?;
+    state.altcha.verify(altcha).inspect_err(|err| {
+        tracing::warn!(code = err.code(), "security: ALTCHA verification refused");
+    })?;
     Ok(())
 }
 
@@ -222,7 +246,7 @@ pub(crate) async fn screen_and_respond(
     state: &AppState,
     target: Target,
     token: TrackingToken,
-) -> Result<(StatusCode, Json<SubmissionResponse>), ApiError> {
+) -> Result<Response, ApiError> {
     let inline = state.mistral.is_some();
     let second_opinion_at = if inline {
         Utc::now() + FALLBACK_DELAY
@@ -270,15 +294,15 @@ pub(crate) async fn screen_and_respond(
     } else {
         None
     };
-    Ok((
+    Ok(no_store(
         StatusCode::CREATED,
-        Json(SubmissionResponse {
+        SubmissionResponse {
             status,
             tracking_token: token.into_inner(),
             reason_code: statement.as_ref().map(|s| s.reason_code.clone()),
             reason_message: statement.as_ref().map(|s| s.reason_message.clone()),
             statement,
-        }),
+        },
     ))
 }
 
@@ -317,7 +341,7 @@ pub async fn submit_idea(
     State(state): State<AppState>,
     ip: ClientIp,
     ApiJson(body): ApiJson<IdeaSubmission>,
-) -> Result<(StatusCode, Json<SubmissionResponse>), ApiError> {
+) -> Result<Response, ApiError> {
     require_consents(body.accept_licence, body.accept_publication)?;
     let text = validate_idea_text(&body.text)?;
     let territory = validate_line(
@@ -368,7 +392,7 @@ pub async fn submit_contribution(
     ApiPath(slug): ApiPath<String>,
     ip: ClientIp,
     ApiJson(body): ApiJson<ContributionSubmission>,
-) -> Result<(StatusCode, Json<SubmissionResponse>), ApiError> {
+) -> Result<Response, ApiError> {
     require_consents(body.accept_licence, body.accept_publication)?;
     let text = validate_contribution_text(&body.text)?;
     let idea_id = published_idea(&state, &slug).await?;
@@ -408,7 +432,7 @@ pub async fn submit_report(
     ApiPath(slug): ApiPath<String>,
     ip: ClientIp,
     ApiJson(body): ApiJson<ReportSubmission>,
-) -> Result<(StatusCode, Json<SubmissionResponse>), ApiError> {
+) -> Result<Response, ApiError> {
     if !body.good_faith {
         return Err(ApiError::bad_request(
             "good_faith_required",

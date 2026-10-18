@@ -5,7 +5,7 @@
 
 use chrono::NaiveDate;
 use serde::Serialize;
-use sqlx::{AssertSqlSafe, PgPool};
+use sqlx::PgPool;
 use utoipa::ToSchema;
 
 use super::Target;
@@ -72,22 +72,33 @@ pub fn reason_message(prompts: &Prompts, kind: TargetKind, reason_code: &str) ->
         )
 }
 
-/// SQL expression of the first day the daily purge erases a text rejected at `$col`: the next
-/// purge run (Paris time) after `col + retention`.
-fn purge_day_sql(column: &str) -> String {
-    format!(
-        "(({column} + make_interval(days => $2)) AT TIME ZONE 'Europe/Paris')::date
-         + CASE WHEN (({column} + make_interval(days => $2)) AT TIME ZONE 'Europe/Paris')::time
-                     >= make_time($3, $4, 0)
-                THEN 1 ELSE 0 END"
-    )
+/// Refusal of a text of `$table`: reason, day of the decision, first day the daily purge erases
+/// the text (the next purge run, Paris time, after `rejected_at + retention`), and whether a
+/// second opinion took part. `$1` id, `$2` retention days, `$3`/`$4` purge hour and minute,
+/// `$5` target kind. Compile-time constant SQL (AGENTS.md §14.1).
+macro_rules! rejected_sql {
+    ($table:literal) => {
+        concat!(
+            "SELECT t.rejection_reason_code, (t.rejected_at AT TIME ZONE 'Europe/Paris')::date,
+                    ((t.rejected_at + make_interval(days => $2)) AT TIME ZONE 'Europe/Paris')::date
+                    + CASE WHEN ((t.rejected_at + make_interval(days => $2))
+                                 AT TIME ZONE 'Europe/Paris')::time >= make_time($3, $4, 0)
+                           THEN 1 ELSE 0 END,
+                    EXISTS (SELECT 1 FROM screenings s
+                            WHERE s.target_kind = $5 AND s.target_id = t.id
+                              AND s.second_opinion_decision = 'reject')
+             FROM ",
+            $table,
+            " t WHERE t.id = $1 AND t.status = 'rejected' AND t.rejected_at IS NOT NULL"
+        )
+    };
 }
 
-fn table(kind: TargetKind) -> &'static str {
+fn rejected_sql(kind: TargetKind) -> &'static str {
     match kind {
-        TargetKind::Idea => "ideas",
-        TargetKind::Contribution => "contributions",
-        TargetKind::Report => "reports",
+        TargetKind::Idea => rejected_sql!("ideas"),
+        TargetKind::Contribution => rejected_sql!("contributions"),
+        TargetKind::Report => rejected_sql!("reports"),
     }
 }
 
@@ -99,24 +110,14 @@ pub async fn load(
     target: Target,
 ) -> sqlx::Result<Option<StatementOfReasons>> {
     let rejected: Option<(Option<String>, NaiveDate, NaiveDate, bool)> =
-        sqlx::query_as(AssertSqlSafe(format!(
-            "SELECT t.rejection_reason_code, (t.rejected_at AT TIME ZONE 'Europe/Paris')::date,
-                    {purge},
-                    EXISTS (SELECT 1 FROM screenings s
-                            WHERE s.target_kind = $5 AND s.target_id = t.id
-                              AND s.second_opinion_decision = 'reject')
-             FROM {table} t
-             WHERE t.id = $1 AND t.status = 'rejected' AND t.rejected_at IS NOT NULL",
-            purge = purge_day_sql("t.rejected_at"),
-            table = table(target.kind),
-        )))
-        .bind(target.id)
-        .bind(REJECTED_TEXT_RETENTION_DAYS)
-        .bind(i32::from(PURGE_SCHEDULE.hour))
-        .bind(i32::from(PURGE_SCHEDULE.minute))
-        .bind(target.kind.as_str())
-        .fetch_optional(pool)
-        .await?;
+        sqlx::query_as(rejected_sql(target.kind))
+            .bind(target.id)
+            .bind(REJECTED_TEXT_RETENTION_DAYS)
+            .bind(i32::from(PURGE_SCHEDULE.hour))
+            .bind(i32::from(PURGE_SCHEDULE.minute))
+            .bind(target.kind.as_str())
+            .fetch_optional(pool)
+            .await?;
     if let Some((reason_code, decided_on, purge_on, second_opinion)) = rejected {
         let reason_code = reason_code.unwrap_or_else(|| "rejected".to_owned());
         let rule = rules::article_for_reason(&reason_code).unwrap_or(rules::CRITERIA_ARTICLE);

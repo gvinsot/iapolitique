@@ -69,7 +69,7 @@ async fn accepted_idea_is_stored_masked_and_queued_for_dedup(pool: PgPool) {
             .unwrap();
     assert_eq!(idea["cgu_accepted_at"], today.to_string());
     assert_eq!(
-        app.history("idea_events", "idea_id", id).await,
+        app.history(TargetKind::Idea, id).await,
         ["submitted", "screening", "accepted"]
     );
 
@@ -138,7 +138,7 @@ async fn rejected_idea_gets_a_statement_of_reasons(pool: PgPool) {
     assert_eq!(idea["rejection_reason_code"], "off_topic");
     assert!(idea["rejected_at"].is_string());
     assert_eq!(
-        app.history("idea_events", "idea_id", id).await,
+        app.history(TargetKind::Idea, id).await,
         ["submitted", "screening", "rejected"]
     );
     assert!(app.jobs().await.is_empty());
@@ -183,7 +183,7 @@ async fn gray_zone_is_settled_inline_by_mistral(pool: PgPool) {
 
     let (id, _) = only_idea(&pool).await;
     assert_eq!(
-        app.history("idea_events", "idea_id", id).await,
+        app.history(TargetKind::Idea, id).await,
         ["submitted", "screening", "second_opinion", "accepted"]
     );
     let screening: Value = sqlx::query_scalar("SELECT to_jsonb(s) FROM screenings s")
@@ -355,10 +355,7 @@ async fn unavailable_decision_service_keeps_the_idea_submitted(pool: PgPool) {
     assert_token(&body);
     let (id, idea) = only_idea(&pool).await;
     assert_eq!(idea["status"], "submitted");
-    assert_eq!(
-        app.history("idea_events", "idea_id", id).await,
-        ["submitted"]
-    );
+    assert_eq!(app.history(TargetKind::Idea, id).await, ["submitted"]);
     // The screening job retries later.
     assert_eq!(
         app.jobs().await,
@@ -446,6 +443,49 @@ async fn invalid_submissions_are_refused_before_any_storage(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn bodies_are_strict_and_answers_never_cached(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), false, &[]).await;
+    app.decision_answers(TargetKind::Idea, &[]).await;
+    crate::test_support::published_idea(&pool, "mutualiser-achats").await;
+
+    // Unknown fields are refused (AGENTS.md §14.1).
+    for (uri, mut body) in [
+        ("/api/ideas", idea_body(&app)),
+        (
+            "/api/ideas/mutualiser-achats/contributions",
+            contribution_body(&app),
+        ),
+        ("/api/ideas/mutualiser-achats/reports", report_body(&app)),
+    ] {
+        body["ip"] = json!("1.2.3.4");
+        let (status, response) = app.post(uri, &body).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY, "{uri}");
+        assert_eq!(response["error"]["code"], "invalid_body");
+    }
+
+    // Injection attempts in the slug are plain unknown slugs.
+    for slug in [
+        "x'%20OR%20'1'='1",
+        "mutualiser-achats%3B--",
+        "..%2F..%2Fetc",
+    ] {
+        let (status, response) = app
+            .post(&format!("/api/ideas/{slug}/reports"), &report_body(&app))
+            .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{slug}");
+        assert_eq!(response["error"]["code"], "idea_not_found");
+    }
+
+    // The answer carries the token: never cached.
+    let response = app.post_response("/api/ideas", &idea_body(&app)).await;
+    assert_eq!(response.status(), StatusCode::CREATED);
+    assert_eq!(
+        response.headers()[axum::http::header::CACHE_CONTROL],
+        "no-store"
+    );
+}
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
 async fn ideas_are_rate_limited(pool: PgPool) {
     let app = TestApp::new(pool.clone(), false, &[("RATE_LIMIT_IDEAS_PER_HOUR", "2")]).await;
     app.decision_answers(TargetKind::Idea, &[]).await;
@@ -524,8 +564,7 @@ async fn accepted_contribution_is_masked_and_triggers_a_reanalysis(pool: PgPool)
     assert!(row["cgu_accepted_at"].is_string());
     let id: Uuid = row["id"].as_str().unwrap().parse().unwrap();
     assert_eq!(
-        app.history("contribution_events", "contribution_id", id)
-            .await,
+        app.history(TargetKind::Contribution, id).await,
         ["submitted", "screening", "accepted"]
     );
     let (kind, target): (String, Uuid) =

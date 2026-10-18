@@ -7,13 +7,13 @@
 //! `report_events`). Callers pass a connection of a transaction, so that the change, its
 //! history and the side effects that depend on it (jobs, rejection fields…) commit together.
 //!
-//! Table and column names come from the [`StatusTable`] constants, never from input, hence the
-//! [`AssertSqlSafe`] wrappers.
+//! The SQL of each entity is a compile-time constant of [`StatusTable`] (AGENTS.md §14.1: no SQL
+//! built at runtime).
 
 use std::str::FromStr;
 
 use serde_json::{Value, json};
-use sqlx::{AssertSqlSafe, PgConnection};
+use sqlx::PgConnection;
 use uuid::Uuid;
 
 use crate::domain::UnknownVariant;
@@ -22,38 +22,70 @@ use crate::domain::status::{
 };
 use crate::domain::types::{Actor, TargetKind};
 
-/// A status enum stored in a table with a history table.
+/// A status enum stored in a table with a history table, with the constant SQL that reads and
+/// changes it.
 pub trait StatusTable: StateMachine + FromStr<Err = UnknownVariant> + Send + Sync {
-    /// Table holding the `status` column.
-    const TABLE: &'static str;
-    /// History table.
-    const EVENTS: &'static str;
-    /// Column of the history table referencing the entity.
-    const FOREIGN_KEY: &'static str;
     /// Kind of the entity, for tracking links and screenings.
     const TARGET: TargetKind;
+    /// `$1` id → status, row locked.
+    const LOCK_SQL: &'static str;
+    /// `$1` id, `$2` new status.
+    const UPDATE_SQL: &'static str;
+    /// `$1` id, `$2` from, `$3` to, `$4` actor, `$5` reason code, `$6` details.
+    const EVENT_SQL: &'static str;
+    /// `$1` id, `$2` reason code: records a rejection.
+    const REJECT_SQL: &'static str;
 }
 
-impl StatusTable for IdeaStatus {
-    const TABLE: &'static str = "ideas";
-    const EVENTS: &'static str = "idea_events";
-    const FOREIGN_KEY: &'static str = "idea_id";
-    const TARGET: TargetKind = TargetKind::Idea;
+macro_rules! status_table {
+    ($status:ty, $target:expr, $table:literal, $events:literal, $fk:literal) => {
+        impl StatusTable for $status {
+            const TARGET: TargetKind = $target;
+            const LOCK_SQL: &'static str =
+                concat!("SELECT status FROM ", $table, " WHERE id = $1 FOR UPDATE");
+            const UPDATE_SQL: &'static str = concat!(
+                "UPDATE ",
+                $table,
+                " SET status = $2, status_changed_at = now() WHERE id = $1"
+            );
+            const EVENT_SQL: &'static str = concat!(
+                "INSERT INTO ",
+                $events,
+                " (",
+                $fk,
+                ", from_status, to_status, actor, reason_code, details)
+                 VALUES ($1, $2, $3, $4, $5, $6)"
+            );
+            const REJECT_SQL: &'static str = concat!(
+                "UPDATE ",
+                $table,
+                " SET rejection_reason_code = $2, rejected_at = now() WHERE id = $1"
+            );
+        }
+    };
 }
 
-impl StatusTable for ContributionStatus {
-    const TABLE: &'static str = "contributions";
-    const EVENTS: &'static str = "contribution_events";
-    const FOREIGN_KEY: &'static str = "contribution_id";
-    const TARGET: TargetKind = TargetKind::Contribution;
-}
-
-impl StatusTable for ReportStatus {
-    const TABLE: &'static str = "reports";
-    const EVENTS: &'static str = "report_events";
-    const FOREIGN_KEY: &'static str = "report_id";
-    const TARGET: TargetKind = TargetKind::Report;
-}
+status_table!(
+    IdeaStatus,
+    TargetKind::Idea,
+    "ideas",
+    "idea_events",
+    "idea_id"
+);
+status_table!(
+    ContributionStatus,
+    TargetKind::Contribution,
+    "contributions",
+    "contribution_events",
+    "contribution_id"
+);
+status_table!(
+    ReportStatus,
+    TargetKind::Report,
+    "reports",
+    "report_events",
+    "report_id"
+);
 
 /// Who changes the status, why, and internal details (identifiers only, never user text).
 #[derive(Debug, Clone, PartialEq)]
@@ -105,13 +137,10 @@ pub async fn lock<S: StatusTable>(
     conn: &mut PgConnection,
     id: Uuid,
 ) -> Result<Option<S>, StatusError> {
-    let row: Option<(String,)> = sqlx::query_as(AssertSqlSafe(format!(
-        "SELECT status FROM {} WHERE id = $1 FOR UPDATE",
-        S::TABLE
-    )))
-    .bind(id)
-    .fetch_optional(&mut *conn)
-    .await?;
+    let row: Option<(String,)> = sqlx::query_as(S::LOCK_SQL)
+        .bind(id)
+        .fetch_optional(&mut *conn)
+        .await?;
     match row {
         Some((status,)) => Ok(Some(status.parse()?)),
         None => Ok(None),
@@ -125,21 +154,16 @@ async fn append_event<S: StatusTable>(
     to: S,
     change: &Change,
 ) -> sqlx::Result<()> {
-    sqlx::query(AssertSqlSafe(format!(
-        "INSERT INTO {} ({}, from_status, to_status, actor, reason_code, details)
-         VALUES ($1, $2, $3, $4, $5, $6)",
-        S::EVENTS,
-        S::FOREIGN_KEY
-    )))
-    .bind(id)
-    .bind(from.map(StateMachine::label))
-    .bind(to.label())
-    .bind(change.actor.as_str())
-    .bind(change.reason_code.as_deref())
-    .bind(&change.details)
-    .execute(&mut *conn)
-    .await
-    .map(|_| ())
+    sqlx::query(S::EVENT_SQL)
+        .bind(id)
+        .bind(from.map(StateMachine::label))
+        .bind(to.label())
+        .bind(change.actor.as_str())
+        .bind(change.reason_code.as_deref())
+        .bind(&change.details)
+        .execute(&mut *conn)
+        .await
+        .map(|_| ())
 }
 
 /// Records the creation of an entity, in its initial status, in the history.
@@ -163,14 +187,11 @@ pub async fn transition<S: StatusTable>(
         id,
     })?;
     from.transition(to)?;
-    sqlx::query(AssertSqlSafe(format!(
-        "UPDATE {} SET status = $2, status_changed_at = now() WHERE id = $1",
-        S::TABLE
-    )))
-    .bind(id)
-    .bind(to.label())
-    .execute(&mut *conn)
-    .await?;
+    sqlx::query(S::UPDATE_SQL)
+        .bind(id)
+        .bind(to.label())
+        .execute(&mut *conn)
+        .await?;
     append_event(conn, id, Some(from), to, change).await?;
     Ok(from)
 }
@@ -209,16 +230,27 @@ mod tests {
         id
     }
 
-    async fn events(pool: &PgPool, table: &str, fk: &str, id: Uuid) -> Vec<Value> {
-        let (rows,): (Value,) = sqlx::query_as(AssertSqlSafe(format!(
-            "SELECT coalesce(jsonb_agg(jsonb_build_object('from', from_status, 'to', to_status,
-                 'actor', actor, 'reason', reason_code, 'details', details) ORDER BY id), '[]')
-             FROM {table} WHERE {fk} = $1"
-        )))
-        .bind(id)
-        .fetch_one(pool)
-        .await
-        .unwrap();
+    async fn events(pool: &PgPool, table: &str, _fk: &str, id: Uuid) -> Vec<Value> {
+        macro_rules! events_sql {
+            ($table:literal, $fk:literal) => {
+                concat!(
+                    "SELECT coalesce(jsonb_agg(jsonb_build_object('from', from_status,
+                         'to', to_status, 'actor', actor, 'reason', reason_code,
+                         'details', details) ORDER BY id), '[]') FROM ",
+                    $table,
+                    " WHERE ",
+                    $fk,
+                    " = $1"
+                )
+            };
+        }
+        let sql = match table {
+            "idea_events" => events_sql!("idea_events", "idea_id"),
+            "contribution_events" => events_sql!("contribution_events", "contribution_id"),
+            "report_events" => events_sql!("report_events", "report_id"),
+            other => panic!("unknown history table {other}"),
+        };
+        let (rows,): (Value,) = sqlx::query_as(sql).bind(id).fetch_one(pool).await.unwrap();
         rows.as_array().unwrap().clone()
     }
 

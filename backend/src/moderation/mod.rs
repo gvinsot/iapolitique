@@ -19,7 +19,7 @@
 
 use chrono::{DateTime, Duration, Utc};
 use serde_json::{Value, json};
-use sqlx::{AssertSqlSafe, PgConnection, PgPool};
+use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 use crate::ai::decision::{self, Screener, ScreeningError, ScreeningRequest, ScreeningResult};
@@ -405,14 +405,11 @@ async fn settle_typed<S: ScreenedStatus + StatusTable>(
             Step::Accepted
         }
         Verdict::Reject(reason_code) => {
-            sqlx::query(AssertSqlSafe(format!(
-                "UPDATE {} SET rejection_reason_code = $2, rejected_at = now() WHERE id = $1",
-                S::TABLE
-            )))
-            .bind(target.id)
-            .bind(&reason_code)
-            .execute(&mut *conn)
-            .await?;
+            sqlx::query(S::REJECT_SQL)
+                .bind(target.id)
+                .bind(&reason_code)
+                .execute(&mut *conn)
+                .await?;
             Step::Rejected { reason_code }
         }
         Verdict::Gray => {

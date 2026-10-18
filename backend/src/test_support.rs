@@ -227,14 +227,19 @@ impl TestApp {
         solve(&self.state.altcha.create_challenge())
     }
 
-    /// POST of a JSON body from [`CLIENT_IP`].
-    pub async fn post(&self, uri: &str, body: &Value) -> (StatusCode, Value) {
+    /// POST of a JSON body from [`CLIENT_IP`], raw response.
+    pub async fn post_response(&self, uri: &str, body: &Value) -> axum::response::Response {
         let request = Request::post(uri)
             .header("content-type", "application/json")
             .header("x-forwarded-for", CLIENT_IP)
             .body(Body::from(body.to_string()))
             .unwrap();
-        let response = self.router.clone().oneshot(request).await.unwrap();
+        self.router.clone().oneshot(request).await.unwrap()
+    }
+
+    /// POST of a JSON body from [`CLIENT_IP`]: status and JSON body.
+    pub async fn post(&self, uri: &str, body: &Value) -> (StatusCode, Value) {
+        let response = self.post_response(uri, body).await;
         let status = response.status();
         let bytes = response.into_body().collect().await.unwrap().to_bytes();
         let value = if bytes.is_empty() {
@@ -246,17 +251,24 @@ impl TestApp {
     }
 
     /// Statuses recorded in the history of an entity, in order.
-    pub async fn history(&self, table: &str, fk: &str, id: Uuid) -> Vec<String> {
-        sqlx::query_as::<_, (String,)>(sqlx::AssertSqlSafe(format!(
-            "SELECT to_status FROM {table} WHERE {fk} = $1 ORDER BY id"
-        )))
-        .bind(id)
-        .fetch_all(&self.pool)
-        .await
-        .unwrap()
-        .into_iter()
-        .map(|(s,)| s)
-        .collect()
+    pub async fn history(&self, kind: TargetKind, id: Uuid) -> Vec<String> {
+        let sql = match kind {
+            TargetKind::Idea => "SELECT to_status FROM idea_events WHERE idea_id = $1 ORDER BY id",
+            TargetKind::Contribution => {
+                "SELECT to_status FROM contribution_events WHERE contribution_id = $1 ORDER BY id"
+            }
+            TargetKind::Report => {
+                "SELECT to_status FROM report_events WHERE report_id = $1 ORDER BY id"
+            }
+        };
+        sqlx::query_as::<_, (String,)>(sql)
+            .bind(id)
+            .fetch_all(&self.pool)
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|(s,)| s)
+            .collect()
     }
 
     /// Queued or running jobs: (kind, dedupe key, run_after in the future).

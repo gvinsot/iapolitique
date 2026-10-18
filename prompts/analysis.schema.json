@@ -1,0 +1,618 @@
+{
+  "type": "object",
+  "description": "Analyse approfondie d'une idée d'économie ou de recette publique (AGENTS.md §6.2). Contrôles complémentaires faits par le backend : low <= median <= high, montants et délai >= 0, category compatible avec admin_level, références [Sx] existantes dans sources, au moins une source.",
+  "properties": {
+    "title": {
+      "type": "string",
+      "description": "Titre neutre et factuel de la mesure, 90 caractères au plus, sans point final."
+    },
+    "summary": {
+      "type": "string",
+      "description": "Reformulation neutre et factuelle de l'idée en 2 à 4 phrases : ce qui change, pour qui, avec quel objectif budgétaire."
+    },
+    "improved_proposal": {
+      "type": "string",
+      "description": "Version améliorée et précisée de la mesure : périmètre, modalités, calendrier, garde-fous. 3 à 8 phrases."
+    },
+    "existing_situation": {
+      "type": "string",
+      "description": "Droit et pratique actuels sur ce sujet, y compris les mesures proches déjà en vigueur ou déjà votées, avec références [Sx]."
+    },
+    "admin_level": {
+      "type": "string",
+      "enum": [
+        "etat",
+        "securite_sociale",
+        "region",
+        "departement",
+        "intercommunalite",
+        "commune",
+        "multi"
+      ],
+      "description": "Administration dont le budget est principalement concerné."
+    },
+    "territory": {
+      "type": "object",
+      "description": "Collectivité précise visée par la mesure ; deux chaînes vides si aucune.",
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Nom de la collectivité précise visée, ou chaîne vide si la mesure n'en vise pas une en particulier."
+        },
+        "insee_code": {
+          "type": "string",
+          "description": "Code officiel géographique INSEE de cette collectivité (commune, département, région ou SIREN de l'EPCI), ou chaîne vide."
+        }
+      },
+      "required": [
+        "name",
+        "insee_code"
+      ],
+      "additionalProperties": false
+    },
+    "category": {
+      "type": "string",
+      "enum": [
+        "action_exterieure",
+        "administration_territoriale",
+        "agriculture",
+        "aide_developpement",
+        "anciens_combattants",
+        "cohesion_territoires",
+        "conseil_controle",
+        "credits_non_repartis",
+        "culture",
+        "defense",
+        "action_gouvernement",
+        "ecologie",
+        "economie",
+        "engagements_financiers",
+        "enseignement_scolaire",
+        "finances_publiques",
+        "immigration_asile",
+        "france_2030",
+        "justice",
+        "medias_industries_culturelles",
+        "audiovisuel_public",
+        "outre_mer",
+        "pouvoirs_publics",
+        "recherche_enseignement_superieur",
+        "regimes_sociaux_retraite",
+        "relations_collectivites",
+        "concours_collectivites",
+        "remboursements_degrevements",
+        "sante",
+        "securites",
+        "solidarite_insertion",
+        "sport_jeunesse",
+        "fonction_publique",
+        "travail_emploi",
+        "fiscalite_etat",
+        "recettes_non_fiscales_etat",
+        "maladie",
+        "vieillesse",
+        "famille",
+        "at_mp",
+        "autonomie",
+        "recouvrement",
+        "services_generaux",
+        "securite_locale",
+        "enseignement_formation",
+        "culture_sport_jeunesse",
+        "sante_action_sociale",
+        "amenagement_habitat",
+        "action_economique",
+        "environnement",
+        "transports",
+        "fiscalite_locale",
+        "tarifs_domaine",
+        "achats_publics",
+        "immobilier_public",
+        "numerique_public",
+        "organisation_effectifs",
+        "lutte_fraude",
+        "subventions_organismes"
+      ],
+      "description": "Catégorie de la taxonomie, compatible avec admin_level."
+    },
+    "kind": {
+      "type": "string",
+      "enum": [
+        "savings",
+        "revenue",
+        "mixed"
+      ],
+      "description": "savings : baisse de dépense ; revenue : hausse de recette ; mixed : les deux."
+    },
+    "annual_gain_eur": {
+      "type": "object",
+      "properties": {
+        "low": {
+          "type": "integer",
+          "description": "Hypothèse basse, en euros entiers (gain brut annuel en régime de croisière, pour les administrations publiques)."
+        },
+        "median": {
+          "type": "integer",
+          "description": "Hypothèse médiane, en euros entiers (gain brut annuel en régime de croisière, pour les administrations publiques)."
+        },
+        "high": {
+          "type": "integer",
+          "description": "Hypothèse haute, en euros entiers (gain brut annuel en régime de croisière, pour les administrations publiques)."
+        },
+        "calculation": {
+          "type": "string",
+          "description": "Calcul détaillé reliant les hypothèses aux trois montants, avec les références [S1], [S2]… des sources utilisées."
+        }
+      },
+      "required": [
+        "low",
+        "median",
+        "high",
+        "calculation"
+      ],
+      "additionalProperties": false
+    },
+    "implementation_cost_eur": {
+      "type": "object",
+      "properties": {
+        "low": {
+          "type": "integer",
+          "description": "Hypothèse basse, en euros entiers (coût ponctuel de mise en œuvre, 0 si négligeable)."
+        },
+        "median": {
+          "type": "integer",
+          "description": "Hypothèse médiane, en euros entiers (coût ponctuel de mise en œuvre, 0 si négligeable)."
+        },
+        "high": {
+          "type": "integer",
+          "description": "Hypothèse haute, en euros entiers (coût ponctuel de mise en œuvre, 0 si négligeable)."
+        },
+        "calculation": {
+          "type": "string",
+          "description": "Calcul détaillé reliant les hypothèses aux trois montants, avec les références [S1], [S2]… des sources utilisées."
+        }
+      },
+      "required": [
+        "low",
+        "median",
+        "high",
+        "calculation"
+      ],
+      "additionalProperties": false
+    },
+    "time_to_effect_months": {
+      "type": "integer",
+      "description": "Délai en mois entre la décision et les premiers effets budgétaires."
+    },
+    "legal_vehicle": {
+      "type": "string",
+      "enum": [
+        "loi",
+        "loi_de_finances",
+        "decret",
+        "arrete",
+        "deliberation",
+        "circulaire",
+        "organisation_interne",
+        "autre"
+      ],
+      "description": "Acte juridique nécessaire pour mettre en œuvre la mesure."
+    },
+    "feasibility": {
+      "type": "object",
+      "properties": {
+        "score": {
+          "type": "integer",
+          "enum": [
+            1,
+            2,
+            3,
+            4,
+            5
+          ],
+          "description": "1 : quasi impossible ; 2 : très difficile ; 3 : faisable avec des obstacles importants ; 4 : faisable ; 5 : simple."
+        },
+        "obstacles": {
+          "type": "array",
+          "description": "Obstacles à la mise en œuvre, du plus au moins important.",
+          "items": {
+            "type": "string",
+            "description": "Obstacle concret : juridique, technique, social, organisationnel ou européen."
+          }
+        }
+      },
+      "required": [
+        "score",
+        "obstacles"
+      ],
+      "additionalProperties": false
+    },
+    "confidence": {
+      "type": "string",
+      "enum": [
+        "low",
+        "medium",
+        "high"
+      ],
+      "description": "Qualité des données disponibles pour le chiffrage."
+    },
+    "confidence_explanation": {
+      "type": "string",
+      "description": "Pourquoi ce niveau de confiance : données disponibles, ancienneté, hypothèses les plus fragiles."
+    },
+    "assumptions": {
+      "type": "array",
+      "description": "Hypothèses de calcul.",
+      "items": {
+        "type": "string",
+        "description": "Hypothèse de calcul explicite et vérifiable, avec références [Sx] si elle repose sur une source."
+      }
+    },
+    "pros": {
+      "type": "array",
+      "description": "Arguments favorables, même nombre et même niveau de détail que cons.",
+      "items": {
+        "type": "string",
+        "description": "Argument favorable, factuel, en une phrase."
+      }
+    },
+    "cons": {
+      "type": "array",
+      "description": "Arguments défavorables, même nombre et même niveau de détail que pros.",
+      "items": {
+        "type": "string",
+        "description": "Argument défavorable, factuel, en une phrase."
+      }
+    },
+    "risks": {
+      "type": "array",
+      "description": "Risques.",
+      "items": {
+        "type": "string",
+        "description": "Risque de mise en œuvre ou effet indésirable possible, en une phrase."
+      }
+    },
+    "impacts": {
+      "type": "object",
+      "description": "Impact pour chacun des publics de la taxonomie.",
+      "properties": {
+        "menages_modestes": {
+          "type": "object",
+          "properties": {
+            "effect": {
+              "type": "string",
+              "enum": [
+                "positive",
+                "neutral",
+                "negative",
+                "uncertain"
+              ],
+              "description": "Effet net attendu pour ce public."
+            },
+            "explanation": {
+              "type": "string",
+              "description": "Une ou deux phrases factuelles expliquant l'effet pour ce public."
+            }
+          },
+          "required": [
+            "effect",
+            "explanation"
+          ],
+          "additionalProperties": false,
+          "description": "Impact pour le public « Ménages modestes »."
+        },
+        "classes_moyennes": {
+          "type": "object",
+          "properties": {
+            "effect": {
+              "type": "string",
+              "enum": [
+                "positive",
+                "neutral",
+                "negative",
+                "uncertain"
+              ],
+              "description": "Effet net attendu pour ce public."
+            },
+            "explanation": {
+              "type": "string",
+              "description": "Une ou deux phrases factuelles expliquant l'effet pour ce public."
+            }
+          },
+          "required": [
+            "effect",
+            "explanation"
+          ],
+          "additionalProperties": false,
+          "description": "Impact pour le public « Classes moyennes »."
+        },
+        "menages_aises": {
+          "type": "object",
+          "properties": {
+            "effect": {
+              "type": "string",
+              "enum": [
+                "positive",
+                "neutral",
+                "negative",
+                "uncertain"
+              ],
+              "description": "Effet net attendu pour ce public."
+            },
+            "explanation": {
+              "type": "string",
+              "description": "Une ou deux phrases factuelles expliquant l'effet pour ce public."
+            }
+          },
+          "required": [
+            "effect",
+            "explanation"
+          ],
+          "additionalProperties": false,
+          "description": "Impact pour le public « Ménages aisés »."
+        },
+        "entreprises": {
+          "type": "object",
+          "properties": {
+            "effect": {
+              "type": "string",
+              "enum": [
+                "positive",
+                "neutral",
+                "negative",
+                "uncertain"
+              ],
+              "description": "Effet net attendu pour ce public."
+            },
+            "explanation": {
+              "type": "string",
+              "description": "Une ou deux phrases factuelles expliquant l'effet pour ce public."
+            }
+          },
+          "required": [
+            "effect",
+            "explanation"
+          ],
+          "additionalProperties": false,
+          "description": "Impact pour le public « Entreprises »."
+        },
+        "agents_publics": {
+          "type": "object",
+          "properties": {
+            "effect": {
+              "type": "string",
+              "enum": [
+                "positive",
+                "neutral",
+                "negative",
+                "uncertain"
+              ],
+              "description": "Effet net attendu pour ce public."
+            },
+            "explanation": {
+              "type": "string",
+              "description": "Une ou deux phrases factuelles expliquant l'effet pour ce public."
+            }
+          },
+          "required": [
+            "effect",
+            "explanation"
+          ],
+          "additionalProperties": false,
+          "description": "Impact pour le public « Agents publics »."
+        },
+        "usagers_services_publics": {
+          "type": "object",
+          "properties": {
+            "effect": {
+              "type": "string",
+              "enum": [
+                "positive",
+                "neutral",
+                "negative",
+                "uncertain"
+              ],
+              "description": "Effet net attendu pour ce public."
+            },
+            "explanation": {
+              "type": "string",
+              "description": "Une ou deux phrases factuelles expliquant l'effet pour ce public."
+            }
+          },
+          "required": [
+            "effect",
+            "explanation"
+          ],
+          "additionalProperties": false,
+          "description": "Impact pour le public « Usagers des services publics »."
+        },
+        "territoires_ruraux": {
+          "type": "object",
+          "properties": {
+            "effect": {
+              "type": "string",
+              "enum": [
+                "positive",
+                "neutral",
+                "negative",
+                "uncertain"
+              ],
+              "description": "Effet net attendu pour ce public."
+            },
+            "explanation": {
+              "type": "string",
+              "description": "Une ou deux phrases factuelles expliquant l'effet pour ce public."
+            }
+          },
+          "required": [
+            "effect",
+            "explanation"
+          ],
+          "additionalProperties": false,
+          "description": "Impact pour le public « Territoires ruraux »."
+        },
+        "territoires_urbains": {
+          "type": "object",
+          "properties": {
+            "effect": {
+              "type": "string",
+              "enum": [
+                "positive",
+                "neutral",
+                "negative",
+                "uncertain"
+              ],
+              "description": "Effet net attendu pour ce public."
+            },
+            "explanation": {
+              "type": "string",
+              "description": "Une ou deux phrases factuelles expliquant l'effet pour ce public."
+            }
+          },
+          "required": [
+            "effect",
+            "explanation"
+          ],
+          "additionalProperties": false,
+          "description": "Impact pour le public « Territoires urbains »."
+        },
+        "environnement": {
+          "type": "object",
+          "properties": {
+            "effect": {
+              "type": "string",
+              "enum": [
+                "positive",
+                "neutral",
+                "negative",
+                "uncertain"
+              ],
+              "description": "Effet net attendu pour ce public."
+            },
+            "explanation": {
+              "type": "string",
+              "description": "Une ou deux phrases factuelles expliquant l'effet pour ce public."
+            }
+          },
+          "required": [
+            "effect",
+            "explanation"
+          ],
+          "additionalProperties": false,
+          "description": "Impact pour le public « Environnement »."
+        }
+      },
+      "required": [
+        "menages_modestes",
+        "classes_moyennes",
+        "menages_aises",
+        "entreprises",
+        "agents_publics",
+        "usagers_services_publics",
+        "territoires_ruraux",
+        "territoires_urbains",
+        "environnement"
+      ],
+      "additionalProperties": false
+    },
+    "sources": {
+      "type": "array",
+      "description": "Sources consultées ; au moins une source pour chaque chiffre clé.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "id": {
+            "type": "string",
+            "description": "Identifiant cité dans le texte : S1, S2, S3…"
+          },
+          "title": {
+            "type": "string",
+            "description": "Titre exact du document ou de la page."
+          },
+          "publisher": {
+            "type": "string",
+            "description": "Organisme qui publie : Cour des comptes, INSEE, DREES, Assemblée nationale…"
+          },
+          "url": {
+            "type": "string",
+            "description": "Adresse web consultée, complète (https://…)."
+          },
+          "used_for": {
+            "type": "string",
+            "description": "Ce que cette source étaye dans l'analyse."
+          }
+        },
+        "required": [
+          "id",
+          "title",
+          "publisher",
+          "url",
+          "used_for"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "contributions_considered": {
+      "type": "array",
+      "description": "Une entrée par contribution fournie, dans le même ordre ; tableau vide s'il n'y en a aucune.",
+      "items": {
+        "type": "object",
+        "properties": {
+          "contribution_id": {
+            "type": "string",
+            "description": "Identifiant de la contribution tel que fourni."
+          },
+          "summary": {
+            "type": "string",
+            "description": "Résumé neutre de la contribution en une phrase."
+          },
+          "taken_into_account": {
+            "type": "boolean",
+            "description": "true si l'analyse a été modifiée pour en tenir compte."
+          },
+          "response": {
+            "type": "string",
+            "description": "Comment la contribution a été intégrée, ou pourquoi elle ne l'a pas été, en une ou deux phrases."
+          }
+        },
+        "required": [
+          "contribution_id",
+          "summary",
+          "taken_into_account",
+          "response"
+        ],
+        "additionalProperties": false
+      }
+    },
+    "changes_since_previous": {
+      "type": "string",
+      "description": "Ce qui change par rapport à l'analyse précédente et pourquoi ; chaîne vide pour une première analyse."
+    }
+  },
+  "required": [
+    "title",
+    "summary",
+    "improved_proposal",
+    "existing_situation",
+    "admin_level",
+    "territory",
+    "category",
+    "kind",
+    "annual_gain_eur",
+    "implementation_cost_eur",
+    "time_to_effect_months",
+    "legal_vehicle",
+    "feasibility",
+    "confidence",
+    "confidence_explanation",
+    "assumptions",
+    "pros",
+    "cons",
+    "risks",
+    "impacts",
+    "sources",
+    "contributions_considered",
+    "changes_since_previous"
+  ],
+  "additionalProperties": false
+}

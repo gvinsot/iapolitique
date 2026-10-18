@@ -1,0 +1,38 @@
+{
+  "type": "object",
+  "description": "Second avis sur un texte placé en zone grise par le modèle de décision (AGENTS.md §5.3).",
+  "properties": {
+    "decision": {
+      "type": "string",
+      "enum": [
+        "accept",
+        "reject"
+      ],
+      "description": "accept : le texte respecte tous les critères ; reject : au moins un critère n'est pas respecté."
+    },
+    "reason_code": {
+      "type": "string",
+      "enum": [
+        "none",
+        "disrespectful",
+        "injection",
+        "irrelevant",
+        "off_topic",
+        "targeted",
+        "unlawful",
+        "unrealistic"
+      ],
+      "description": "none si decision = accept ; sinon code du premier critère non respecté, dans l'ordre de la grille."
+    },
+    "explanation": {
+      "type": "string",
+      "description": "Justification neutre et polie en une à trois phrases, compréhensible par l'auteur."
+    }
+  },
+  "required": [
+    "decision",
+    "reason_code",
+    "explanation"
+  ],
+  "additionalProperties": false
+}

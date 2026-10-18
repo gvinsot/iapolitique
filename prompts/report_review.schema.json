@@ -1,0 +1,29 @@
+{
+  "type": "object",
+  "description": "Réévaluation d'une idée publiée à la suite de signalements (AGENTS.md §5.6).",
+  "properties": {
+    "outcome": {
+      "type": "string",
+      "enum": [
+        "maintain",
+        "update",
+        "hide"
+      ],
+      "description": "maintain : l'analyse reste valable ; update : elle doit être refaite avec des corrections ; hide : l'idée doit être masquée."
+    },
+    "explanation": {
+      "type": "string",
+      "description": "Justification neutre en deux à cinq phrases, qui répond à chaque signalement."
+    },
+    "corrections": {
+      "type": "string",
+      "description": "Si outcome = update : corrections précises que la nouvelle analyse doit appliquer. Sinon, chaîne vide."
+    }
+  },
+  "required": [
+    "outcome",
+    "explanation",
+    "corrections"
+  ],
+  "additionalProperties": false
+}

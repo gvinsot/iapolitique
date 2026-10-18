@@ -136,11 +136,13 @@ iapolitique/
 │       └── lib/
 ├── prompts/                # prompts et grilles versionnés, publiés sur la page Méthodologie
 │   ├── screening.yaml      # questions du modèle de décision + seuils par défaut
-│   ├── second_opinion.md
-│   ├── analysis.md
-│   ├── report_review.md
+│   ├── second_opinion.md   # + second_opinion.schema.json
+│   ├── analysis_research.md # étape 1 de l'analyse : recherche web, mémo sourcé
+│   ├── analysis.md         # étape 2 : structuration JSON (+ analysis.schema.json)
+│   ├── report_review.md    # + report_review.schema.json
 │   └── taxonomy.yaml       # niveaux administratifs, catégories, publics d'impact
 ├── docs/                   # documentation fonctionnelle (méthodologie, calibration…)
+│   └── calibration/        # banc de calibration du filtrage, contrôle des fichiers prompts/
 └── devops/
     ├── docker-compose.swarm.yml
     └── .env.example
@@ -312,7 +314,17 @@ version de prompt (l'admin peut relancer manuellement).
 | `assumptions` | Hypothèses de calcul, explicites |
 | `pros`, `cons`, `risks` | Listes courtes et factuelles |
 | `impacts` | Pour **chaque** public de `taxonomy.yaml` (ménages modestes, classes moyennes, ménages aisés, entreprises, agents publics, usagers des services publics, territoires ruraux, territoires urbains, environnement) : `positive` / `neutral` / `negative` / `uncertain` + explication |
-| `sources` | `{ title, publisher, url, used_for }` ; au moins une source pour tout chiffre clé |
+| `sources` | `{ id, title, publisher, url, used_for }` ; au moins une source pour tout chiffre clé, citée `[S1]`, `[S2]`… dans les textes |
+| `existing_situation` | Droit et pratique actuels, mesures proches déjà en vigueur (le gain chiffré est le gain **supplémentaire**) |
+| `confidence_explanation` | Justification du niveau de confiance |
+| `contributions_considered` | Pour chaque contribution intégrée : `{ contribution_id, summary, taken_into_account, response }` (résumé neutre affiché sur le portail, §5.5) |
+| `changes_since_previous` | Ce qui change par rapport à l'analyse précédente (vide pour une première analyse) |
+
+Les fourchettes `annual_gain_eur` et `implementation_cost_eur` portent aussi un champ
+`calculation` (calcul détaillé avec références aux sources), et `feasibility` vaut
+`{ score: 1..5, obstacles: [...] }`. `territory` vaut `{ name, insee_code }`, deux chaînes vides
+si aucune collectivité précise n'est visée (le mode strict de Mistral exclut les champs
+facultatifs).
 
 Règles de prompt : ne jamais qualifier politiquement (gauche, droite, libéral, social…), ne
 jamais nommer de parti ni d'élu, présenter pour et contre avec le même niveau de détail, préférer
@@ -606,9 +618,11 @@ au démarrage (un fichier invalide empêche le démarrage).
 | Fichier | Format |
 |---|---|
 | `screening.yaml` | `version` + trois sections `idea`, `contribution`, `report`. Chaque section : liste ordonnée de critères `{ key, type: noul\|score, instructions, criteria?, pass_when (true/false pour noul, niveau minimal pour score), reject_below, accept_above, reason_code, reason_message }`. Les seuils portent sur la probabilité de **réussir** le critère (`noul` ou `1 − noul` selon `pass_when` ; pour `score`, somme des probabilités des niveaux d'indice ≥ `pass_when`) ; entre `reject_below` et `accept_above` = zone grise. `state` envoyé : texte brut (idea), objet `{ idee, type, contribution }` (contribution), objet `{ idee, motif, precision }` (report), où `idee` est le résumé neutre de l'idée publiée. Calibration : `docs/calibration/`. |
-| `second_opinion.md`, `analysis.md`, `report_review.md` | En-tête YAML (`version`, `model_hint`), corps en français avec des variables `{{nom}}`. |
-| `analysis.schema.json` | JSON Schema de la sortie d'analyse (§6.2), utilisé tel quel en `response_format` Mistral et pour valider la réponse. |
-| `second_opinion.schema.json`, `report_review.schema.json` | Idem pour le second avis (`decision: accept\|reject`, `reason_code`, `explanation`) et la revue de signalement (`outcome: maintain\|update\|hide`, `explanation`). |
+| `analysis_research.md`, `analysis.md`, `second_opinion.md`, `report_review.md` | En-tête YAML entre deux lignes `---` : `version`, `model_hint`, `tools` (`[web_search]` ou `[]`), `output_schema` (fichier de schéma ou `null`), `variables` (map nom → description ; toutes doivent être substituées, une valeur absente devient « (aucun) » ou « (aucune) » selon la description). Corps en français découpé par la ligne `<!-- user -->` : avant = instructions système (seule variable admise : `{{today}}`, pour garder le cache de prompt), après = message utilisateur avec les variables `{{nom}}`. Les textes de visiteurs sont insérés entre balises (`<idee_originale>`…) : le backend neutralise toute balise fermante identique présente dans le texte. |
+| Analyse en deux étapes | Étape 1 `analysis_research.md` (Conversations API avec `web_search`) → mémo sourcé en texte ; étape 2 `analysis.md` (`response_format` json_schema strict, sans outil) avec `{{research}}` = le mémo. Si la recherche web et la sortie structurée sont compatibles dans un même appel, `analysis.md` seul suffit avec `{{research}}` vide et l'outil `web_search` activé. Les versions des deux fichiers sont stockées avec l'analyse. |
+| `analysis.schema.json` | JSON Schema (draft 2020-12, sous-ensemble compatible avec le mode strict de Mistral : `type`, `properties`, `required` = toutes les propriétés, `additionalProperties: false`, `items`, `enum`, `description`, `title`) de la sortie d'analyse (§6.2), utilisé tel quel en `response_format` (`{"type": "json_schema", "json_schema": {"name": "analysis", "schema": …, "strict": true}}`) et pour valider la réponse. Le backend vérifie en plus : low ≤ median ≤ high, montants et délai ≥ 0, catégorie compatible avec `admin_level`, références `[Sx]` présentes dans `sources`, au moins une source. |
+| `second_opinion.schema.json`, `report_review.schema.json` | Idem pour le second avis (`decision: accept\|reject`, `reason_code` = `none` ou un `reason_code` de `screening.yaml`, `explanation`) et la revue de signalement (`outcome: maintain\|update\|hide`, `explanation`, `corrections` : consignes passées en `{{report}}` à la ré-analyse si `update`, vide sinon). |
+| Contrôle | `python docs/calibration/check_prompts.py` vérifie formats, variables, mode strict et synchronisation des énumérations avec `taxonomy.yaml` et `screening.yaml` (à lancer après toute modification de `prompts/`). |
 | `taxonomy.yaml` | `version`, `admin_levels` (`{ key, label, description, category_groups }`), `categories` (map groupe → liste `{ key, label, description }` ; groupes `etat`, `securite_sociale`, `collectivites`, `transverse` ; clé de catégorie unique dans tout le fichier ; un niveau n'accepte que les catégories de ses `category_groups`), `impact_publics`, `impact_effects`, `idea_kinds`, `confidence_levels`, `legal_vehicles`, `report_reasons`, `contribution_kinds` (listes `{ key, label, description? }`), libellés français. |
 
 ### 13.5 Tests en CI

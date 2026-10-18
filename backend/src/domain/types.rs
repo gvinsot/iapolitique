@@ -60,23 +60,25 @@ text_enum! {
 }
 
 text_enum! {
-    /// Kind of contribution attached to a published idea (§5.4, §5.5).
+    /// Kind of contribution attached to a published idea (§5.4, §5.5). Keys of
+    /// `contribution_kinds` in `prompts/taxonomy.yaml`, plus `doublon` for merged duplicates.
     pub enum ContributionKind {
-        Improvement => "improvement",
+        Improvement => "amelioration",
         Objection => "objection",
         /// A new idea detected as a duplicate and merged into the existing one.
-        Duplicate => "duplicate",
+        Duplicate => "doublon",
     }
 }
 
 text_enum! {
-    /// Reason selected by the author of a report (§5.6).
+    /// Reason selected by the author of a report (§5.6): keys of `report_reasons` in
+    /// `prompts/taxonomy.yaml`.
     pub enum ReportReason {
-        CalculationError => "calculation_error",
-        WrongSource => "wrong_source",
-        ProblematicContent => "problematic_content",
-        Duplicate => "duplicate",
-        Other => "other",
+        CalculationError => "erreur_chiffrage",
+        WrongSource => "source_erronee",
+        ProblematicContent => "contenu_problematique",
+        Duplicate => "doublon",
+        Other => "autre",
     }
 }
 
@@ -238,7 +240,7 @@ mod tests {
     fn report_reasons_and_outcomes() {
         assert_eq!(ReportReason::ALL.len(), 5);
         assert_eq!(
-            "calculation_error".parse::<ReportReason>(),
+            "erreur_chiffrage".parse::<ReportReason>(),
             Ok(ReportReason::CalculationError)
         );
         assert_eq!("hide".parse::<ReviewOutcome>(), Ok(ReviewOutcome::Hide));

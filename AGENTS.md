@@ -517,10 +517,38 @@ commit.
 | worker | `iapolitique worker` | 8082 `/health` interne |
 | migrations | `iapolitique migrate` (aussi exécutées au démarrage de l'api) | — |
 | openapi | `iapolitique openapi` : écrit la spec OpenAPI sur stdout | — |
+| healthcheck | `iapolitique healthcheck [--url URL] [--timeout-secs N]` : GET HTTP, code de sortie 0 si 2xx (URL par défaut `http://127.0.0.1:8080/api/health` ; worker : `--url http://127.0.0.1:8082/health`). L'image runtime n'a ni curl ni wget. | — |
 | frontend | nginx | 80 |
 
 Variables de test : `DATABASE_URL` (utilisée **uniquement** par `#[sqlx::test]` en test). En
 déploiement, la base est lue depuis `DATABASE_CONNECTION_STRING`.
+
+Variables lues par le backend (`backend/src/config.rs`, valeur vide = non définie ; une erreur de
+configuration liste tous les problèmes et empêche le démarrage) :
+
+| Variable | Défaut | Rôle |
+|---|---|---|
+| `DATABASE_CONNECTION_STRING` | **requis** | URL `postgres://` (secret). Une liste d'hôtes `h1,h2` est réduite au premier. |
+| `ADMIN_API_TOKEN`, `ALTCHA_HMAC_KEY` | **requis pour l'api** | secrets, 32 caractères minimum |
+| `MISTRAL_API_KEY` | absent | secret ; sans clé, le worker laisse les jobs IA en file (avertissement) |
+| `BIND_ADDRESS`, `PUBLIC_PORT`, `ADMIN_PORT`, `WORKER_HEALTH_PORT` | `0.0.0.0`, 8080, 8081, 8082 | écoute |
+| `HTTP_REQUEST_TIMEOUT_SECS`, `HTTP_BODY_LIMIT_BYTES` | 30, 65536 | limites HTTP |
+| `TRUSTED_PROXY_HOPS` | 1 | nombre de proxys (Traefik) qui ajoutent à `X-Forwarded-For` |
+| `DATABASE_MAX_CONNECTIONS`, `DATABASE_ACQUIRE_TIMEOUT_SECS` | 10, 5 | pool PostgreSQL |
+| `WORKER_CONCURRENCY`, `WORKER_POLL_INTERVAL_MS`, `JOB_LOCK_TIMEOUT_SECS` | 2, 2000, 300 | file de jobs |
+| `DECISION_SERVICE_URL`, `DECISION_SERVICE_TIMEOUT_SECS` | `http://llamacpp-decision-service:8000/v1/systemone`, 5 | modèle de décision |
+| `MISTRAL_API_BASE_URL` | `https://api.mistral.ai` | surchargeable pour les tests |
+| `MISTRAL_ANALYSIS_MODEL`, `MISTRAL_REVIEW_MODEL`, `MISTRAL_EMBED_MODEL` | `mistral-large-latest`, = analyse, `mistral-embed` | modèles |
+| `MISTRAL_DAILY_BUDGET_EUR` | 5 | plafond journalier (décimal, `.` ou `,`) |
+| `MISTRAL_ANALYSIS_INPUT_EUR_PER_MTOK`, `MISTRAL_ANALYSIS_OUTPUT_EUR_PER_MTOK` | 2, 6 | prix par million de tokens |
+| `MISTRAL_REVIEW_INPUT_EUR_PER_MTOK`, `MISTRAL_REVIEW_OUTPUT_EUR_PER_MTOK` | = analyse | idem pour second avis et revue |
+| `MISTRAL_EMBED_EUR_PER_MTOK`, `MISTRAL_WEB_SEARCH_EUR_PER_CALL` | 0.1, 0.03 | embeddings, recherche web |
+| `DEDUP_SIMILARITY_THRESHOLD` | 0.95 | similarité cosinus de fusion (valeur prudente, à calibrer) |
+| `RATE_LIMIT_IDEAS_PER_HOUR`, `RATE_LIMIT_IDEAS_PER_DAY` | 5, 20 | par empreinte |
+| `RATE_LIMIT_CONTRIBUTIONS_PER_DAY`, `RATE_LIMIT_REPORTS_PER_DAY` | 20, 20 | par empreinte |
+| `PROMPTS_DIR` | `/app/prompts` | prompts versionnés |
+| `RUST_LOG`, `LOG_FORMAT` | `info,sqlx=warn`, `json` | logs (`text` en dev) |
+| `TRAEFIK_HOST`, `ADMIN_HOST` | absents | informatifs |
 
 ### 13.2 Routes HTTP
 

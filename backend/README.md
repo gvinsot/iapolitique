@@ -17,6 +17,11 @@ Configuration : variables d'environnement listées au §13.1 d'`AGENTS.md`
 (`src/config.rs`). Les fichiers de `/run/secrets/` sont chargés dans l'environnement au
 démarrage s'ils n'y sont pas déjà.
 
+Les prompts versionnés (`prompts/`, §13.4 d'`AGENTS.md`) sont lus dans `PROMPTS_DIR`
+(`/app/prompts` dans l'image) et validés au démarrage de l'api et du worker : un fichier
+invalide empêche le démarrage et toutes les erreurs sont listées. En développement natif,
+depuis `backend/` : `PROMPTS_DIR=../prompts`.
+
 ## Organisation
 
 | Chemin | Contenu |
@@ -26,6 +31,7 @@ démarrage s'ils n'y sont pas déjà.
 | `src/db/` | pool PostgreSQL, migrations embarquées (`MIGRATOR`), tests du schéma |
 | `migrations/` | schéma complet (§5 à §8), migrations additives uniquement |
 | `src/jobs/` | file de jobs PostgreSQL, worker, planification quotidienne, purge (§7.3) |
+| `src/ai/` | prompts versionnés (`prompts.rs` : chargement, validation, rendu, méthodologie) |
 | `src/http/` | routeurs public et admin, erreurs JSON unifiées, extracteurs, IP client, OpenAPI |
 | `src/app.rs` | démarrage des processus api et worker, arrêt propre sur SIGTERM |
 

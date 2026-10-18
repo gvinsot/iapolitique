@@ -18,6 +18,7 @@ use super::health::Liveness;
 use super::purge::PurgeHandler;
 use super::schedule::{self, DailySchedule};
 use super::{Job, JobError, JobKind, JobOutcome, queue};
+use crate::ai::prompts::Prompts;
 use crate::config::{Config, WorkerConfig};
 
 /// Future returned by [`JobHandler::handle`].
@@ -29,6 +30,8 @@ pub type HandlerFuture<'a> =
 pub struct JobContext {
     pub pool: PgPool,
     pub config: Arc<Config>,
+    /// Versioned prompts, validated at startup.
+    pub prompts: Arc<Prompts>,
 }
 
 /// Processing of one [`JobKind`].
@@ -446,6 +449,7 @@ mod tests {
         let ctx = JobContext {
             pool: pool.clone(),
             config: test_config(false),
+            prompts: crate::ai::prompts::test_prompts(),
         };
         let worker = Worker::new(
             ctx,
@@ -498,6 +502,7 @@ mod tests {
         let ctx = JobContext {
             pool: pool.clone(),
             config: test_config(false),
+            prompts: crate::ai::prompts::test_prompts(),
         };
         let worker = Worker::new(
             ctx,
@@ -563,6 +568,7 @@ mod tests {
         let ctx = JobContext {
             pool: pool.clone(),
             config: test_config(true),
+            prompts: crate::ai::prompts::test_prompts(),
         };
         let worker = Worker::new(
             ctx,

@@ -8,6 +8,7 @@ use anyhow::Context;
 use tokio::net::TcpListener;
 use tokio::sync::watch;
 
+use crate::ai::prompts::Prompts;
 use crate::config::Config;
 use crate::db;
 use crate::http::{self, AppState};
@@ -31,6 +32,7 @@ pub async fn wait_for_shutdown(mut shutdown: watch::Receiver<bool>) {
 
 /// `iapolitique worker`: job consumer plus its internal health endpoint.
 pub async fn run_worker(config: Config) -> anyhow::Result<()> {
+    let prompts = load_prompts(&config)?;
     let config = Arc::new(config);
     let pool = db::connect(&config.database, "iapolitique-worker").await?;
     // Normally done by the api; harmless here (advisory lock) and avoids a worker running
@@ -61,6 +63,7 @@ pub async fn run_worker(config: Config) -> anyhow::Result<()> {
     let ctx = JobContext {
         pool: pool.clone(),
         config: Arc::clone(&config),
+        prompts,
     };
     let worker = Worker::new(ctx, worker::default_registry(), options, liveness);
     let result = worker.run(shutdown).await;
@@ -68,6 +71,18 @@ pub async fn run_worker(config: Config) -> anyhow::Result<()> {
     health_server.abort();
     pool.close().await;
     result
+}
+
+/// Loads and validates `PROMPTS_DIR` (§13.4): an invalid file prevents the process from starting.
+pub fn load_prompts(config: &Config) -> anyhow::Result<Arc<Prompts>> {
+    let prompts = Prompts::load(&config.prompts_dir)?;
+    tracing::info!(
+        dir = %config.prompts_dir.display(),
+        screening_version = %prompts.screening.version,
+        taxonomy_version = %prompts.taxonomy.version,
+        "prompts loaded"
+    );
+    Ok(Arc::new(prompts))
 }
 
 /// Resolves on SIGTERM (Docker stop) or Ctrl+C.
@@ -106,6 +121,7 @@ pub async fn run_api(config: Config) -> anyhow::Result<()> {
         .admin_api_token
         .clone()
         .context("ADMIN_API_TOKEN is required by the api")?;
+    let prompts = load_prompts(&config)?;
     let config = Arc::new(config);
     let pool = db::connect(&config.database, "iapolitique-api").await?;
     db::migrate(&pool).await?;
@@ -114,6 +130,7 @@ pub async fn run_api(config: Config) -> anyhow::Result<()> {
     let state = AppState {
         pool: pool.clone(),
         config: Arc::clone(&config),
+        prompts,
     };
     let public = http::public_router(state.clone());
     let admin = http::admin_router(state, admin_token);

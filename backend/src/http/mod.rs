@@ -11,6 +11,7 @@ use axum::extract::FromRef;
 use axum::routing::get;
 use sqlx::PgPool;
 
+use crate::ai::prompts::Prompts;
 use crate::config::{Config, Secret};
 
 pub mod admin;
@@ -30,6 +31,8 @@ use error::ApiError;
 pub struct AppState {
     pub pool: PgPool,
     pub config: Arc<Config>,
+    /// Versioned prompts, validated at startup.
+    pub prompts: Arc<Prompts>,
 }
 
 impl FromRef<AppState> for TrustedProxyHops {
@@ -97,6 +100,7 @@ mod tests {
         AppState {
             pool,
             config: Arc::new(config),
+            prompts: crate::ai::prompts::test_prompts(),
         }
     }
 

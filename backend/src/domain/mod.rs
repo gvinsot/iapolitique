@@ -4,6 +4,7 @@
 //!   source of truth for allowed transitions.
 //! - [`scoring`]: composite score (AGENTS.md §6.3).
 //! - [`money`]: euro amounts and AI cost helpers.
+//! - [`redaction`]: masking of personal data in visitor texts (AGENTS.md §7.5).
 //! - [`slug`]: URL slugs from French titles.
 //! - [`validation`]: normalization and validation of user-submitted texts.
 //! - [`types`]: enumerations shared by the database, the API and the AI pipeline.
@@ -12,6 +13,7 @@
 mod text_enum;
 
 pub mod money;
+pub mod redaction;
 pub mod scoring;
 pub mod slug;
 pub mod status;

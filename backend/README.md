@@ -26,7 +26,7 @@ depuis `backend/` : `PROMPTS_DIR=../prompts`.
 
 | Chemin | Contenu |
 |---|---|
-| `src/domain/` | sans I/O : machines à états (`status.rs`), score (`scoring.rs`), montants, slugs, validation des textes, énumérations partagées |
+| `src/domain/` | sans I/O : machines à états (`status.rs`), score (`scoring.rs`), montants, slugs, validation des textes, masquage des données personnelles (`redaction.rs`, §7.5), énumérations partagées |
 | `src/config.rs` | configuration typée, secrets masqués dans les logs |
 | `src/db/` | pool PostgreSQL, migrations embarquées (`MIGRATOR`), tests du schéma |
 | `migrations/` | schéma complet (§5 à §8), migrations additives uniquement |

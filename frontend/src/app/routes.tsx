@@ -11,7 +11,7 @@ import { MethodologyPage } from "@/pages/methodology-page";
 import { NotFoundPage } from "@/pages/not-found-page";
 import { ProposePage } from "@/pages/propose-page";
 import { RouteErrorPage } from "@/pages/route-error-page";
-import { TrackPage } from "@/pages/track-page";
+import { LegacyTrackRedirect, TrackPage } from "@/pages/track-page";
 
 /**
  * Application routes (French paths). Public pages visited first are bundled eagerly; legal and
@@ -31,7 +31,8 @@ export const routes: RouteObject[] = [
           { index: true, Component: HomePage },
           { path: "proposer", Component: ProposePage },
           { path: "idees/:slug", Component: IdeaPage },
-          { path: "suivi/:token", Component: TrackPage },
+          { path: "suivi", Component: TrackPage },
+          { path: "suivi/:token", Component: LegacyTrackRedirect },
           { path: "methodologie", Component: MethodologyPage },
           { path: "a-propos", Component: AboutPage },
           {

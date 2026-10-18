@@ -1,0 +1,130 @@
+import { CheckCircle2Icon, HourglassIcon, type LucideIcon, XCircleIcon } from "lucide-react";
+import { useEffect, useId, useRef } from "react";
+import { Link } from "react-router";
+
+import { paths } from "@/app/paths";
+import { ruleForReasonCode } from "@/lib/rules";
+import type { SubmissionResult } from "@/lib/submission-model";
+import { type TrackedKind, trackingPhase } from "@/lib/tracking-model";
+import { cn } from "@/lib/utils";
+
+import { TrackingLinkReveal } from "./tracking-link-reveal";
+
+interface Outcome {
+  title: string;
+  description: string;
+  icon: LucideIcon;
+  tone: "success" | "progress" | "warning";
+}
+
+const ACCEPTED: Record<TrackedKind, string> = {
+  idea: "Votre idée est conservée, elle va être améliorée et chiffrée par IA. Elle rejoindra le classement dès la fin de son analyse.",
+  contribution:
+    "Votre contribution est acceptée : elle sera prise en compte lors de la prochaine analyse de l’idée.",
+  report:
+    "Accusé de réception : votre signalement est enregistré et sera examiné par IA. La suite donnée apparaîtra sur votre lien de suivi.",
+};
+
+const REJECTED_TITLES: Record<TrackedKind, string> = {
+  idea: "Votre idée n’a pas été retenue",
+  contribution: "Votre contribution n’a pas été retenue",
+  report: "Votre signalement n’a pas été retenu",
+};
+
+function outcomeOf(kind: TrackedKind, result: SubmissionResult): Outcome {
+  const phase = trackingPhase({ kind, status: result.status });
+  if (phase === "rejected") {
+    return {
+      title: REJECTED_TITLES[kind],
+      description:
+        result.reason_message ??
+        "Le filtrage automatique n’a pas retenu ce texte. Le motif est indiqué sur votre lien de suivi.",
+      icon: XCircleIcon,
+      tone: "warning",
+    };
+  }
+  if (phase === "pending" || phase === "second_opinion") {
+    return {
+      title: "En cours de vérification",
+      description:
+        phase === "second_opinion"
+          ? "Le premier filtrage n’a pas permis de trancher : un second avis est en cours. Consultez votre lien de suivi dans quelques minutes."
+          : "Le filtrage est momentanément indisponible : votre texte est bien enregistré et sera examiné automatiquement. Consultez votre lien de suivi un peu plus tard.",
+      icon: HourglassIcon,
+      tone: "progress",
+    };
+  }
+  return {
+    title: kind === "report" ? "Signalement reçu" : "Merci, c’est enregistré",
+    description: ACCEPTED[kind],
+    icon: CheckCircle2Icon,
+    tone: "success",
+  };
+}
+
+const toneClasses: Record<Outcome["tone"], string> = {
+  success: "border-primary/30 bg-accent text-accent-foreground",
+  progress: "border-warning/40 bg-warning-surface text-warning",
+  warning: "border-warning/40 bg-warning-surface text-warning",
+};
+
+interface SubmissionOutcomeProps {
+  kind: TrackedKind;
+  result: SubmissionResult;
+  /** Reminder stored with the link if the visitor asks to remember it. */
+  linkLabel: string;
+}
+
+/**
+ * Immediate answer after a submission (AGENTS.md §5.2): the screening outcome, the refusal
+ * reason with an invitation to rephrase, and the tracking link shown this once. Focus moves to
+ * the heading so screen reader users hear the outcome.
+ */
+export function SubmissionOutcome({ kind, result, linkLabel }: SubmissionOutcomeProps) {
+  const headingId = useId();
+  const headingRef = useRef<HTMLHeadingElement>(null);
+  const outcome = outcomeOf(kind, result);
+  const rejected = trackingPhase({ kind, status: result.status }) === "rejected";
+  const rule = rejected ? ruleForReasonCode(result.reason_code) : null;
+
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, []);
+
+  return (
+    <div className="space-y-6">
+      <section
+        aria-labelledby={headingId}
+        className={cn("space-y-3 rounded-lg border p-4 sm:p-5", toneClasses[outcome.tone])}
+      >
+        <h2
+          id={headingId}
+          ref={headingRef}
+          tabIndex={-1}
+          className="flex items-center gap-2 text-xl font-semibold outline-none"
+        >
+          <outcome.icon className="size-5 shrink-0" aria-hidden="true" />
+          {outcome.title}
+        </h2>
+        <p className="text-pretty">{outcome.description}</p>
+        {rejected ? (
+          <p className="text-sm">
+            Décision prise automatiquement par une IA.{" "}
+            {rule ? (
+              <Link
+                to={`${paths.terms}#${rule.anchor}`}
+                className="font-medium underline underline-offset-4 hover:no-underline"
+              >
+                Règle {rule.number} : {rule.title}
+              </Link>
+            ) : null}
+            {kind === "idea"
+              ? " Vous pouvez reformuler votre idée et l’envoyer à nouveau, ou demander un réexamen humain depuis votre lien de suivi."
+              : " Vous pouvez demander un réexamen humain depuis votre lien de suivi."}
+          </p>
+        ) : null}
+      </section>
+      <TrackingLinkReveal token={result.tracking_token} label={linkLabel} />
+    </div>
+  );
+}

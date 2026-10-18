@@ -58,8 +58,14 @@ src/
   toast d'erreur sauf `meta: { errorToast: false }`.
 - **Aucune ressource tierce** : ni CDN, ni police distante, ni analytics, ni cookie. La CSP de
   nginx (`connect-src 'self'`, `script-src 'self'`) bloquerait de toute façon ces appels.
-- **Stockage navigateur** : uniquement des préférences (thème en `localStorage`, jeton admin en
-  `sessionStorage`), toujours dans un `try/catch`.
+- **Stockage navigateur** : uniquement le thème (`localStorage`), les liens de suivi que le
+  visiteur demande explicitement à mémoriser (`localStorage`, case « se souvenir sur cet
+  appareil », jamais cochée par défaut) et le jeton admin (`sessionStorage`), toujours dans un
+  `try/catch`. Tout nouvel usage est décrit dans `/confidentialite`.
+- **Lien de suivi** : le jeton est toujours dans le fragment (`/suivi#<jeton>`) et n'est envoyé à
+  l'API que dans le corps d'un `POST` ; l'ancien format `/suivi/<jeton>` est redirigé côté client.
+- **Endpoints sans types générés** (`/api/legal`, `/api/track…`, dépôts) : `src/api/json-fetch.ts`
+  avec validation à l'exécution, à remplacer par `apiClient` quand la spec les contient.
 - **Accessibilité** : un seul `<h1>` par page, `useDocumentTitle` sur chaque page, libellés sur
   tous les champs, contrastes vérifiés par `src/styles/contrast.test.ts`.
 - **Textes** : interface en français (apostrophe typographique ’), code et commentaires en anglais.

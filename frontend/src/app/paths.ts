@@ -1,9 +1,12 @@
+import { TRACKING_PATH } from "@/lib/tracking-token";
+
 /** Public URLs of the application (French paths, see AGENTS.md). Never hard-code them elsewhere. */
 export const paths = {
   home: "/",
   propose: "/proposer",
   idea: (slug: string) => `/idees/${encodeURIComponent(slug)}`,
-  track: (token: string) => `/suivi/${encodeURIComponent(token)}`,
+  /** Tracking page; the token goes in the fragment only (see lib/tracking-token.ts). */
+  track: TRACKING_PATH,
   methodology: "/methodologie",
   about: "/a-propos",
   legalNotice: "/mentions-legales",

@@ -1,11 +1,17 @@
-import { CheckIcon, XIcon } from "lucide-react";
-import { toast } from "sonner";
+import { useMutation } from "@tanstack/react-query";
+import { CheckIcon, PlusIcon, TriangleAlertIcon, XIcon } from "lucide-react";
 
+import { errorMessage } from "@/api/errors";
+import { submitIdea } from "@/api/submissions";
 import { PageHeader } from "@/components/common/page-header";
 import { ProposeForm } from "@/components/ideas/propose-form";
 import { Container } from "@/components/layout/container";
+import { SubmissionOutcome } from "@/components/tracking/submission-outcome";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDocumentTitle } from "@/hooks/use-document-title";
+import { formatDate } from "@/lib/format";
 
 const dos = [
   "Viser une dépense ou une recette d’une administration publique française (État, sécurité sociale, collectivités).",
@@ -21,6 +27,12 @@ const donts = [
 
 export function ProposePage() {
   useDocumentTitle("Proposer une idée");
+  const submission = useMutation({
+    mutationFn: submitIdea,
+    // Shown inline next to the form, which keeps its content for a retry.
+    meta: { errorToast: false },
+  });
+  const result = submission.data;
 
   return (
     <>
@@ -30,14 +42,45 @@ export function ProposePage() {
         description="Une mesure pour réduire une dépense ou augmenter une recette publique ? Décrivez-la : elle sera vérifiée en quelques secondes, puis améliorée et chiffrée par IA si elle est retenue."
       />
       <Container className="grid gap-8 py-10 lg:grid-cols-[2fr_1fr]">
-        <section aria-label="Formulaire de dépôt">
-          <ProposeForm
-            onSubmit={() => {
-              toast.info("Le dépôt d’idées ouvrira très prochainement.", {
-                description: "Votre texte n’a pas été envoyé. Merci de votre intérêt !",
-              });
-            }}
-          />
+        <section aria-label="Formulaire de dépôt" className="min-w-0 space-y-6">
+          {result ? (
+            <>
+              <SubmissionOutcome
+                kind="idea"
+                result={result}
+                linkLabel={`Idée envoyée le ${formatDate(new Date().toISOString())}`}
+              />
+              <p className="text-sm text-muted-foreground">
+                Une fois cette page quittée, le lien de suivi ne sera plus affiché.
+              </p>
+              <Button
+                type="button"
+                variant="outline"
+                onClick={() => {
+                  submission.reset();
+                }}
+              >
+                <PlusIcon aria-hidden="true" />
+                J’ai conservé mon lien : proposer une autre idée
+              </Button>
+            </>
+          ) : (
+            <>
+              {submission.isError ? (
+                <Alert variant="destructive" role="alert">
+                  <TriangleAlertIcon aria-hidden="true" />
+                  <AlertTitle>Votre idée n’a pas pu être envoyée</AlertTitle>
+                  <AlertDescription>
+                    <p>{errorMessage(submission.error)}</p>
+                  </AlertDescription>
+                </Alert>
+              ) : null}
+              <ProposeForm
+                onSubmit={(values) => submission.mutateAsync(values).then(() => undefined)}
+                submitting={submission.isPending}
+              />
+            </>
+          )}
         </section>
 
         <aside aria-label="Conseils" className="space-y-4">

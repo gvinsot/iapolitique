@@ -563,3 +563,43 @@ pub async fn get_json(
     let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
     (status, headers, value)
 }
+
+/// Calls the admin API of `app` (port 8081 router) with the admin token: status and JSON body
+/// (`Null` when empty). `body` is sent as JSON when given.
+pub async fn admin_call(
+    app: &TestApp,
+    method: axum::http::Method,
+    uri: &str,
+    body: Option<&Value>,
+) -> (StatusCode, Value) {
+    let router = crate::http::admin_router(app.state.clone(), Secret::new(SECRET));
+    let mut request = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("authorization", format!("Bearer {SECRET}"));
+    let body = match body {
+        Some(body) => {
+            request = request.header("content-type", "application/json");
+            Body::from(body.to_string())
+        }
+        None => Body::empty(),
+    };
+    let response = router.oneshot(request.body(body).unwrap()).await.unwrap();
+    let status = response.status();
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let value = serde_json::from_slice(&bytes).unwrap_or(Value::Null);
+    (status, value)
+}
+
+/// GET on the admin API with the token.
+pub async fn admin_get(app: &TestApp, uri: &str) -> (StatusCode, Value) {
+    admin_call(app, axum::http::Method::GET, uri, None).await
+}
+
+/// Actions recorded in `admin_actions`: (action, target id), oldest first.
+pub async fn admin_actions(pool: &PgPool) -> Vec<(String, Option<String>)> {
+    sqlx::query_as("SELECT action, target_id FROM admin_actions ORDER BY id")
+        .fetch_all(pool)
+        .await
+        .unwrap()
+}

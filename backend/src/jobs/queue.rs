@@ -8,7 +8,7 @@
 use std::time::Duration;
 
 use chrono::{DateTime, Utc};
-use sqlx::{PgExecutor, PgPool};
+use sqlx::{PgConnection, PgExecutor, PgPool};
 
 use super::{Job, JobKind, JobStatus, NewJob};
 
@@ -270,6 +270,125 @@ pub async fn counts(pool: &PgPool) -> Result<Vec<QueueCount>, sqlx::Error> {
     )
     .fetch_all(pool)
     .await
+}
+
+/// A job as listed by the admin.
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+pub struct JobRow {
+    pub id: i64,
+    pub kind: String,
+    pub status: String,
+    pub priority: i16,
+    pub attempts: i32,
+    pub max_attempts: i32,
+    pub payload: serde_json::Value,
+    pub dedupe_key: Option<String>,
+    pub run_after: DateTime<Utc>,
+    pub last_error: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub updated_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+/// Jobs of a status and/or kind, most recent first, with their total.
+pub async fn list(
+    pool: &PgPool,
+    status: Option<JobStatus>,
+    kind: Option<JobKind>,
+    limit: i64,
+    offset: i64,
+) -> Result<(Vec<JobRow>, i64), sqlx::Error> {
+    let status = status.map(JobStatus::as_str);
+    let kind = kind.map(JobKind::as_str);
+    let total: i64 = sqlx::query_scalar(
+        "SELECT count(*) FROM jobs
+         WHERE ($1::text IS NULL OR status = $1) AND ($2::text IS NULL OR kind = $2)",
+    )
+    .bind(status)
+    .bind(kind)
+    .fetch_one(pool)
+    .await?;
+    let rows = sqlx::query_as(const_format_jobs::LIST)
+        .bind(status)
+        .bind(kind)
+        .bind(limit)
+        .bind(offset)
+        .fetch_all(pool)
+        .await?;
+    Ok((rows, total))
+}
+
+/// One job, `None` when it does not exist.
+pub async fn get<'e>(
+    executor: impl PgExecutor<'e>,
+    id: i64,
+) -> Result<Option<JobRow>, sqlx::Error> {
+    sqlx::query_as(const_format_jobs::GET)
+        .bind(id)
+        .fetch_optional(executor)
+        .await
+}
+
+/// Why a dead job could not be queued again.
+#[derive(Debug, thiserror::Error)]
+pub enum RetryError {
+    #[error("job not found")]
+    NotFound,
+    /// Only `dead` jobs are retried by hand.
+    #[error("job is not dead")]
+    NotDead,
+    /// Another job with the same dedupe key is queued or running.
+    #[error("an equivalent job is already queued")]
+    Duplicate,
+    #[error("database error: {0}")]
+    Database(#[from] sqlx::Error),
+}
+
+/// Queues a dead job again, due now, with its attempts reset (its last error is kept). On
+/// [`RetryError::Duplicate`] the transaction is aborted: the caller rolls it back.
+pub async fn retry_dead(conn: &mut PgConnection, id: i64) -> Result<JobRow, RetryError> {
+    let status: Option<String> =
+        sqlx::query_scalar("SELECT status FROM jobs WHERE id = $1 FOR UPDATE")
+            .bind(id)
+            .fetch_optional(&mut *conn)
+            .await?;
+    match status.as_deref() {
+        None => return Err(RetryError::NotFound),
+        Some(status) if status != JobStatus::Dead.as_str() => return Err(RetryError::NotDead),
+        Some(_) => {}
+    }
+    match sqlx::query_as(const_format_jobs::RETRY)
+        .bind(id)
+        .fetch_one(&mut *conn)
+        .await
+    {
+        Ok(row) => Ok(row),
+        Err(sqlx::Error::Database(err)) if err.is_unique_violation() => Err(RetryError::Duplicate),
+        Err(err) => Err(err.into()),
+    }
+}
+
+/// Constant SQL of the admin operations (built at compile time, §14.1).
+mod const_format_jobs {
+    macro_rules! columns {
+        () => {
+            "id, kind, status, priority, attempts, max_attempts, payload, dedupe_key, run_after,
+             last_error, created_at, updated_at, finished_at"
+        };
+    }
+    pub const LIST: &str = concat!(
+        "SELECT ",
+        columns!(),
+        " FROM jobs WHERE ($1::text IS NULL OR status = $1) AND ($2::text IS NULL OR kind = $2)
+          ORDER BY id DESC LIMIT $3 OFFSET $4"
+    );
+    pub const GET: &str = concat!("SELECT ", columns!(), " FROM jobs WHERE id = $1");
+    pub const RETRY: &str = concat!(
+        "UPDATE jobs SET status = 'queued', attempts = 0, run_after = now(), finished_at = NULL,
+             locked_at = NULL, locked_by = NULL
+         WHERE id = $1 AND status = 'dead' RETURNING ",
+        columns!()
+    );
 }
 
 #[cfg(test)]

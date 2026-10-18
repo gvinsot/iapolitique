@@ -8,8 +8,10 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::FromRef;
+use axum::http::{HeaderName, HeaderValue, header};
 use axum::routing::{get, post};
 use sqlx::PgPool;
+use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::ai::decision::Screener;
 use crate::ai::mistral::MistralClient;
@@ -30,6 +32,7 @@ pub mod ideas;
 pub mod legal;
 pub mod middleware;
 pub mod openapi;
+pub mod pagination;
 pub mod reference;
 pub mod submissions;
 pub mod tracking;
@@ -117,12 +120,20 @@ pub fn public_router(state: AppState) -> Router {
 /// Admin API (port 8081): health probes and the OpenAPI spec are open (healthchecks), every
 /// `/api/admin/…` route requires the bearer token.
 pub fn admin_router(state: AppState, token: Secret) -> Router {
-    let protected = Router::new()
-        .route("/session", get(admin::session))
+    let protected = admin::routes()
         .fallback(not_found)
         .layer(axum::middleware::from_fn_with_state(
             AdminToken::new(token),
             admin::require_admin,
+        ))
+        // Never cached nor indexed, refusals included (§14.2).
+        .layer(SetResponseHeaderLayer::overriding(
+            header::CACHE_CONTROL,
+            cache::NO_STORE,
+        ))
+        .layer(SetResponseHeaderLayer::overriding(
+            HeaderName::from_static("x-robots-tag"),
+            HeaderValue::from_static("noindex, nofollow"),
         ));
     let router = system_routes()
         .route("/api/openapi.json", get(openapi::openapi_json_full))
@@ -137,7 +148,7 @@ mod tests {
     use super::*;
     use crate::config::Role;
     use axum::body::Body;
-    use axum::http::{Request, StatusCode, header};
+    use axum::http::{Request, StatusCode};
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 
@@ -269,6 +280,16 @@ mod tests {
             call(&app, admin_req("/api/admin/session", Some(&bearer))).await,
             (StatusCode::OK, serde_json::json!({ "authenticated": true }))
         );
+        // Admin answers, refusals included, are never cached nor indexed.
+        for authorization in [None, Some(bearer.as_str())] {
+            let response = app
+                .clone()
+                .oneshot(admin_req("/api/admin/session", authorization))
+                .await
+                .unwrap();
+            assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
+            assert_eq!(response.headers()["x-robots-tag"], "noindex, nofollow");
+        }
         // Unknown admin routes: 401 without token, 404 with it.
         let (status, _) = call(&app, admin_req("/api/admin/unknown", None)).await;
         assert_eq!(status, StatusCode::UNAUTHORIZED);

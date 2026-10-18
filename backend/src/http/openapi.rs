@@ -3,11 +3,18 @@
 //! test fails when the committed file is outdated. Regenerate with
 //! `cargo run -- openapi --output ../frontend/src/api/openapi.json`.
 
+use std::collections::BTreeSet;
+
 use axum::Json;
 use axum::response::IntoResponse;
 use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
+use super::admin::dashboard::{
+    self as admin_dashboard, AdminAiCosts, AdminDashboard, AdminJobCount, AdminJobSummary,
+    AdminPurposeCost, AdminQueues, AdminScreeningRates,
+};
+use super::admin::jobs::{self as admin_jobs, AdminJob, AdminJobPage};
 use super::admin::{self, AdminSession};
 use super::antispam;
 use super::error::{ErrorBody, ErrorDetail};
@@ -41,6 +48,7 @@ use crate::domain::types::{
     AdminLevel, Confidence, ContributionKind, IdeaKind, ImpactDirection, LegalVehicle,
     ReportReason, ReviewOutcome, ReviewRequestStatus, TargetKind,
 };
+use crate::jobs::{JobKind, JobStatus};
 use crate::moderation::statement::{Measure, StatementOfReasons};
 
 /// Prefix of the admin routes, removed from the spec served on the public port.
@@ -75,7 +83,10 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         tracking::track,
         tracking::delete,
         tracking::request_review,
-        admin::session
+        admin::session,
+        admin_dashboard::dashboard,
+        admin_jobs::list,
+        admin_jobs::retry
     ),
     components(schemas(
         ErrorBody,
@@ -144,7 +155,18 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         KeyCount,
         LegalInfo,
         LegalPublisher,
-        LegalPages
+        LegalPages,
+        AdminDashboard,
+        AdminJobSummary,
+        AdminJobCount,
+        AdminScreeningRates,
+        AdminAiCosts,
+        AdminPurposeCost,
+        AdminQueues,
+        AdminJob,
+        AdminJobPage,
+        JobKind,
+        JobStatus
     )),
     modifiers(&AdminSecurity),
     tags(
@@ -183,15 +205,56 @@ pub fn full_spec() -> utoipa::openapi::OpenApi {
     ApiDoc::openapi()
 }
 
-/// The specification served on the public port: admin routes and scheme removed.
+/// Adds to `out` the schema names referenced (`$ref`) anywhere in `value`.
+fn collect_refs(value: &serde_json::Value, out: &mut BTreeSet<String>) {
+    match value {
+        serde_json::Value::Object(map) => {
+            if let Some(name) = map
+                .get("$ref")
+                .and_then(serde_json::Value::as_str)
+                .and_then(|r| r.strip_prefix("#/components/schemas/"))
+            {
+                out.insert(name.to_owned());
+            }
+            map.values().for_each(|v| collect_refs(v, out));
+        }
+        serde_json::Value::Array(items) => items.iter().for_each(|v| collect_refs(v, out)),
+        _ => {}
+    }
+}
+
+/// Schemas reachable from the paths of `spec`.
+fn reachable_schemas(spec: &utoipa::openapi::OpenApi) -> BTreeSet<String> {
+    let value = serde_json::to_value(spec).expect("the OpenAPI spec serializes");
+    let schemas = &value["components"]["schemas"];
+    let mut reachable = BTreeSet::new();
+    collect_refs(&value["paths"], &mut reachable);
+    let mut pending: Vec<String> = reachable.iter().cloned().collect();
+    while let Some(name) = pending.pop() {
+        let mut found = BTreeSet::new();
+        collect_refs(&schemas[name.as_str()], &mut found);
+        for name in found {
+            if reachable.insert(name.clone()) {
+                pending.push(name);
+            }
+        }
+    }
+    reachable
+}
+
+/// The specification served on the public port: admin routes, their schemas and the admin
+/// scheme removed.
 pub fn public_spec() -> utoipa::openapi::OpenApi {
     let mut spec = full_spec();
     spec.paths
         .paths
         .retain(|path, _| !path.starts_with(ADMIN_PREFIX));
+    let reachable = reachable_schemas(&spec);
     if let Some(components) = spec.components.as_mut() {
         components.security_schemes.clear();
-        components.schemas.remove("AdminSession");
+        components
+            .schemas
+            .retain(|name, _| reachable.contains(name));
     }
     spec.tags = spec
         .tags
@@ -282,6 +345,9 @@ mod tests {
             "/api/track/delete",
             "/api/track/review-request",
             "/api/admin/session",
+            "/api/admin/dashboard",
+            "/api/admin/jobs",
+            "/api/admin/jobs/{id}/retry",
         ] {
             assert!(paths.contains(&path), "{path} missing");
         }
@@ -305,5 +371,17 @@ mod tests {
         assert!(components.schemas.contains_key("ErrorBody"));
         let json = to_json(&spec);
         assert!(!json.contains("admin_token"));
+        // Admin-only schemas are not published on the public port.
+        for name in [
+            "AdminSession",
+            "AdminDashboard",
+            "AdminJob",
+            "AdminJobPage",
+            "JobStatus",
+        ] {
+            assert!(!components.schemas.contains_key(name), "{name}");
+        }
+        assert!(components.schemas.contains_key("AdminLevel"));
+        assert!(components.schemas.contains_key("IdeaDetail"));
     }
 }

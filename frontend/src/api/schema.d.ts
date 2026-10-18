@@ -4,6 +4,60 @@
  */
 
 export interface paths {
+    "/api/admin/dashboard": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Dashboard of the administrator. */
+        get: operations["getAdminDashboard"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/jobs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Jobs of the queue, filtered by status and kind. */
+        get: operations["listAdminJobs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/jobs/{id}/retry": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Queues a dead job again (attempts reset, due now). A dead screening or second opinion
+         *     leaves its text waiting: retrying it resumes the pipeline.
+         */
+        post: operations["retryAdminJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/session": {
         parameters: {
             query?: never;
@@ -374,6 +428,90 @@ export interface paths {
 export type webhooks = Record<string, never>;
 export interface components {
     schemas: {
+        /** @description Estimated AI costs (euros) of the Paris day and month, and the daily budget. */
+        AdminAiCosts: {
+            /** Format: double */
+            today_eur: number;
+            /** Format: double */
+            month_eur: number;
+            /** Format: double */
+            daily_budget_eur: number;
+            /** Format: double */
+            remaining_today_eur: number;
+            /** @description Mistral jobs wait for the next reset. */
+            budget_reached: boolean;
+            /**
+             * Format: date-time
+             * @description Next Paris midnight.
+             */
+            next_reset: string;
+            by_purpose: components["schemas"]["AdminPurposeCost"][];
+        };
+        AdminDashboard: {
+            jobs: components["schemas"]["AdminJobSummary"];
+            /** Format: int32 */
+            screening_window_days: number;
+            screening: components["schemas"]["AdminScreeningRates"][];
+            ai_costs: components["schemas"]["AdminAiCosts"];
+            queues: components["schemas"]["AdminQueues"];
+        };
+        /** @description A job of the queue. Payloads and errors hold internal identifiers only (§7.1). */
+        AdminJob: {
+            /** Format: int64 */
+            id: number;
+            kind: string;
+            status: string;
+            /** Format: int32 */
+            priority: number;
+            /** Format: int32 */
+            attempts: number;
+            /** Format: int32 */
+            max_attempts: number;
+            payload: unknown;
+            dedupe_key: string | null;
+            /** Format: date-time */
+            run_after: string;
+            last_error: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            updated_at: string;
+            /** Format: date-time */
+            finished_at: string | null;
+        };
+        /** @description Jobs of one kind in one status. */
+        AdminJobCount: {
+            kind: string;
+            status: string;
+            /** Format: int64 */
+            count: number;
+        };
+        /** @description A page of jobs, most recent first. */
+        AdminJobPage: {
+            items: components["schemas"]["AdminJob"][];
+            /** Format: int32 */
+            page: number;
+            /** Format: int32 */
+            per_page: number;
+            /**
+             * Format: int64
+             * @description Items matching the filters, all pages included.
+             */
+            total: number;
+            /** Format: int32 */
+            total_pages: number;
+        };
+        AdminJobSummary: {
+            /** Format: int64 */
+            queued: number;
+            /** Format: int64 */
+            running: number;
+            /** Format: int64 */
+            succeeded: number;
+            /** Format: int64 */
+            dead: number;
+            by_kind: components["schemas"]["AdminJobCount"][];
+        };
         /**
          * @description Administrative level targeted by an idea (§6.2 `admin_level`).
          * @enum {string}
@@ -385,6 +523,79 @@ export interface components {
             label: string;
             description: string;
             category_groups: string[];
+        };
+        /** @description AI calls and estimated costs of one purpose. */
+        AdminPurposeCost: {
+            /**
+             * @description `screening`, `second_opinion`, `analysis_research`, `analysis_structuring`,
+             *     `embedding` or `report_review`.
+             */
+            purpose: string;
+            /** @description `decision_service` or `mistral`. */
+            provider: string;
+            /** Format: int64 */
+            calls_today: number;
+            /** Format: int64 */
+            calls_month: number;
+            /** Format: double */
+            today_eur: number;
+            /** Format: double */
+            month_eur: number;
+        };
+        /** @description What waits for the administrator. */
+        AdminQueues: {
+            /** Format: int64 */
+            escalations_pending: number;
+            /** Format: int64 */
+            review_requests_pending: number;
+            /** Format: int64 */
+            ideas_analysis_failed: number;
+            /** Format: int64 */
+            texts_second_opinion: number;
+            /**
+             * Format: int64
+             * @description Texts still waiting for the decision service after an hour.
+             */
+            texts_submitted_stale: number;
+            /** Format: int64 */
+            ideas_hidden: number;
+            /** Format: int64 */
+            reports_awaiting_review: number;
+            /** Format: int64 */
+            jobs_dead: number;
+        };
+        /**
+         * @description Screening outcomes of one kind of text over the window. Rates are shares of the
+         *     screenings that reached the decision model (`null` without any).
+         */
+        AdminScreeningRates: {
+            /** @description `idea`, `contribution` or `report`. */
+            kind: string;
+            /** Format: int64 */
+            total: number;
+            /** Format: int64 */
+            accepted: number;
+            /** Format: int64 */
+            rejected: number;
+            /** Format: int64 */
+            gray_zone: number;
+            /**
+             * Format: int64
+             * @description Decision service failures (retried by a job).
+             */
+            errors: number;
+            /** Format: double */
+            acceptance_rate: number | null;
+            /** Format: double */
+            rejection_rate: number | null;
+            /** Format: double */
+            gray_zone_rate: number | null;
+            /** Format: int64 */
+            second_opinion_accept: number;
+            /** Format: int64 */
+            second_opinion_reject: number;
+            /** Format: int64 */
+            labeled: number;
         };
         AdminSession: {
             authenticated: boolean;
@@ -719,6 +930,16 @@ export interface components {
          * @enum {string}
          */
         ImpactDirection: "Positive" | "Neutral" | "Negative" | "Uncertain";
+        /**
+         * @description Every kind of job. Handlers are registered per kind in [`worker::Registry`].
+         * @enum {string}
+         */
+        JobKind: "ScreenIdea" | "SecondOpinion" | "DedupIdea" | "AnalyzeIdea" | "ScreenContribution" | "ScreenReport" | "ReviewReports" | "GenerateExports" | "Purge";
+        /**
+         * @description Job status (`jobs.status`).
+         * @enum {string}
+         */
+        JobStatus: "Queued" | "Running" | "Succeeded" | "Dead";
         /** @description Number of published ideas of one key (administrative level or kind). */
         KeyCount: {
             key: string;
@@ -1167,8 +1388,17 @@ export interface components {
     headers: never;
     pathItems: never;
 }
+export type SchemaAdminAiCosts = components['schemas']['AdminAiCosts'];
+export type SchemaAdminDashboard = components['schemas']['AdminDashboard'];
+export type SchemaAdminJob = components['schemas']['AdminJob'];
+export type SchemaAdminJobCount = components['schemas']['AdminJobCount'];
+export type SchemaAdminJobPage = components['schemas']['AdminJobPage'];
+export type SchemaAdminJobSummary = components['schemas']['AdminJobSummary'];
 export type SchemaAdminLevel = components['schemas']['AdminLevel'];
 export type SchemaAdminLevelItem = components['schemas']['AdminLevelItem'];
+export type SchemaAdminPurposeCost = components['schemas']['AdminPurposeCost'];
+export type SchemaAdminQueues = components['schemas']['AdminQueues'];
+export type SchemaAdminScreeningRates = components['schemas']['AdminScreeningRates'];
 export type SchemaAdminSession = components['schemas']['AdminSession'];
 export type SchemaAiMarking = components['schemas']['AiMarking'];
 export type SchemaAltchaChallenge = components['schemas']['AltchaChallenge'];
@@ -1197,6 +1427,8 @@ export type SchemaIdeaSort = components['schemas']['IdeaSort'];
 export type SchemaIdeaSubmission = components['schemas']['IdeaSubmission'];
 export type SchemaImpactAssessment = components['schemas']['ImpactAssessment'];
 export type SchemaImpactDirection = components['schemas']['ImpactDirection'];
+export type SchemaJobKind = components['schemas']['JobKind'];
+export type SchemaJobStatus = components['schemas']['JobStatus'];
 export type SchemaKeyCount = components['schemas']['KeyCount'];
 export type SchemaLegalInfo = components['schemas']['LegalInfo'];
 export type SchemaLegalPages = components['schemas']['LegalPages'];
@@ -1236,6 +1468,128 @@ export type SchemaTrackingRequest = components['schemas']['TrackingRequest'];
 export type SchemaYesNoLabels = components['schemas']['YesNoLabels'];
 export type $defs = Record<string, never>;
 export interface operations {
+    getAdminDashboard: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Tableau de bord. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminDashboard"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    listAdminJobs: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["JobStatus"];
+                kind?: components["schemas"]["JobKind"];
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Une page de jobs. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminJobPage"];
+                };
+            };
+            /** @description Paramètre invalide. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    retryAdminJob: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant du job */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Job remis en file. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminJob"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Job inconnu (`job_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Job non mort (`job_not_dead`) ou job équivalent déjà en file (`job_already_queued`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     getAdminSession: {
         parameters: {
             query?: never;

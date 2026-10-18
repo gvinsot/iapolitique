@@ -815,12 +815,21 @@ API publique (port 8080) :
 | GET | `/api/exports/ideas.json`, `/api/exports/ideas.csv`, `/api/exports/LICENSE`, `/api/exports/metadata.json` | exports open data : dernière génération de chaque format de la table `exports` (`json`, `csv`, `license`, `metadata`, §7.4), `Content-Type` de `ExportFormat::content_type`, `Content-Disposition: attachment` avec un nom fixe daté du jour de génération (`iapolitique-ideas-AAAA-MM-JJ.json`, `….csv`, `iapolitique-LICENSE-AAAA-MM-JJ.txt`, `iapolitique-metadata-AAAA-MM-JJ.json`), `ETag` (SHA-256 du contenu, `If-None-Match` → `304`), `Last-Modified` ; avant la première génération : `503 exports_unavailable` avec `Retry-After: 300` |
 | GET | `/api/openapi.json` | spec OpenAPI |
 
-API admin (port 8081, `Authorization: Bearer $ADMIN_API_TOKEN`), sous `/api/admin/…` :
-tableau de bord, file de jobs, coûts IA, idées masquées et signalements, masquer/republier,
-relancer une analyse, décisions de filtrage avec étiquetage (et export JSONL pour
-`docs/calibration/bench_screening.py`), réglages des seuils, file d'escalade, demandes de
-réexamen humain, publication d'un droit de réponse.
-`GET /api/admin/session` vérifie le jeton (`200 { "authenticated": true }` ou `401`). Le port
+API admin (port 8081, `Authorization: Bearer $ADMIN_API_TOKEN`), sous `/api/admin/…`
+(`http/admin/`). Toute réponse porte `Cache-Control: no-store` et
+`X-Robots-Tag: noindex, nofollow` ; toute mutation est journalisée dans `admin_actions` (nom
+d'action pointé, cible, détails sans texte de visiteur) dans la transaction qui l'applique ;
+les listes sont paginées (`page`, `per_page` ≤ 50 → `{ items, page, per_page, total,
+total_pages }`) et refusent les paramètres inconnus (`400 invalid_query`).
+
+| Méthode | Route | Rôle |
+|---|---|---|
+| GET | `/api/admin/session` | vérifie le jeton (`200 { "authenticated": true }` ou `401`) |
+| GET | `/api/admin/dashboard` | `{ jobs: { queued, running, succeeded, dead, by_kind: [{ kind, status, count }] }, screening_window_days (30), screening: [{ kind, total, accepted, rejected, gray_zone, errors, acceptance_rate, rejection_rate, gray_zone_rate, second_opinion_accept, second_opinion_reject, labeled }], ai_costs: { today_eur, month_eur, daily_budget_eur, remaining_today_eur, budget_reached, next_reset, by_purpose: [{ purpose, provider, calls_today, calls_month, today_eur, month_eur }] }, queues: { escalations_pending, review_requests_pending, ideas_analysis_failed, texts_second_opinion, texts_submitted_stale, ideas_hidden, reports_awaiting_review, jobs_dead } }` (jour et mois Europe/Paris) |
+| GET | `/api/admin/jobs` | jobs, filtres `status`, `kind` ; plus récents d'abord |
+| POST | `/api/admin/jobs/{id}/retry` | remet en file un job `dead` (tentatives remises à zéro) → `200` job ; `404 job_not_found`, `409 job_not_dead` / `job_already_queued` (même clé de dédoublonnage en file) ; action `job.retry` |
+
+Le port
 admin sert aussi, sans jeton, `/api/health`, `/api/ready` et `/api/openapi.json` (spec complète ;
 celle du port public omet les routes admin). Le worker répond sur `/health` (et `/api/health`)
 du port 8082 : `503` si sa boucle est bloquée.

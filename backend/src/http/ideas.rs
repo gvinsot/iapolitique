@@ -20,6 +20,7 @@ use super::AppState;
 use super::cache;
 use super::error::{ApiError, ErrorBody};
 use super::extract::{ApiPath, ApiQuery};
+use super::pagination::PageRequest;
 use crate::ai::prompts::Taxonomy;
 use crate::db::portal::{self, AnalysisRow, IdeaFilter, IdeaSort, ListedIdea, SearchMode};
 use crate::domain::slug::is_valid_slug;
@@ -33,12 +34,6 @@ use crate::jobs::exports::{
     AI_NOTICE, AI_PROVIDER, ATTRIBUTION, DEFAULT_PUBLIC_HOST, canonical_url,
 };
 
-/// Default number of ideas per page.
-pub const DEFAULT_PER_PAGE: u32 = 20;
-/// Largest page size (§14.1).
-pub const MAX_PER_PAGE: u32 = 50;
-/// Largest page number accepted (far above any real ranking).
-pub const MAX_PAGE: u32 = 10_000;
 /// Longest search text, in characters.
 pub const SEARCH_MAX_CHARS: usize = 200;
 /// Label of the score: computed, never an opinion poll (§7.5).
@@ -55,7 +50,7 @@ fn idea_not_found() -> ApiError {
     )
 }
 
-fn invalid_query(message: &'static str) -> ApiError {
+pub(crate) fn invalid_query(message: &'static str) -> ApiError {
     ApiError::bad_request("invalid_query", message)
 }
 
@@ -165,47 +160,8 @@ pub struct IdeaListQuery {
     pub per_page: Option<u32>,
 }
 
-/// Validated page and page size.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub struct PageRequest {
-    pub page: u32,
-    pub per_page: u32,
-}
-
-impl PageRequest {
-    pub fn parse(page: Option<u32>, per_page: Option<u32>) -> Result<Self, ApiError> {
-        let page = page.unwrap_or(1);
-        let per_page = per_page.unwrap_or(DEFAULT_PER_PAGE);
-        if !(1..=MAX_PAGE).contains(&page) {
-            return Err(invalid_query(
-                "Le numéro de page doit être compris entre 1 et 10 000.",
-            ));
-        }
-        if !(1..=MAX_PER_PAGE).contains(&per_page) {
-            return Err(invalid_query(
-                "Le nombre d'éléments par page doit être compris entre 1 et 50.",
-            ));
-        }
-        Ok(Self { page, per_page })
-    }
-
-    pub fn limit(self) -> i64 {
-        i64::from(self.per_page)
-    }
-
-    pub fn offset(self) -> i64 {
-        i64::from(self.page - 1) * i64::from(self.per_page)
-    }
-
-    /// Number of pages for `total` items.
-    pub fn page_count(self, total: i64) -> u32 {
-        let total = u64::try_from(total).unwrap_or(0);
-        u32::try_from(total.div_ceil(u64::from(self.per_page))).unwrap_or(u32::MAX)
-    }
-}
-
 /// Trimmed optional text, `None` when blank, refused beyond `max` characters.
-fn optional_text(
+pub(crate) fn optional_text(
     raw: Option<String>,
     max: usize,
     message: &'static str,
@@ -792,26 +748,6 @@ fn redirect(parent_slug: String) -> Result<Response, ApiError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn pages_are_bounded() {
-        assert_eq!(
-            PageRequest::parse(None, None).unwrap(),
-            PageRequest {
-                page: 1,
-                per_page: DEFAULT_PER_PAGE
-            }
-        );
-        assert!(PageRequest::parse(Some(0), None).is_err());
-        assert!(PageRequest::parse(Some(MAX_PAGE + 1), None).is_err());
-        assert!(PageRequest::parse(None, Some(0)).is_err());
-        assert!(PageRequest::parse(None, Some(51)).is_err());
-        let pages = PageRequest::parse(Some(3), Some(10)).unwrap();
-        assert_eq!((pages.limit(), pages.offset()), (10, 20));
-        assert_eq!(pages.page_count(0), 0);
-        assert_eq!(pages.page_count(10), 1);
-        assert_eq!(pages.page_count(11), 2);
-    }
 
     #[test]
     fn search_texts_are_normalized_and_bounded() {

@@ -1,18 +1,57 @@
 //! Admin API (port 8081, LAN only, AGENTS.md §8): `Authorization: Bearer $ADMIN_API_TOKEN`
 //! on every `/api/admin/…` route, compared in constant time.
+//!
+//! Every answer is `Cache-Control: no-store` and `X-Robots-Tag: noindex, nofollow` (§14.2).
+//! Every mutation is recorded in `admin_actions` in the transaction that applies it.
+//!
+//! - [`dashboard`]: job queue, screening rates, AI costs, pending queues;
+//! - [`jobs`]: job list and retry of dead jobs.
 
 use std::sync::Arc;
 
 use axum::Json;
+use axum::Router;
 use axum::extract::{Request, State};
-use axum::http::header;
+use axum::http::{StatusCode, header};
 use axum::middleware::Next;
 use axum::response::{IntoResponse, Response};
+use axum::routing::{get, post};
 use serde::Serialize;
 use utoipa::ToSchema;
 
+use super::AppState;
 use super::error::{ApiError, ErrorBody};
 use crate::config::Secret;
+
+pub mod dashboard;
+pub mod jobs;
+
+#[cfg(test)]
+mod api_tests;
+
+/// Routes of the admin API, relative to `/api/admin` (token checked by the caller).
+pub fn routes() -> Router<AppState> {
+    Router::new()
+        .route("/session", get(session))
+        .route("/dashboard", get(dashboard::dashboard))
+        .route("/jobs", get(jobs::list))
+        .route("/jobs/{id}/retry", post(jobs::retry))
+}
+
+/// `404` with a specific code.
+pub(crate) fn not_found(code: &'static str, message: &'static str) -> ApiError {
+    ApiError::new(StatusCode::NOT_FOUND, code, message)
+}
+
+/// `409`: the action does not apply to the current state.
+pub(crate) fn conflict(code: &'static str, message: &'static str) -> ApiError {
+    ApiError::new(StatusCode::CONFLICT, code, message)
+}
+
+/// Micro-euros as euros (estimates, for display).
+pub(crate) fn euros(micro_eur: i64) -> f64 {
+    micro_eur as f64 / 1_000_000.0
+}
 
 /// The expected admin token.
 #[derive(Debug, Clone)]

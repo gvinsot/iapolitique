@@ -13,6 +13,7 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use crate::config::DatabaseConfig;
 
 pub mod ai_calls;
+pub mod analyses;
 pub mod embeddings;
 pub mod ideas;
 pub mod screenings;

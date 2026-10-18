@@ -26,7 +26,8 @@ use uuid::Uuid;
 
 use super::tracking::{self, TokenHash};
 use crate::domain::types::{ReviewOutcome, ReviewRequestStatus, TargetKind};
-use crate::jobs::{JobKind, NewJob, queue};
+use crate::jobs::pipeline::exports_job;
+use crate::jobs::queue;
 use crate::moderation::Target;
 
 /// State of a tracked text.
@@ -175,11 +176,6 @@ async fn delete_tokens(
         .execute(&mut *conn)
         .await
         .map(|_| ())
-}
-
-/// Regeneration of the open data exports, after the removal of published content (§7.4).
-fn exports_job() -> NewJob {
-    NewJob::new(JobKind::GenerateExports).dedupe_key("generate_exports")
 }
 
 async fn ids(conn: &mut PgConnection, sql: &'static str, id: Uuid) -> sqlx::Result<Vec<Uuid>> {

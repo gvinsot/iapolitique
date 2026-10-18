@@ -14,6 +14,7 @@ use sqlx::PgPool;
 use tokio::sync::{Semaphore, watch};
 use tokio::time::Instant;
 
+use super::analysis::AnalyzeHandler;
 use super::dedup::DedupHandler;
 use super::health::Liveness;
 use super::moderation::{ScreenHandler, SecondOpinionHandler};
@@ -120,6 +121,7 @@ pub fn default_registry() -> Registry {
         .register(ScreenHandler::new(TargetKind::Report))
         .register(SecondOpinionHandler)
         .register(DedupHandler)
+        .register(AnalyzeHandler)
         .register(PurgeHandler);
     registry
 }
@@ -435,12 +437,7 @@ mod tests {
 
     #[test]
     fn registry_filters_mistral_kinds() {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let mut registry = default_registry();
-        registry.register(Scripted {
-            kind: JobKind::AnalyzeIdea,
-            calls,
-        });
+        let registry = default_registry();
         assert_eq!(
             registry.kinds(),
             vec![
@@ -622,12 +619,7 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]
     async fn mistral_jobs_stay_queued_without_api_key(pool: PgPool) {
-        let calls = Arc::new(AtomicUsize::new(0));
-        let mut registry = default_registry();
-        registry.register(Scripted {
-            kind: JobKind::AnalyzeIdea,
-            calls: Arc::clone(&calls),
-        });
+        let registry = default_registry();
         enqueue(&pool, &NewJob::new(JobKind::AnalyzeIdea))
             .await
             .unwrap();
@@ -666,7 +658,6 @@ mod tests {
         stop.send(true).unwrap();
         running.await.unwrap().unwrap();
 
-        assert_eq!(calls.load(Ordering::SeqCst), 0);
         let (status,): (String,) =
             sqlx::query_as("SELECT status FROM jobs WHERE kind = 'analyze_idea'")
                 .fetch_one(&pool)

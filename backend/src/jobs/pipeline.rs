@@ -8,11 +8,12 @@
 //! | `dedup_idea` | [`IdeaPayload`] | `dedup_idea:<idea id>` |
 //! | `analyze_idea` | [`AnalyzePayload`] | `analyze_idea:<idea id>` |
 //! | `review_reports` | [`IdeaPayload`] | `review_reports:<idea id>` |
+//! | `generate_exports` | `{}` | `generate_exports` (debounced, [`EXPORTS_DEBOUNCE`]) |
 //!
 //! The dedupe keys group the requests: a queued analysis of an idea absorbs the next
 //! contributions, a queued review absorbs the next reports (§5.6).
 
-use chrono::{DateTime, Utc};
+use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
 use uuid::Uuid;
 
@@ -116,6 +117,19 @@ pub fn review_reports_job(idea_id: Uuid, run_after: DateTime<Utc>) -> NewJob {
         .dedupe_key(review_reports_key(idea_id))
 }
 
+/// Dedupe key of the regeneration of the open data exports after a change.
+pub const EXPORTS_KEY: &str = "generate_exports";
+/// Delay before the exports are regenerated after a change: the changes made meanwhile
+/// (several publications, a deletion…) are absorbed by the same queued job.
+pub const EXPORTS_DEBOUNCE: Duration = Duration::minutes(2);
+
+/// Regeneration of the open data exports after a publication, a masking or a deletion (§7.4).
+pub fn exports_job() -> NewJob {
+    NewJob::new(JobKind::GenerateExports)
+        .run_after(Utc::now() + EXPORTS_DEBOUNCE)
+        .dedupe_key(EXPORTS_KEY)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -153,5 +167,9 @@ mod tests {
         let at = Utc::now();
         let job = review_reports_job(id, at);
         assert_eq!((job.priority, job.run_after), (priority::REPORT, Some(at)));
+        let job = exports_job();
+        assert_eq!(job.dedupe_key.as_deref(), Some(EXPORTS_KEY));
+        assert_eq!(job.priority, priority::MAINTENANCE);
+        assert!(job.run_after.unwrap() > Utc::now() + Duration::seconds(60));
     }
 }

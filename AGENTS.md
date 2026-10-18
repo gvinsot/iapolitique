@@ -330,6 +330,28 @@ version de prompt (l'admin peut relancer manuellement).
   étape 2 structuration via `response_format` JSON schema. Toute sortie invalide est rejetée et
   réessayée (3 tentatives max, backoff exponentiel), puis `analysis_failed`.
 - 429 / 5xx : retry avec backoff ; ne jamais boucler sans limite.
+- Mise en œuvre (job `analyze_idea`, `jobs/analysis.rs`, stockage `db/analyses.rs`) :
+  - première analyse : `queued_analysis → analyzing → published` (slug tiré du titre, suffixe
+    `-2`, `-3`… en cas de collision, jamais modifié ensuite) ; sortie encore invalide après les
+    3 tentatives du client, erreur Mistral non transitoire ou dernière tentative du job :
+    `analysis_failed` (motif `analysis_failed`) et job `dead` ;
+  - ré-analyse d'une idée `published` ou `hidden` : entrées = analyse courante, contributions
+    `accepted` (20 au plus par analyse, un doublon fusionné y figure avec le texte de l'idée
+    fusionnée) et corrections des revues `update` non encore appliquées
+    (`report_reviews.applied_in_analysis_id`) ; sans entrée nouvelle, le job ne fait rien (sauf
+    déclencheur `admin`) ; l'idée garde son statut, son slug et son analyse jusqu'au
+    remplacement ; un échec laisse l'analyse publiée en place ;
+  - chaque analyse est une nouvelle ligne `analyses` (version + 1, historique conservé) avec
+    `prompt_version` (`analysis.md`), `research_prompt_version`, `schema_version` (empreinte
+    `sha256:` des 12 premiers chiffres hexadécimaux du schéma de sortie), `scoring_version`,
+    modèle et nombre de recherches web ; les colonnes de publication sont recopiées dans
+    `ideas`, les contributions passent `integrated` avec le résumé neutre de l'analyse,
+    `ideas.contribution_count` compte les contributions intégrées hors doublons ;
+  - le budget est vérifié avant chaque appel (l'idée reste `analyzing` jusqu'au lendemain) ;
+    des entrées arrivées pendant l'analyse la relancent aussitôt (même clé de dédoublonnage) ;
+  - une publication (comme un masquage ou une suppression) programme la régénération des
+    exports (job `generate_exports`, clé `generate_exports`, différé de 2 min pour regrouper
+    les changements).
 
 ### 6.2 Contenu de l'analyse
 

@@ -5,6 +5,7 @@
 //! - [`worker`]: the consuming loop, its handler registry and graceful shutdown.
 //! - [`schedule`]: daily recurring jobs, enqueued once whatever the number of replicas.
 //! - [`moderation`]: screening retries and Mistral second opinions.
+//! - [`analysis`]: Mistral analysis (research, structuring, score) and publication of ideas.
 //! - [`dedup`]: duplicate detection of accepted ideas (embeddings, pgvector).
 //! - [`guard`]: API key and daily budget checks of the handlers that call Mistral.
 //! - [`pipeline`]: payloads, dedupe keys and constructors of the submission pipeline jobs.
@@ -19,6 +20,7 @@ use serde_json::Value;
 
 use crate::domain::text_enum;
 
+pub mod analysis;
 pub mod dedup;
 pub mod guard;
 pub mod health;

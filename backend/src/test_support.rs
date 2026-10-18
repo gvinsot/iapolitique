@@ -104,6 +104,38 @@ pub fn embedding_response(vectors: &[Vec<f32>]) -> Value {
     })
 }
 
+/// A Conversations API answer (research step) whose memo is `memo`, after two web searches,
+/// with `prompt_tokens` input tokens.
+pub fn research_response(memo: &str, prompt_tokens: u64) -> Value {
+    json!({
+        "object": "conversation.response",
+        "conversation_id": "conv-test",
+        "outputs": [
+            { "object": "entry", "type": "tool.execution", "name": "web_search", "id": "t1" },
+            { "object": "entry", "type": "tool.execution", "name": "web_search", "id": "t2" },
+            {
+                "object": "entry", "type": "message.output", "role": "assistant",
+                "model": "mistral-large-test", "id": "m1",
+                "content": [
+                    { "type": "text", "text": memo },
+                    { "type": "tool_reference", "tool": "web_search", "title": "Source",
+                      "url": "https://www.ccomptes.fr/fr/publications/achats-hopitaux" }
+                ]
+            }
+        ],
+        "usage": {
+            "prompt_tokens": prompt_tokens, "completion_tokens": 800,
+            "total_tokens": prompt_tokens + 800, "connectors": { "web_search": 2 }
+        }
+    })
+}
+
+/// A valid output of `prompts/analysis.md` (`tests/fixtures/mistral/analysis.json`).
+pub fn analysis_output() -> Value {
+    serde_json::from_str(include_str!("../tests/fixtures/mistral/analysis.json"))
+        .expect("valid fixture")
+}
+
 /// Configuration pointing at the mocks, with `extra` variables.
 pub fn config(
     role: Role,
@@ -240,6 +272,26 @@ impl TestApp {
                     .set_body_json(chat_response(&output))
                     .set_delay(delay),
             )
+            .mount(server)
+            .await;
+    }
+
+    /// The research step (Conversations API) answers `memo`.
+    pub async fn research(&self, memo: &str) {
+        let server = self.mistral.as_ref().expect("app built with Mistral");
+        Mock::given(method("POST"))
+            .and(path("/v1/conversations"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(research_response(memo, 3_000)))
+            .mount(server)
+            .await;
+    }
+
+    /// Every structured chat completion answers `output`.
+    pub async fn structured(&self, output: &Value) {
+        let server = self.mistral.as_ref().expect("app built with Mistral");
+        Mock::given(method("POST"))
+            .and(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(chat_response(output)))
             .mount(server)
             .await;
     }

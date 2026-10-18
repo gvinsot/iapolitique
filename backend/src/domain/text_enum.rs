@@ -70,6 +70,8 @@ macro_rules! text_enum {
     };
 }
 
+pub(crate) use text_enum;
+
 #[cfg(test)]
 mod tests {
     text_enum! {

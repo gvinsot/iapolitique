@@ -19,3 +19,4 @@ pub mod types;
 pub mod validation;
 
 pub use text_enum::UnknownVariant;
+pub(crate) use text_enum::text_enum;

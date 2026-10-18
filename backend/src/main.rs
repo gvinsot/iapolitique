@@ -7,7 +7,7 @@ use std::time::Duration;
 use clap::{Parser, Subcommand};
 
 use iapolitique::config::{self, Config, Role};
-use iapolitique::{db, healthcheck, telemetry};
+use iapolitique::{app, db, healthcheck, telemetry};
 
 #[derive(Debug, Parser)]
 #[command(name = "iapolitique", version, about = "iapolitique backend")]
@@ -18,6 +18,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Background worker: consumes the job queue; internal health on WORKER_HEALTH_PORT (8082).
+    Worker,
     /// Apply pending database migrations, then exit.
     Migrate,
     /// HTTP GET on a local health URL; exit code 0 when it answers 2xx (Docker healthcheck).
@@ -34,6 +36,7 @@ enum Command {
 impl Command {
     fn role(&self) -> Option<Role> {
         match self {
+            Self::Worker => Some(Role::Worker),
             Self::Migrate => Some(Role::Migrate),
             Self::Healthcheck { .. } => None,
         }
@@ -91,12 +94,13 @@ fn run_offline(command: Command) -> ExitCode {
                 }
             }
         }
-        Command::Migrate => unreachable!("migrate needs the configuration"),
+        Command::Worker | Command::Migrate => unreachable!("needs the configuration"),
     }
 }
 
 async fn run(command: Command, config: Config) -> anyhow::Result<()> {
     match command {
+        Command::Worker => app::run_worker(config).await,
         Command::Migrate => {
             let pool = db::connect(&config.database, "iapolitique-migrate").await?;
             db::migrate(&pool).await?;

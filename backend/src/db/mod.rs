@@ -13,7 +13,14 @@ use sqlx::postgres::{PgConnectOptions, PgPool, PgPoolOptions};
 use crate::config::DatabaseConfig;
 
 /// Migrations of `backend/migrations`, embedded in the binary.
-pub static MIGRATOR: Migrator = sqlx::migrate!("./migrations");
+///
+/// `ignore_missing`: after an automatic rollback (PulsarCD redeploys the previous image on the
+/// migrated database, AGENTS.md §2.2), the database knows migrations that the older binary does
+/// not embed. They are additive and backward compatible, so the older binary must still start.
+pub static MIGRATOR: Migrator = Migrator {
+    ignore_missing: true,
+    ..sqlx::migrate!("./migrations")
+};
 
 /// libpq parameters that sqlx does not support and that we drop silently.
 const UNSUPPORTED_PARAMS: &[&str] = &[

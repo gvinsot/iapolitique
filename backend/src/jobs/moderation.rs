@@ -3,6 +3,7 @@
 //! a row lock: a job about a text settled meanwhile (by the api, another job or its author's
 //! deletion) succeeds without doing anything.
 
+use super::guard::{self, Gate};
 use super::pipeline::{self, TargetPayload};
 use super::worker::{HandlerFuture, JobContext, JobHandler};
 use super::{Job, JobError, JobKind, JobOutcome};
@@ -66,8 +67,8 @@ impl JobHandler for ScreenHandler {
     }
 }
 
-/// Mistral second opinion of a text in the gray zone ([`JobKind::SecondOpinion`]). Claimed only
-/// when `MISTRAL_API_KEY` is set, postponed by the worker while the daily budget is reached.
+/// Mistral second opinion of a text in the gray zone ([`JobKind::SecondOpinion`]). Rescheduled
+/// without `MISTRAL_API_KEY` and while the daily budget is reached ([`guard::mistral_gate`]).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SecondOpinionHandler;
 
@@ -79,8 +80,9 @@ impl JobHandler for SecondOpinionHandler {
     fn handle<'a>(&'a self, ctx: &'a JobContext, job: &'a Job) -> HandlerFuture<'a> {
         Box::pin(async move {
             let target = target_of(job, None)?;
-            let Some(mistral) = &ctx.mistral else {
-                return Err(JobError::Transient("MISTRAL_API_KEY is not set".to_owned()));
+            let mistral = match guard::mistral_gate(ctx, self.kind()).await? {
+                Gate::Ready(client) => client,
+                Gate::Postpone(outcome) => return Ok(outcome),
             };
             match second_opinion::run(
                 &ctx.pool,
@@ -340,7 +342,7 @@ mod tests {
         without_key.mistral = None;
         assert!(matches!(
             SecondOpinionHandler.handle(&without_key, &job).await,
-            Err(JobError::Transient(_))
+            Ok(JobOutcome::RetryAt(_))
         ));
     }
 }

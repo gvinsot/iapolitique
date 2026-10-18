@@ -115,10 +115,10 @@ iapolitique/
 ├── CLAUDE.md               # importe AGENTS.md
 ├── backend/                # workspace Cargo
 │   ├── Cargo.toml
-│   ├── Dockerfile          # stages: build, test, runtime
+│   ├── Dockerfile          # stages: build, runtime (contrôles CI : devops/Dockerfile.test)
 │   ├── migrations/         # migrations sqlx (NNNN_description.sql)
 │   └── src/
-│       ├── main.rs         # sous-commandes: api | worker | migrate
+│       ├── main.rs         # sous-commandes: api | worker | migrate | openapi | healthcheck
 │       ├── config.rs       # lecture env + /run/secrets
 │       ├── db/             # requêtes par agrégat
 │       ├── domain/         # types métier, machine à états, scoring (sans I/O)
@@ -145,6 +145,8 @@ iapolitique/
 │   └── calibration/        # banc de calibration du filtrage, contrôle des fichiers prompts/
 └── devops/
     ├── docker-compose.swarm.yml
+    ├── Dockerfile.test     # image CI (§13.5)
+    ├── run-tests.sh        # point d'entrée de l'image CI
     └── .env.example
 ```
 
@@ -164,8 +166,8 @@ iapolitique/
   en français quand il est destiné à l'utilisateur.
 - Configuration : variables d'environnement ; au démarrage, chaque fichier de `/run/secrets/`
   est chargé dans l'environnement s'il n'y est pas déjà (convention PulsarCD).
-- `GET /health` (vivacité) et `GET /ready` (base joignable) sur l'api ; le worker expose
-  `/health` sur un port interne.
+- `GET /api/health` (vivacité) et `GET /api/ready` (base joignable) sur l'api ; le worker expose
+  `/health` sur son port interne 8082 (voir [§13](#13-contrats-techniques)).
 
 ### 4.2 Frontend (React / TypeScript)
 
@@ -453,9 +455,11 @@ décidée par l'humain.
   (le worker réutilise l'image api avec `command: ["worker"]`). Sections `build:` avec
   `context: ..`.
 - Services : `api`, `worker`, `frontend`, et `test` (`replicas: 0`, exécuté par PulsarCD via
-  `docker compose run --rm test`, avec un PostgreSQL éphémère).
+  `docker compose run --rm test`, avec le PostgreSQL éphémère `test-db`, voir [§13.5](#135-tests-en-ci)).
 - Réseaux externes : `proxy` (api, frontend), `postgresqlcluster_internal` (api, worker), et le
-  réseau LLM `${LLM_NETWORK:-llm-net}` (api, worker ; `qa-llm-net` en QA via `.env.qa`).
+  réseau LLM `${LLM_NETWORK:-llm-net}` (api, worker). En QA, PulsarCD préfixe lui-même le nom des
+  réseaux externes (`llm-net` devient `qa-llm-net`) : ne **pas** définir `LLM_NETWORK` dans
+  `.env.qa` (on obtiendrait `qa-qa-llm-net`).
 - Traefik : routeurs HTTPS avec `global@file` **obligatoire** sur tout ce qui est public ;
   redirection HTTP→HTTPS ; `PathPrefix(/api)` vers l'api **sans** strip prefix (le backend
   sert ses routes sous `/api`, voir [§13](#13-contrats-techniques)) ; routeur admin sur `ADMIN_HOST`
@@ -465,10 +469,12 @@ décidée par l'humain.
   redirige (301) vers `iapolitique.fr`. QA : `qa.iapolitique.fr` et `qa.admin.iapolitique.fr`.
   Tous ces noms doivent avoir un enregistrement DNS A vers l'IP publique du cluster pour le
   challenge Let's Encrypt HTTP-01 ; l'admin reste filtré par `dashboard-allowlist@file`.
-- Placement : `node.labels.gpu == none`. Healthchecks sur `/health`.
-  `DEPLOY_HEALTHCHECK_PATH=/api/health` pour la vérification post-déploiement.
-- Migrations : appliquées par l'api au démarrage (`sqlx migrate`, verrou consultatif), jamais
-  destructives ([§2.2](#22-autres-règles)).
+- Placement : `node.labels.gpu == none`. Healthchecks : api `/api/health` (port 8080), worker
+  `/health` (port 8082), tous deux via `iapolitique healthcheck` ; frontend `/health` (port 80,
+  `wget`). `DEPLOY_HEALTHCHECK_PATH=/api/health` pour la vérification post-déploiement.
+- Migrations : appliquées au démarrage de l'api et du worker (`sqlx migrate`, verrou
+  consultatif : plusieurs répliques peuvent démarrer ensemble), jamais destructives
+  ([§2.2](#22-autres-règles)).
 
 ### 10.2 Environnements
 
@@ -477,7 +483,7 @@ décidée par l'humain.
 | Stack | `iapolitique` | `qa-iapolitique` |
 | Host | `iapolitique.fr` | `qa.iapolitique.fr` |
 | Base | `iapolitique_prod` | `iapolitique_qa` (via `devops/.env.qa`) |
-| Réseau LLM | `llm-net` | `qa-llm-net` |
+| Réseau LLM | `llm-net` | `qa-llm-net` (préfixe automatique de PulsarCD) |
 | Budget Mistral | `MISTRAL_DAILY_BUDGET_EUR` de prod | plafond réduit |
 
 ### 10.3 Variables et secrets
@@ -528,7 +534,7 @@ commit.
 | api | `iapolitique api` | 8080 API publique, 8081 API admin |
 | worker | `iapolitique worker` | 8082 `/health` interne |
 | migrations | `iapolitique migrate` (aussi exécutées au démarrage de l'api) | — |
-| openapi | `iapolitique openapi` : écrit la spec OpenAPI sur stdout | — |
+| openapi | `iapolitique openapi [--output FICHIER] [--public]` : écrit la spec OpenAPI (complète, ou publique seule avec `--public`) sur stdout ou dans `FICHIER` | — |
 | healthcheck | `iapolitique healthcheck [--url URL] [--timeout-secs N]` : GET HTTP, code de sortie 0 si 2xx (URL par défaut `http://127.0.0.1:8080/api/health` ; worker : `--url http://127.0.0.1:8082/health`). L'image runtime n'a ni curl ni wget. | — |
 | frontend | nginx (image `nginx:alpine`, workers non root) | 80 (`/health` : sonde de vivacité) |
 

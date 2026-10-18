@@ -8,8 +8,9 @@ use uuid::Uuid;
 use crate::domain::status::{ContributionStatus, IdeaStatus, ReportStatus};
 use crate::domain::types::{
     Actor, AdminLevel, AiCallStatus, AiProvider, AiPurpose, AnalysisTrigger, Confidence,
-    ContributionKind, Decision, ExportFormat, IdeaKind, LegalVehicle, ReportReason, ReviewOutcome,
-    ReviewRequestStatus, ScreeningOutcome, TargetKind,
+    ContributionKind, Decision, EscalationOutcome, ExportFormat, IdeaKind, LegalVehicle,
+    ReportReason, ReviewOutcome, ReviewRequestStatus, ReviewResolution, ScreeningOutcome,
+    TargetKind,
 };
 
 /// Values quoted in the definition of a CHECK constraint.
@@ -84,6 +85,9 @@ async fn check_constraints_match_domain_enums(pool: PgPool) {
     assert_check_matches!(pool, "exports", "format", ExportFormat);
     assert_check_matches!(pool, "review_requests", "target_kind", TargetKind);
     assert_check_matches!(pool, "review_requests", "status", ReviewRequestStatus);
+    assert_check_matches!(pool, "review_requests", "resolution", ReviewResolution);
+    assert_check_matches!(pool, "escalations", "status", ReviewRequestStatus);
+    assert_check_matches!(pool, "escalations", "outcome", EscalationOutcome);
 }
 
 #[sqlx::test(migrator = "crate::db::MIGRATOR")]

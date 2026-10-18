@@ -5,7 +5,9 @@
 //! Every mutation is recorded in `admin_actions` in the transaction that applies it.
 //!
 //! - [`dashboard`]: job queue, screening rates, AI costs, pending queues;
-//! - [`jobs`]: job list and retry of dead jobs.
+//! - [`jobs`]: job list and retry of dead jobs;
+//! - [`ideas`]: ideas by status with search, hide / republish, re-analysis;
+//! - [`moderation`]: reports, escalations of serious content, human review requests.
 
 use std::sync::Arc;
 
@@ -24,10 +26,14 @@ use super::error::{ApiError, ErrorBody};
 use crate::config::Secret;
 
 pub mod dashboard;
+pub mod ideas;
 pub mod jobs;
+pub mod moderation;
 
 #[cfg(test)]
 mod api_tests;
+#[cfg(test)]
+mod moderation_tests;
 
 /// Routes of the admin API, relative to `/api/admin` (token checked by the caller).
 pub fn routes() -> Router<AppState> {
@@ -36,6 +42,21 @@ pub fn routes() -> Router<AppState> {
         .route("/dashboard", get(dashboard::dashboard))
         .route("/jobs", get(jobs::list))
         .route("/jobs/{id}/retry", post(jobs::retry))
+        .route("/ideas", get(ideas::list))
+        .route("/ideas/{id}/hide", post(ideas::hide))
+        .route("/ideas/{id}/republish", post(ideas::republish))
+        .route("/ideas/{id}/reanalyze", post(ideas::reanalyze))
+        .route("/reports", get(moderation::reports))
+        .route("/escalations", get(moderation::escalations))
+        .route(
+            "/escalations/{id}/handle",
+            post(moderation::handle_escalation),
+        )
+        .route("/review-requests", get(moderation::review_requests))
+        .route(
+            "/review-requests/{id}/resolve",
+            post(moderation::resolve_review_request),
+        )
 }
 
 /// `404` with a specific code.
@@ -46,6 +67,42 @@ pub(crate) fn not_found(code: &'static str, message: &'static str) -> ApiError {
 /// `409`: the action does not apply to the current state.
 pub(crate) fn conflict(code: &'static str, message: &'static str) -> ApiError {
     ApiError::new(StatusCode::CONFLICT, code, message)
+}
+
+/// A free text typed by the administrator (reason, note, right of reply…): normalized
+/// (line breaks kept, spaces collapsed), `None` when blank; `422 invalid_field` when required
+/// and blank, or longer than `max` characters.
+pub(crate) fn admin_text(
+    raw: Option<&str>,
+    max: usize,
+    required: bool,
+    label: &'static str,
+) -> Result<Option<String>, ApiError> {
+    let text = raw
+        .map(crate::domain::validation::normalize_text)
+        .filter(|t| !t.is_empty());
+    match text {
+        None if required => Err(ApiError::validation(
+            "invalid_field",
+            format!("{label} est obligatoire."),
+        )),
+        Some(t) if t.chars().count() > max => Err(ApiError::validation(
+            "invalid_field",
+            format!("{label} doit contenir au plus {max} caractères."),
+        )),
+        text => Ok(text),
+    }
+}
+
+/// An idea as referred to by the admin lists.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct AdminIdeaRef {
+    pub id: uuid::Uuid,
+    #[schema(required = true)]
+    pub slug: Option<String>,
+    #[schema(required = true)]
+    pub title: Option<String>,
+    pub status: String,
 }
 
 /// Micro-euros as euros (estimates, for display).

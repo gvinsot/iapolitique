@@ -14,8 +14,16 @@ use super::admin::dashboard::{
     self as admin_dashboard, AdminAiCosts, AdminDashboard, AdminJobCount, AdminJobSummary,
     AdminPurposeCost, AdminQueues, AdminScreeningRates,
 };
+use super::admin::ideas::{
+    self as admin_ideas, AdminIdea, AdminIdeaPage, AdminReanalysis, AdminReason,
+};
 use super::admin::jobs::{self as admin_jobs, AdminJob, AdminJobPage};
-use super::admin::{self, AdminSession};
+use super::admin::moderation::{
+    self as admin_moderation, AdminEscalation, AdminEscalationHandling, AdminEscalationPage,
+    AdminReport, AdminReportPage, AdminReportReview, AdminReviewRequest, AdminReviewRequestPage,
+    AdminReviewResolution, AdminReviewedDecision,
+};
+use super::admin::{self, AdminIdeaRef, AdminSession};
 use super::antispam;
 use super::error::{ErrorBody, ErrorDetail};
 use super::exports;
@@ -44,9 +52,10 @@ use crate::ai::prompts::{MethodologyFile, MethodologyFileKind};
 use crate::antispam::altcha::AltchaChallenge;
 use crate::db::portal::IdeaSort;
 use crate::domain::rules::RuleReference;
+use crate::domain::status::{IdeaStatus, ReportStatus};
 use crate::domain::types::{
-    AdminLevel, Confidence, ContributionKind, IdeaKind, ImpactDirection, LegalVehicle,
-    ReportReason, ReviewOutcome, ReviewRequestStatus, TargetKind,
+    AdminLevel, Confidence, ContributionKind, EscalationOutcome, IdeaKind, ImpactDirection,
+    LegalVehicle, ReportReason, ReviewOutcome, ReviewRequestStatus, ReviewResolution, TargetKind,
 };
 use crate::jobs::{JobKind, JobStatus};
 use crate::moderation::statement::{Measure, StatementOfReasons};
@@ -86,7 +95,16 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         admin::session,
         admin_dashboard::dashboard,
         admin_jobs::list,
-        admin_jobs::retry
+        admin_jobs::retry,
+        admin_ideas::list,
+        admin_ideas::hide,
+        admin_ideas::republish,
+        admin_ideas::reanalyze,
+        admin_moderation::reports,
+        admin_moderation::escalations,
+        admin_moderation::handle_escalation,
+        admin_moderation::review_requests,
+        admin_moderation::resolve_review_request
     ),
     components(schemas(
         ErrorBody,
@@ -166,7 +184,26 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         AdminJob,
         AdminJobPage,
         JobKind,
-        JobStatus
+        JobStatus,
+        AdminIdeaRef,
+        AdminIdea,
+        AdminIdeaPage,
+        AdminReason,
+        AdminReanalysis,
+        IdeaStatus,
+        ReportStatus,
+        AdminReport,
+        AdminReportPage,
+        AdminReportReview,
+        AdminEscalation,
+        AdminEscalationPage,
+        AdminEscalationHandling,
+        EscalationOutcome,
+        AdminReviewRequest,
+        AdminReviewRequestPage,
+        AdminReviewedDecision,
+        AdminReviewResolution,
+        ReviewResolution
     )),
     modifiers(&AdminSecurity),
     tags(
@@ -348,6 +385,15 @@ mod tests {
             "/api/admin/dashboard",
             "/api/admin/jobs",
             "/api/admin/jobs/{id}/retry",
+            "/api/admin/ideas",
+            "/api/admin/ideas/{id}/hide",
+            "/api/admin/ideas/{id}/republish",
+            "/api/admin/ideas/{id}/reanalyze",
+            "/api/admin/reports",
+            "/api/admin/escalations",
+            "/api/admin/escalations/{id}/handle",
+            "/api/admin/review-requests",
+            "/api/admin/review-requests/{id}/resolve",
         ] {
             assert!(paths.contains(&path), "{path} missing");
         }

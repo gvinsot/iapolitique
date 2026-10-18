@@ -211,6 +211,7 @@ après l'enregistrement laisse le texte `submitted` et rend quand même le jeton
 submitted
   └─▶ screening (modèle de décision, synchrone)
         ├─▶ rejected ─────────────▶ purged (texte supprimé à J+30)
+        │      └─▶ accepted (refus infirmé par l'admin après réexamen humain)
         ├─▶ second_opinion (Mistral, zone grise) ─▶ rejected | accepted
         └─▶ accepted
               └─▶ dedup (embedding + pgvector)
@@ -472,7 +473,13 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
   - **Réexamen humain** : possible une fois par texte, seulement contre une décision
     automatique (refus ou masquage) ; message facultatif (1 000 caractères, masqué), table
     `review_requests` (`pending` puis `done` par l'admin). Tant qu'il est en attente, le texte
-    refusé n'est pas purgé (`purge_on` vaut `null`).
+    refusé n'est pas purgé (`purge_on` vaut `null`). L'admin le clôt avec `resolution` :
+    `confirmed` (la décision reste, la purge reprend) ou `overturned` : un texte refusé passe
+    `rejected → accepted` (champs de refus effacés, dernière décision de filtrage étiquetée
+    `accept` pour la calibration si elle ne l'était pas) et reprend le pipeline (dédoublonnage,
+    ré-analyse ou revue de signalement, `moderation::overturn_rejection`) ; une idée masquée est
+    republiée (exports régénérés). Note facultative de l'admin (`note`), jamais montrée à
+    l'auteur.
 - Logs applicatifs : jamais d'IP, de jeton, d'en-têtes d'identification ni de texte d'idée
   (seulement des identifiants internes).
 
@@ -605,7 +612,9 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
   ni transmis à une IA ; la précision est masquée comme les autres textes.
 - **Escalade humaine** : la revue de signalement marque `escalate` les contenus graves
   (diffamation, menace, haine, terrorisme, pédocriminalité) : masquage immédiat et file admin
-  « escalade » (transmission manuelle à PHAROS, cible 24 h).
+  « escalade » (transmission manuelle à PHAROS, cible 24 h) ; l'admin la clôt avec `outcome`
+  (`transmitted` ou `dismissed`) et une note facultative ; l'idée reste masquée (republication
+  séparée).
 - **Droit de réponse** (LCEN art. 1-1 III) : l'admin peut publier une réponse attachée à une
   idée (insertion sous 3 jours) : table `rights_of_reply` (`author_label`, `body` en texte
   brut, `requested_on`), affichée par `GET /api/ideas/{slug}`, effacée avec l'idée (suppression
@@ -828,6 +837,15 @@ total_pages }`) et refusent les paramètres inconnus (`400 invalid_query`).
 | GET | `/api/admin/dashboard` | `{ jobs: { queued, running, succeeded, dead, by_kind: [{ kind, status, count }] }, screening_window_days (30), screening: [{ kind, total, accepted, rejected, gray_zone, errors, acceptance_rate, rejection_rate, gray_zone_rate, second_opinion_accept, second_opinion_reject, labeled }], ai_costs: { today_eur, month_eur, daily_budget_eur, remaining_today_eur, budget_reached, next_reset, by_purpose: [{ purpose, provider, calls_today, calls_month, today_eur, month_eur }] }, queues: { escalations_pending, review_requests_pending, ideas_analysis_failed, texts_second_opinion, texts_submitted_stale, ideas_hidden, reports_awaiting_review, jobs_dead } }` (jour et mois Europe/Paris) |
 | GET | `/api/admin/jobs` | jobs, filtres `status`, `kind` ; plus récents d'abord |
 | POST | `/api/admin/jobs/{id}/retry` | remet en file un job `dead` (tentatives remises à zéro) → `200` job ; `404 job_not_found`, `409 job_not_dead` / `job_already_queued` (même clé de dédoublonnage en file) ; action `job.retry` |
+| GET | `/api/admin/ideas` | idées de tout statut, filtre `status`, recherche `q` (identifiant, ou partie du slug, du titre, du résumé ou du texte, sans accents ni casse) ; plus récemment changées d'abord ; extrait du texte masqué, motifs, signalements en attente, réexamen et escalade en attente |
+| POST | `/api/admin/ideas/{id}/hide` | `{ reason }` (1 000 caractères) : `published → hidden` (`hidden_reason = admin`), exports régénérés → `200` idée ; `409 idea_not_published` ; action `idea.hide` |
+| POST | `/api/admin/ideas/{id}/republish` | `{ reason }` : `hidden → published` (champs de masquage effacés), exports régénérés ; `409 idea_not_hidden` ; action `idea.republish` |
+| POST | `/api/admin/ideas/{id}/reanalyze` | analyse déclencheur `admin` d'une idée `published`/`hidden`, ou `analysis_failed → queued_analysis` → `202 { queued, status }` (`queued: false` si une analyse était déjà en file) ; `409 reanalysis_not_available` ; action `idea.reanalyze` |
+| GET | `/api/admin/reports` | signalements (filtres `status`, `reason`, `idea_id`) avec idée, précision masquée, coordonnées facultatives du signalant et revue (`outcome`, `escalate`, `explanation`, `corrections`) |
+| GET | `/api/admin/escalations` | file d'escalade (filtre `status` `pending`/`done`, en attente d'abord, plus anciennes d'abord) avec `due_at` (cible 24 h) et explication de la revue |
+| POST | `/api/admin/escalations/{id}/handle` | `{ outcome: transmitted\|dismissed, note? }` (2 000 caractères) → `200` ; `404 escalation_not_found`, `409 escalation_already_handled` ; action `escalation.handle` |
+| GET | `/api/admin/review-requests` | demandes de réexamen (filtre `status`, en attente d'abord) avec texte masqué concerné, message, décision en vigueur (`{ measure: rejected\|hidden, reason_code }`) |
+| POST | `/api/admin/review-requests/{id}/resolve` | `{ resolution: confirmed\|overturned, note? }` (§7.1) → `200` ; `404 review_request_not_found`, `409 review_request_already_resolved` / `decision_not_overturnable` (texte ni refusé ni masqué) ; action `review_request.resolve` |
 
 Le port
 admin sert aussi, sans jeton, `/api/health`, `/api/ready` et `/api/openapi.json` (spec complète ;

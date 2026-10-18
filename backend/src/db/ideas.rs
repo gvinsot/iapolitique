@@ -2,6 +2,7 @@
 //! status change and the columns that its CHECK constraints tie to it are written by the same
 //! statement, the history is appended in the same transaction.
 
+use chrono::{DateTime, Utc};
 use sqlx::PgConnection;
 use uuid::Uuid;
 
@@ -86,6 +87,122 @@ pub async fn hide(
     .await?;
     status::append_event(conn, idea_id, Some(from), to, change).await?;
     Ok(true)
+}
+
+/// Republishes a hidden idea (`hidden → published`, §8): the masking fields are erased, the
+/// idea and its current analysis are visible again. Returns `false` (nothing changed) when the
+/// idea is not hidden.
+pub async fn republish(
+    conn: &mut PgConnection,
+    idea_id: Uuid,
+    change: &Change,
+) -> Result<bool, StatusError> {
+    if status::lock::<IdeaStatus>(conn, idea_id).await? != Some(IdeaStatus::Hidden) {
+        return Ok(false);
+    }
+    status::transition(conn, idea_id, IdeaStatus::Published, change).await?;
+    sqlx::query("UPDATE ideas SET hidden_at = NULL, hidden_reason = NULL WHERE id = $1")
+        .bind(idea_id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(true)
+}
+
+/// An idea as listed by the admin (any status).
+#[derive(Debug, Clone, PartialEq, sqlx::FromRow)]
+pub struct AdminIdeaRow {
+    pub id: Uuid,
+    pub status: String,
+    pub slug: Option<String>,
+    pub title: Option<String>,
+    /// Beginning of the masked original text (`None` once purged).
+    pub excerpt: Option<String>,
+    pub submitted_admin_level: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub status_changed_at: DateTime<Utc>,
+    pub rejection_reason_code: Option<String>,
+    pub hidden_reason: Option<String>,
+    pub hidden_at: Option<DateTime<Utc>>,
+    pub parent_idea_id: Option<Uuid>,
+    pub proposal_count: i32,
+    pub contribution_count: i32,
+    pub score_eur: Option<i64>,
+    pub reports_pending: i64,
+    pub review_request_pending: bool,
+    pub escalation_pending: bool,
+}
+
+macro_rules! admin_idea_select {
+    () => {
+        "SELECT i.id, i.status, i.slug, i.title, left(i.original_text, 280) AS excerpt,
+                i.submitted_admin_level, i.created_at, i.status_changed_at,
+                i.rejection_reason_code, i.hidden_reason, i.hidden_at, i.parent_idea_id,
+                i.proposal_count, i.contribution_count, i.score_eur,
+                (SELECT count(*) FROM reports r WHERE r.idea_id = i.id AND r.status = 'accepted')
+                    AS reports_pending,
+                EXISTS (SELECT 1 FROM review_requests q WHERE q.target_kind = 'idea'
+                        AND q.target_id = i.id AND q.status = 'pending') AS review_request_pending,
+                EXISTS (SELECT 1 FROM escalations e WHERE e.idea_id = i.id
+                        AND e.status = 'pending') AS escalation_pending
+         FROM ideas i "
+    };
+}
+
+/// `$1` status, `$2` escaped `LIKE` fragment of the search, `$3` the search as a UUID.
+macro_rules! admin_idea_filter {
+    () => {
+        "WHERE ($1::text IS NULL OR i.status = $1)
+           AND ($2::text IS NULL OR i.id = $3
+                OR unaccent(lower(concat_ws(' ', i.slug, i.title, i.summary, i.original_text)))
+                   LIKE '%' || unaccent(lower($2)) || '%' ESCAPE '\\')"
+    };
+}
+
+/// Ideas of a status and/or matching a search (identifier, slug, title, summary or text),
+/// most recently changed first, with their total.
+pub async fn admin_list(
+    pool: &sqlx::PgPool,
+    status: Option<IdeaStatus>,
+    search: Option<&str>,
+    limit: i64,
+    offset: i64,
+) -> sqlx::Result<(Vec<AdminIdeaRow>, i64)> {
+    let status = status.map(IdeaStatus::as_str);
+    let like = search.map(super::portal::escape_like);
+    let id = search.and_then(|s| Uuid::parse_str(s.trim()).ok());
+    let total: i64 = sqlx::query_scalar(concat!(
+        "SELECT count(*) FROM ideas i ",
+        admin_idea_filter!()
+    ))
+    .bind(status)
+    .bind(like.as_deref())
+    .bind(id)
+    .fetch_one(pool)
+    .await?;
+    let rows = sqlx::query_as(concat!(
+        admin_idea_select!(),
+        admin_idea_filter!(),
+        " ORDER BY i.status_changed_at DESC, i.id DESC LIMIT $4 OFFSET $5"
+    ))
+    .bind(status)
+    .bind(like.as_deref())
+    .bind(id)
+    .bind(limit)
+    .bind(offset)
+    .fetch_all(pool)
+    .await?;
+    Ok((rows, total))
+}
+
+/// One idea as shown by the admin, `None` when it does not exist.
+pub async fn admin_get<'e>(
+    executor: impl sqlx::PgExecutor<'e>,
+    idea_id: Uuid,
+) -> sqlx::Result<Option<AdminIdeaRow>> {
+    sqlx::query_as(concat!(admin_idea_select!(), "WHERE i.id = $1"))
+        .bind(idea_id)
+        .fetch_optional(executor)
+        .await
 }
 
 #[cfg(test)]

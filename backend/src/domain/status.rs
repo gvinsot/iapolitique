@@ -62,7 +62,7 @@ text_enum! {
     /// Lifecycle of an idea.
     ///
     /// ```text
-    /// submitted ─▶ screening ─┬─▶ rejected ─▶ purged
+    /// submitted ─▶ screening ─┬─▶ rejected ─▶ purged (or accepted: overturned by the admin)
     ///                         ├─▶ second_opinion ─▶ rejected | accepted
     ///                         ├─▶ accepted ─▶ dedup ─┬─▶ merged
     ///                         │                      └─▶ queued_analysis ─▶ analyzing ─┬─▶ published ⇄ hidden ─▶ purged
@@ -114,7 +114,8 @@ impl StateMachine for IdeaStatus {
             Submitted => &[Screening],
             Screening => &[Submitted, Rejected, SecondOpinion, Accepted],
             SecondOpinion => &[Rejected, Accepted],
-            Rejected => &[Purged],
+            // A refusal overturned by the administrator after a human review (§7.1).
+            Rejected => &[Purged, Accepted],
             Purged => &[],
             Accepted => &[Dedup],
             Dedup => &[Merged, QueuedAnalysis],
@@ -180,7 +181,7 @@ impl StateMachine for ContributionStatus {
             Screening => &[Submitted, Rejected, SecondOpinion, Accepted],
             SecondOpinion => &[Rejected, Accepted],
             Accepted => &[Integrated],
-            Rejected => &[Purged],
+            Rejected => &[Purged, Accepted],
             Integrated | Purged => &[],
         }
     }
@@ -224,7 +225,7 @@ impl StateMachine for ReportStatus {
             Screening => &[Submitted, Rejected, SecondOpinion, Accepted],
             SecondOpinion => &[Rejected, Accepted],
             Accepted => &[Reviewed],
-            Rejected => &[Purged],
+            Rejected => &[Purged, Accepted],
             Reviewed | Purged => &[],
         }
     }
@@ -310,6 +311,7 @@ mod tests {
                 (SecondOpinion, Rejected),
                 (SecondOpinion, Accepted),
                 (Rejected, Purged),
+                (Rejected, Accepted),
                 (Accepted, Dedup),
                 (Dedup, Merged),
                 (Dedup, QueuedAnalysis),
@@ -374,6 +376,7 @@ mod tests {
                 (SecondOpinion, Accepted),
                 (Accepted, Integrated),
                 (Rejected, Purged),
+                (Rejected, Accepted),
             ],
         );
         assert_all_reachable(ContributionStatus::ALL);
@@ -394,6 +397,7 @@ mod tests {
                 (SecondOpinion, Accepted),
                 (Accepted, Reviewed),
                 (Rejected, Purged),
+                (Rejected, Accepted),
             ],
         );
         assert_all_reachable(ReportStatus::ALL);

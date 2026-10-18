@@ -213,6 +213,27 @@ text_enum! {
 }
 
 text_enum! {
+    /// How the administrator closed an escalation of serious content (§7.5).
+    pub enum EscalationOutcome {
+        /// Forwarded to PHAROS (or to the competent authority).
+        Transmitted => "transmitted",
+        /// Not serious enough to be forwarded.
+        Dismissed => "dismissed",
+    }
+}
+
+text_enum! {
+    /// Outcome of a human review requested by an author (§7.1).
+    pub enum ReviewResolution {
+        /// The automated decision stands.
+        Confirmed => "confirmed",
+        /// The automated decision is reversed: the refused text resumes the pipeline as
+        /// accepted, the masked idea is republished.
+        Overturned => "overturned",
+    }
+}
+
+text_enum! {
     /// File of a generated open data export (§7.4).
     pub enum ExportFormat {
         /// `ideas.json`: metadata, licence and published ideas.

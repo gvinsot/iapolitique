@@ -35,6 +35,8 @@ pub trait StatusTable: StateMachine + FromStr<Err = UnknownVariant> + Send + Syn
     const EVENT_SQL: &'static str;
     /// `$1` id, `$2` reason code: records a rejection.
     const REJECT_SQL: &'static str;
+    /// `$1` id: erases the rejection fields (refusal overturned by the administrator).
+    const UNREJECT_SQL: &'static str;
 }
 
 macro_rules! status_table {
@@ -60,6 +62,11 @@ macro_rules! status_table {
                 "UPDATE ",
                 $table,
                 " SET rejection_reason_code = $2, rejected_at = now() WHERE id = $1"
+            );
+            const UNREJECT_SQL: &'static str = concat!(
+                "UPDATE ",
+                $table,
+                " SET rejection_reason_code = NULL, rejected_at = NULL WHERE id = $1"
             );
         }
     };

@@ -21,6 +21,115 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/escalations": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The escalation queue. */
+        get: operations["listAdminEscalations"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/escalations/{id}/handle": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Closes an escalation (the idea stays hidden; republish it separately if needed). */
+        post: operations["handleAdminEscalation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ideas": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Ideas of a status, with a search. */
+        get: operations["listAdminIdeas"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ideas/{id}/hide": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Hides a published idea (`hidden_reason = admin`): it leaves the portal and the next exports;
+         *     its author sees the masking on the tracking page and may ask for a human review.
+         */
+        post: operations["hideAdminIdea"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ideas/{id}/reanalyze": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Queues a new analysis (trigger `admin`, §5.7): of a published or hidden idea (it stays
+         *     visible with its current analysis until the new one replaces it), or of an idea whose
+         *     analysis failed (`analysis_failed → queued_analysis`).
+         */
+        post: operations["reanalyzeAdminIdea"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ideas/{id}/republish": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Republishes a hidden idea, whatever hid it. */
+        post: operations["republishAdminIdea"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/jobs": {
         parameters: {
             query?: never;
@@ -52,6 +161,61 @@ export interface paths {
          *     leaves its text waiting: retrying it resumes the pipeline.
          */
         post: operations["retryAdminJob"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/reports": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Reports, with their idea and their review. */
+        get: operations["listAdminReports"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/review-requests": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The human review requests. */
+        get: operations["listAdminReviewRequests"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/review-requests/{id}/resolve": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Closes a review request. `overturned`: a refused text becomes `accepted` and resumes the
+         *     pipeline (duplicate detection, re-analysis or report review), a masked idea is republished;
+         *     `confirmed`: the decision stands and the suspended purge resumes.
+         */
+        post: operations["resolveAdminReviewRequest"];
         delete?: never;
         options?: never;
         head?: never;
@@ -455,6 +619,109 @@ export interface components {
             ai_costs: components["schemas"]["AdminAiCosts"];
             queues: components["schemas"]["AdminQueues"];
         };
+        /** @description An idea hidden at once because a report review found serious content (§7.5). */
+        AdminEscalation: {
+            /** Format: uuid */
+            id: string;
+            idea: components["schemas"]["AdminIdeaRef"];
+            /** @description `pending` or `done`. */
+            status: components["schemas"]["ReviewRequestStatus"];
+            outcome: components["schemas"]["EscalationOutcome"] | null;
+            note: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /**
+             * Format: date-time
+             * @description End of the 24-hour target.
+             */
+            due_at: string;
+            /** Format: date-time */
+            handled_at: string | null;
+            /** @description Explanation of the review that raised it. */
+            review_explanation: string | null;
+        };
+        /** @description How an escalation was handled. */
+        AdminEscalationHandling: {
+            outcome: components["schemas"]["EscalationOutcome"];
+            /** @description Date of the referral, reference… (2 000 characters). */
+            note?: string | null;
+        };
+        /** @description A page of escalations: pending ones first, oldest first. */
+        AdminEscalationPage: {
+            items: components["schemas"]["AdminEscalation"][];
+            /** Format: int32 */
+            page: number;
+            /** Format: int32 */
+            per_page: number;
+            /**
+             * Format: int64
+             * @description Items matching the filters, all pages included.
+             */
+            total: number;
+            /** Format: int32 */
+            total_pages: number;
+        };
+        /** @description An idea, whatever its status. */
+        AdminIdea: {
+            /** Format: uuid */
+            id: string;
+            status: components["schemas"]["IdeaStatus"];
+            slug: string | null;
+            title: string | null;
+            /** @description Beginning of the masked original text (`null` once purged). */
+            excerpt: string | null;
+            submitted_admin_level: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            status_changed_at: string;
+            rejection_reason_code: string | null;
+            /** @description `report_review`, `escalation` or `admin`. */
+            hidden_reason: string | null;
+            /** Format: date-time */
+            hidden_at: string | null;
+            /**
+             * Format: uuid
+             * @description The idea a merged duplicate was merged into.
+             */
+            parent_idea_id: string | null;
+            /** Format: int32 */
+            proposal_count: number;
+            /** Format: int32 */
+            contribution_count: number;
+            /** Format: int64 */
+            score_eur: number | null;
+            /**
+             * Format: int64
+             * @description Accepted reports waiting for their review.
+             */
+            reports_pending: number;
+            review_request_pending: boolean;
+            escalation_pending: boolean;
+        };
+        /** @description A page of ideas, most recently changed first. */
+        AdminIdeaPage: {
+            items: components["schemas"]["AdminIdea"][];
+            /** Format: int32 */
+            page: number;
+            /** Format: int32 */
+            per_page: number;
+            /**
+             * Format: int64
+             * @description Items matching the filters, all pages included.
+             */
+            total: number;
+            /** Format: int32 */
+            total_pages: number;
+        };
+        /** @description An idea as referred to by the admin lists. */
+        AdminIdeaRef: {
+            /** Format: uuid */
+            id: string;
+            slug: string | null;
+            title: string | null;
+            status: string;
+        };
         /** @description A job of the queue. Payloads and errors hold internal identifiers only (§7.1). */
         AdminJob: {
             /** Format: int64 */
@@ -563,6 +830,115 @@ export interface components {
             reports_awaiting_review: number;
             /** Format: int64 */
             jobs_dead: number;
+        };
+        /** @description Result of a re-analysis request. */
+        AdminReanalysis: {
+            /** @description `false` when an analysis of the idea was already queued (it will run anyway). */
+            queued: boolean;
+            status: components["schemas"]["IdeaStatus"];
+        };
+        /** @description Reason of a masking or a republication, kept in the admin journal. */
+        AdminReason: {
+            /** @description 1 to 1 000 characters. */
+            reason: string;
+        };
+        /**
+         * @description A report. The reporter's name and e-mail (optional, erased after 6 months) are shown only
+         *     here, never published nor exported.
+         */
+        AdminReport: {
+            /** Format: uuid */
+            id: string;
+            idea: components["schemas"]["AdminIdeaRef"];
+            reason: components["schemas"]["ReportReason"];
+            /** @description Masked details (`null` when none were given or once erased). */
+            details: string | null;
+            status: components["schemas"]["ReportStatus"];
+            /** Format: date-time */
+            created_at: string;
+            rejection_reason_code: string | null;
+            reporter_name: string | null;
+            reporter_email: string | null;
+            good_faith: boolean;
+            review: components["schemas"]["AdminReportReview"] | null;
+        };
+        /** @description A page of reports, most recent first. */
+        AdminReportPage: {
+            items: components["schemas"]["AdminReport"][];
+            /** Format: int32 */
+            page: number;
+            /** Format: int32 */
+            per_page: number;
+            /**
+             * Format: int64
+             * @description Items matching the filters, all pages included.
+             */
+            total: number;
+            /** Format: int32 */
+            total_pages: number;
+        };
+        /** @description The AI review that handled a report. */
+        AdminReportReview: {
+            /** Format: uuid */
+            id: string;
+            /** @description `maintain`, `update` or `hide`. */
+            outcome: string;
+            escalate: boolean;
+            explanation: string;
+            corrections: string;
+            /** Format: date-time */
+            reviewed_at: string;
+        };
+        /** @description A human review requested by an author. */
+        AdminReviewRequest: {
+            /** Format: uuid */
+            id: string;
+            target_kind: components["schemas"]["TargetKind"];
+            /** Format: uuid */
+            target_id: string;
+            idea: components["schemas"]["AdminIdeaRef"] | null;
+            /** @description Current status of the text. */
+            target_status: string | null;
+            /** @description Masked text under review. */
+            text: string | null;
+            /** @description Masked message of the author. */
+            message: string | null;
+            decision: components["schemas"]["AdminReviewedDecision"] | null;
+            status: components["schemas"]["ReviewRequestStatus"];
+            resolution: components["schemas"]["ReviewResolution"] | null;
+            note: string | null;
+            /** Format: date-time */
+            created_at: string;
+            /** Format: date-time */
+            handled_at: string | null;
+        };
+        /** @description A page of review requests: pending ones first, oldest first. */
+        AdminReviewRequestPage: {
+            items: components["schemas"]["AdminReviewRequest"][];
+            /** Format: int32 */
+            page: number;
+            /** Format: int32 */
+            per_page: number;
+            /**
+             * Format: int64
+             * @description Items matching the filters, all pages included.
+             */
+            total: number;
+            /** Format: int32 */
+            total_pages: number;
+        };
+        /** @description Decision of the administrator on a review request. */
+        AdminReviewResolution: {
+            resolution: components["schemas"]["ReviewResolution"];
+            /** @description Note of the administrator (2 000 characters), never shown to the author. */
+            note?: string | null;
+        };
+        /** @description The automated decision under review. */
+        AdminReviewedDecision: {
+            /** @description `rejected` (refused by the screening) or `hidden` (masked idea). */
+            measure: string;
+            /** @description Refusal reason code, or `hidden_reason` of a masking. */
+            reason_code: string | null;
         };
         /**
          * @description Screening outcomes of one kind of text over the window. Rates are shares of the
@@ -745,6 +1121,11 @@ export interface components {
              */
             message: string;
         };
+        /**
+         * @description How the administrator closed an escalation of serious content (§7.5).
+         * @enum {string}
+         */
+        EscalationOutcome: "Transmitted" | "Dismissed";
         /** @description Low, median and high estimate, in whole euros. */
         EuroRange: {
             /** Format: int64 */
@@ -896,6 +1277,23 @@ export interface components {
          * @enum {string}
          */
         IdeaSort: "Score" | "Gain" | "Feasibility" | "Delay" | "Recent";
+        /**
+         * @description Lifecycle of an idea.
+         *
+         *     ```text
+         *     submitted ─▶ screening ─┬─▶ rejected ─▶ purged (or accepted: overturned by the admin)
+         *                             ├─▶ second_opinion ─▶ rejected | accepted
+         *                             ├─▶ accepted ─▶ dedup ─┬─▶ merged
+         *                             │                      └─▶ queued_analysis ─▶ analyzing ─┬─▶ published ⇄ hidden ─▶ purged
+         *                             │                                                        └─▶ analysis_failed ─▶ queued_analysis
+         *                             └─▶ submitted (decision service unavailable, retried by a job)
+         *     ```
+         *
+         *     Re-analyses of a published (or hidden) idea do not change its status: the idea stays
+         *     visible with its current analysis until the new one replaces it.
+         * @enum {string}
+         */
+        IdeaStatus: "Submitted" | "Screening" | "SecondOpinion" | "Rejected" | "Purged" | "Accepted" | "Dedup" | "Merged" | "QueuedAnalysis" | "Analyzing" | "AnalysisFailed" | "Published" | "Hidden";
         /** @description A new idea (§5.1). */
         IdeaSubmission: {
             /**
@@ -1087,6 +1485,11 @@ export interface components {
          * @enum {string}
          */
         ReportReason: "CalculationError" | "WrongSource" | "ProblematicContent" | "Duplicate" | "Other";
+        /**
+         * @description Lifecycle of a report (§5.6).
+         * @enum {string}
+         */
+        ReportStatus: "Submitted" | "Screening" | "SecondOpinion" | "Accepted" | "Rejected" | "Reviewed" | "Purged";
         /** @description A report about a published idea (§5.6, §7.5). */
         ReportSubmission: {
             reason: components["schemas"]["ReportReason"];
@@ -1123,6 +1526,11 @@ export interface components {
          * @enum {string}
          */
         ReviewRequestStatus: "Pending" | "Done";
+        /**
+         * @description Outcome of a human review requested by an author (§7.1).
+         * @enum {string}
+         */
+        ReviewResolution: "Confirmed" | "Overturned";
         /** @description Right of reply published by the editor under the idea (LCEN art. 1-1 III). Plain text. */
         RightOfReply: {
             /** @description How the person replying is designated, as they asked. */
@@ -1390,6 +1798,12 @@ export interface components {
 }
 export type SchemaAdminAiCosts = components['schemas']['AdminAiCosts'];
 export type SchemaAdminDashboard = components['schemas']['AdminDashboard'];
+export type SchemaAdminEscalation = components['schemas']['AdminEscalation'];
+export type SchemaAdminEscalationHandling = components['schemas']['AdminEscalationHandling'];
+export type SchemaAdminEscalationPage = components['schemas']['AdminEscalationPage'];
+export type SchemaAdminIdea = components['schemas']['AdminIdea'];
+export type SchemaAdminIdeaPage = components['schemas']['AdminIdeaPage'];
+export type SchemaAdminIdeaRef = components['schemas']['AdminIdeaRef'];
 export type SchemaAdminJob = components['schemas']['AdminJob'];
 export type SchemaAdminJobCount = components['schemas']['AdminJobCount'];
 export type SchemaAdminJobPage = components['schemas']['AdminJobPage'];
@@ -1398,6 +1812,15 @@ export type SchemaAdminLevel = components['schemas']['AdminLevel'];
 export type SchemaAdminLevelItem = components['schemas']['AdminLevelItem'];
 export type SchemaAdminPurposeCost = components['schemas']['AdminPurposeCost'];
 export type SchemaAdminQueues = components['schemas']['AdminQueues'];
+export type SchemaAdminReanalysis = components['schemas']['AdminReanalysis'];
+export type SchemaAdminReason = components['schemas']['AdminReason'];
+export type SchemaAdminReport = components['schemas']['AdminReport'];
+export type SchemaAdminReportPage = components['schemas']['AdminReportPage'];
+export type SchemaAdminReportReview = components['schemas']['AdminReportReview'];
+export type SchemaAdminReviewRequest = components['schemas']['AdminReviewRequest'];
+export type SchemaAdminReviewRequestPage = components['schemas']['AdminReviewRequestPage'];
+export type SchemaAdminReviewResolution = components['schemas']['AdminReviewResolution'];
+export type SchemaAdminReviewedDecision = components['schemas']['AdminReviewedDecision'];
 export type SchemaAdminScreeningRates = components['schemas']['AdminScreeningRates'];
 export type SchemaAdminSession = components['schemas']['AdminSession'];
 export type SchemaAiMarking = components['schemas']['AiMarking'];
@@ -1414,6 +1837,7 @@ export type SchemaContributionSummary = components['schemas']['ContributionSumma
 export type SchemaDeletionResponse = components['schemas']['DeletionResponse'];
 export type SchemaErrorBody = components['schemas']['ErrorBody'];
 export type SchemaErrorDetail = components['schemas']['ErrorDetail'];
+export type SchemaEscalationOutcome = components['schemas']['EscalationOutcome'];
 export type SchemaEuroRange = components['schemas']['EuroRange'];
 export type SchemaFeasibilityAssessment = components['schemas']['FeasibilityAssessment'];
 export type SchemaHealthResponse = components['schemas']['HealthResponse'];
@@ -1424,6 +1848,7 @@ export type SchemaIdeaList = components['schemas']['IdeaList'];
 export type SchemaIdeaListItem = components['schemas']['IdeaListItem'];
 export type SchemaIdeaRedirect = components['schemas']['IdeaRedirect'];
 export type SchemaIdeaSort = components['schemas']['IdeaSort'];
+export type SchemaIdeaStatus = components['schemas']['IdeaStatus'];
 export type SchemaIdeaSubmission = components['schemas']['IdeaSubmission'];
 export type SchemaImpactAssessment = components['schemas']['ImpactAssessment'];
 export type SchemaImpactDirection = components['schemas']['ImpactDirection'];
@@ -1442,10 +1867,12 @@ export type SchemaOriginalText = components['schemas']['OriginalText'];
 export type SchemaPublicStats = components['schemas']['PublicStats'];
 export type SchemaRejectionReason = components['schemas']['RejectionReason'];
 export type SchemaReportReason = components['schemas']['ReportReason'];
+export type SchemaReportStatus = components['schemas']['ReportStatus'];
 export type SchemaReportSubmission = components['schemas']['ReportSubmission'];
 export type SchemaReviewOutcome = components['schemas']['ReviewOutcome'];
 export type SchemaReviewRequestBody = components['schemas']['ReviewRequestBody'];
 export type SchemaReviewRequestStatus = components['schemas']['ReviewRequestStatus'];
+export type SchemaReviewResolution = components['schemas']['ReviewResolution'];
 export type SchemaRightOfReply = components['schemas']['RightOfReply'];
 export type SchemaRuleReference = components['schemas']['RuleReference'];
 export type SchemaScoreComponents = components['schemas']['ScoreComponents'];
@@ -1488,6 +1915,335 @@ export interface operations {
             };
             /** @description Jeton absent ou invalide. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    listAdminEscalations: {
+        parameters: {
+            query?: {
+                /** @description `pending` or `done`; both when absent (pending first). */
+                status?: components["schemas"]["ReviewRequestStatus"];
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Une page d'escalades. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminEscalationPage"];
+                };
+            };
+            /** @description Paramètre invalide. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    handleAdminEscalation: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant de l'escalade */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminEscalationHandling"];
+            };
+        };
+        responses: {
+            /** @description Escalade traitée. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminEscalation"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Escalade inconnue (`escalation_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Déjà traitée (`escalation_already_handled`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Corps invalide. */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    listAdminIdeas: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["IdeaStatus"];
+                /**
+                 * @description Identifier, or part of the slug, title, summary or text (accents and case ignored),
+                 *     200 characters.
+                 */
+                q?: string;
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Une page d'idées. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminIdeaPage"];
+                };
+            };
+            /** @description Paramètre invalide. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    hideAdminIdea: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant de l'idée */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminReason"];
+            };
+        };
+        responses: {
+            /** @description Idée masquée. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminIdea"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Idée inconnue (`idea_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Idée non publiée (`idea_not_published`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Motif absent ou trop long (`invalid_field`). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    reanalyzeAdminIdea: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant de l'idée */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Analyse mise en file. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminReanalysis"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Idée inconnue (`idea_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Statut sans analyse possible (`reanalysis_not_available`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    republishAdminIdea: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant de l'idée */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminReason"];
+            };
+        };
+        responses: {
+            /** @description Idée republiée. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminIdea"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Idée inconnue (`idea_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Idée non masquée (`idea_not_hidden`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Motif absent ou trop long (`invalid_field`). */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };
@@ -1581,6 +2337,157 @@ export interface operations {
             };
             /** @description Job non mort (`job_not_dead`) ou job équivalent déjà en file (`job_already_queued`). */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    listAdminReports: {
+        parameters: {
+            query?: {
+                status?: components["schemas"]["ReportStatus"];
+                reason?: components["schemas"]["ReportReason"];
+                /** @description Reports of one idea. */
+                idea_id?: string;
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Une page de signalements. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminReportPage"];
+                };
+            };
+            /** @description Paramètre invalide. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    listAdminReviewRequests: {
+        parameters: {
+            query?: {
+                /** @description `pending` or `done`; both when absent (pending first). */
+                status?: components["schemas"]["ReviewRequestStatus"];
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Une page de demandes de réexamen. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminReviewRequestPage"];
+                };
+            };
+            /** @description Paramètre invalide. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    resolveAdminReviewRequest: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant de la demande */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminReviewResolution"];
+            };
+        };
+        responses: {
+            /** @description Demande traitée. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminReviewRequest"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Demande inconnue (`review_request_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Déjà traitée (`review_request_already_resolved`) ou décision qui ne peut plus être infirmée (`decision_not_overturnable`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Corps invalide. */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

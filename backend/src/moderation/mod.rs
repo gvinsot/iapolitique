@@ -423,6 +423,61 @@ async fn settle_typed<S: ScreenedStatus + StatusTable>(
     })
 }
 
+/// Note of the calibration label set when a refusal is overturned.
+pub const OVERTURN_LABEL_NOTE: &str = "Refus infirmé après réexamen humain.";
+
+/// Overturns the refusal of a text after a human review (§7.1): `rejected → accepted` with its
+/// history, rejection fields erased, the latest screening labelled `accept` for the calibration
+/// (unless already labelled) and the pipeline resumed as for an accepted text (duplicate
+/// detection, re-analysis or report review). Returns `false` (nothing changed) when the text
+/// is not `rejected`. Runs in the caller's transaction.
+pub async fn overturn_rejection(
+    conn: &mut PgConnection,
+    target: Target,
+    change: &Change,
+) -> Result<bool, ModerationError> {
+    let overturned = match target.kind {
+        TargetKind::Idea => overturn_typed::<IdeaStatus>(conn, target, change).await?,
+        TargetKind::Contribution => {
+            overturn_typed::<ContributionStatus>(conn, target, change).await?
+        }
+        TargetKind::Report => overturn_typed::<ReportStatus>(conn, target, change).await?,
+    };
+    if !overturned {
+        return Ok(false);
+    }
+    sqlx::query(
+        "UPDATE screenings SET human_label = 'accept', human_label_note = $3, labeled_at = now()
+         WHERE id = (SELECT id FROM screenings
+                     WHERE target_kind = $1 AND target_id = $2 AND outcome IS NOT NULL
+                     ORDER BY created_at DESC LIMIT 1)
+           AND human_label IS NULL",
+    )
+    .bind(target.kind.as_str())
+    .bind(target.id)
+    .bind(OVERTURN_LABEL_NOTE)
+    .execute(&mut *conn)
+    .await?;
+    follow_up(conn, target).await?;
+    Ok(true)
+}
+
+async fn overturn_typed<S: ScreenedStatus + StatusTable>(
+    conn: &mut PgConnection,
+    target: Target,
+    change: &Change,
+) -> Result<bool, ModerationError> {
+    if status::lock::<S>(conn, target.id).await? != Some(S::REJECTED) {
+        return Ok(false);
+    }
+    status::transition(conn, target.id, S::ACCEPTED, change).await?;
+    sqlx::query(S::UNREJECT_SQL)
+        .bind(target.id)
+        .execute(&mut *conn)
+        .await?;
+    Ok(true)
+}
+
 /// Enqueues what follows the acceptance of a text.
 async fn follow_up(conn: &mut PgConnection, target: Target) -> sqlx::Result<()> {
     match target.kind {

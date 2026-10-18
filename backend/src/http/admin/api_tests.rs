@@ -15,6 +15,30 @@ pub(crate) const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("GET", "/api/admin/dashboard"),
     ("GET", "/api/admin/jobs"),
     ("POST", "/api/admin/jobs/1/retry"),
+    ("GET", "/api/admin/ideas"),
+    (
+        "POST",
+        "/api/admin/ideas/00000000-0000-0000-0000-000000000000/hide",
+    ),
+    (
+        "POST",
+        "/api/admin/ideas/00000000-0000-0000-0000-000000000000/republish",
+    ),
+    (
+        "POST",
+        "/api/admin/ideas/00000000-0000-0000-0000-000000000000/reanalyze",
+    ),
+    ("GET", "/api/admin/reports"),
+    ("GET", "/api/admin/escalations"),
+    (
+        "POST",
+        "/api/admin/escalations/00000000-0000-0000-0000-000000000000/handle",
+    ),
+    ("GET", "/api/admin/review-requests"),
+    (
+        "POST",
+        "/api/admin/review-requests/00000000-0000-0000-0000-000000000000/resolve",
+    ),
 ];
 
 #[sqlx::test(migrator = "crate::db::MIGRATOR")]

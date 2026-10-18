@@ -45,6 +45,504 @@
         ]
       }
     },
+    "/api/admin/escalations": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "The escalation queue.",
+        "operationId": "listAdminEscalations",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`pending` or `done`; both when absent (pending first).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ReviewRequestStatus"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 10000,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 50,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Une page d'escalades.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminEscalationPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Paramètre invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
+    "/api/admin/escalations/{id}/handle": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Closes an escalation (the idea stays hidden; republish it separately if needed).",
+        "operationId": "handleAdminEscalation",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de l'escalade",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminEscalationHandling"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Escalade traitée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminEscalation"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Escalade inconnue (`escalation_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Déjà traitée (`escalation_already_handled`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Corps invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
+    "/api/admin/ideas": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Ideas of a status, with a search.",
+        "operationId": "listAdminIdeas",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/IdeaStatus"
+            }
+          },
+          {
+            "name": "q",
+            "in": "query",
+            "description": "Identifier, or part of the slug, title, summary or text (accents and case ignored),\n200 characters.",
+            "required": false,
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 10000,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 50,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Une page d'idées.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminIdeaPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Paramètre invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
+    "/api/admin/ideas/{id}/hide": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Hides a published idea (`hidden_reason = admin`): it leaves the portal and the next exports;\nits author sees the masking on the tracking page and may ask for a human review.",
+        "operationId": "hideAdminIdea",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de l'idée",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminReason"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Idée masquée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminIdea"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Idée inconnue (`idea_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idée non publiée (`idea_not_published`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Motif absent ou trop long (`invalid_field`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
+    "/api/admin/ideas/{id}/reanalyze": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Queues a new analysis (trigger `admin`, §5.7): of a published or hidden idea (it stays\nvisible with its current analysis until the new one replaces it), or of an idea whose\nanalysis failed (`analysis_failed → queued_analysis`).",
+        "operationId": "reanalyzeAdminIdea",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de l'idée",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "202": {
+            "description": "Analyse mise en file.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminReanalysis"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Idée inconnue (`idea_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Statut sans analyse possible (`reanalysis_not_available`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
+    "/api/admin/ideas/{id}/republish": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Republishes a hidden idea, whatever hid it.",
+        "operationId": "republishAdminIdea",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de l'idée",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminReason"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Idée republiée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminIdea"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Idée inconnue (`idea_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idée non masquée (`idea_not_hidden`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Motif absent ou trop long (`invalid_field`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
     "/api/admin/jobs": {
       "get": {
         "tags": [
@@ -183,6 +681,269 @@
           },
           "409": {
             "description": "Job non mort (`job_not_dead`) ou job équivalent déjà en file (`job_already_queued`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
+    "/api/admin/reports": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Reports, with their idea and their review.",
+        "operationId": "listAdminReports",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ReportStatus"
+            }
+          },
+          {
+            "name": "reason",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ReportReason"
+            }
+          },
+          {
+            "name": "idea_id",
+            "in": "query",
+            "description": "Reports of one idea.",
+            "required": false,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 10000,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 50,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Une page de signalements.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminReportPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Paramètre invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
+    "/api/admin/review-requests": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "The human review requests.",
+        "operationId": "listAdminReviewRequests",
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "description": "`pending` or `done`; both when absent (pending first).",
+            "required": false,
+            "schema": {
+              "$ref": "#/components/schemas/ReviewRequestStatus"
+            }
+          },
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 10000,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 50,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Une page de demandes de réexamen.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminReviewRequestPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Paramètre invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
+    "/api/admin/review-requests/{id}/resolve": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Closes a review request. `overturned`: a refused text becomes `accepted` and resumes the\npipeline (duplicate detection, re-analysis or report review), a masked idea is republished;\n`confirmed`: the decision stands and the suspended purge resumes.",
+        "operationId": "resolveAdminReviewRequest",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de la demande",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminReviewResolution"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Demande traitée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminReviewRequest"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Demande inconnue (`review_request_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Déjà traitée (`review_request_already_resolved`) ou décision qui ne peut plus être infirmée (`decision_not_overturnable`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Corps invalide.",
             "content": {
               "application/json": {
                 "schema": {
@@ -1232,6 +1993,324 @@
           }
         }
       },
+      "AdminEscalation": {
+        "type": "object",
+        "description": "An idea hidden at once because a report review found serious content (§7.5).",
+        "required": [
+          "id",
+          "idea",
+          "status",
+          "outcome",
+          "note",
+          "created_at",
+          "due_at",
+          "handled_at",
+          "review_explanation"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "idea": {
+            "$ref": "#/components/schemas/AdminIdeaRef"
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReviewRequestStatus",
+            "description": "`pending` or `done`."
+          },
+          "outcome": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/EscalationOutcome"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "due_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "End of the 24-hour target."
+          },
+          "handled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "review_explanation": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Explanation of the review that raised it."
+          }
+        }
+      },
+      "AdminEscalationHandling": {
+        "type": "object",
+        "description": "How an escalation was handled.",
+        "required": [
+          "outcome"
+        ],
+        "properties": {
+          "outcome": {
+            "$ref": "#/components/schemas/EscalationOutcome"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Date of the referral, reference… (2 000 characters)."
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminEscalationPage": {
+        "type": "object",
+        "description": "A page of escalations: pending ones first, oldest first.",
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total",
+          "total_pages"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminEscalation"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "per_page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Items matching the filters, all pages included.",
+            "minimum": 0
+          },
+          "total_pages": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "AdminIdea": {
+        "type": "object",
+        "description": "An idea, whatever its status.",
+        "required": [
+          "id",
+          "status",
+          "slug",
+          "title",
+          "excerpt",
+          "submitted_admin_level",
+          "created_at",
+          "status_changed_at",
+          "rejection_reason_code",
+          "hidden_reason",
+          "hidden_at",
+          "parent_idea_id",
+          "proposal_count",
+          "contribution_count",
+          "score_eur",
+          "reports_pending",
+          "review_request_pending",
+          "escalation_pending"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "status": {
+            "$ref": "#/components/schemas/IdeaStatus"
+          },
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "excerpt": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Beginning of the masked original text (`null` once purged)."
+          },
+          "submitted_admin_level": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "status_changed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "rejection_reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "hidden_reason": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`report_review`, `escalation` or `admin`."
+          },
+          "hidden_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          },
+          "parent_idea_id": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "uuid",
+            "description": "The idea a merged duplicate was merged into."
+          },
+          "proposal_count": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "contribution_count": {
+            "type": "integer",
+            "format": "int32"
+          },
+          "score_eur": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int64"
+          },
+          "reports_pending": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Accepted reports waiting for their review."
+          },
+          "review_request_pending": {
+            "type": "boolean"
+          },
+          "escalation_pending": {
+            "type": "boolean"
+          }
+        }
+      },
+      "AdminIdeaPage": {
+        "type": "object",
+        "description": "A page of ideas, most recently changed first.",
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total",
+          "total_pages"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminIdea"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "per_page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Items matching the filters, all pages included.",
+            "minimum": 0
+          },
+          "total_pages": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "AdminIdeaRef": {
+        "type": "object",
+        "description": "An idea as referred to by the admin lists.",
+        "required": [
+          "id",
+          "slug",
+          "title",
+          "status"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "slug": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "title": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "status": {
+            "type": "string"
+          }
+        }
+      },
       "AdminJob": {
         "type": "object",
         "description": "A job of the queue. Payloads and errors hold internal identifiers only (§7.1).",
@@ -1526,6 +2605,372 @@
           "jobs_dead": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "AdminReanalysis": {
+        "type": "object",
+        "description": "Result of a re-analysis request.",
+        "required": [
+          "queued",
+          "status"
+        ],
+        "properties": {
+          "queued": {
+            "type": "boolean",
+            "description": "`false` when an analysis of the idea was already queued (it will run anyway)."
+          },
+          "status": {
+            "$ref": "#/components/schemas/IdeaStatus"
+          }
+        }
+      },
+      "AdminReason": {
+        "type": "object",
+        "description": "Reason of a masking or a republication, kept in the admin journal.",
+        "required": [
+          "reason"
+        ],
+        "properties": {
+          "reason": {
+            "type": "string",
+            "description": "1 to 1 000 characters."
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminReport": {
+        "type": "object",
+        "description": "A report. The reporter's name and e-mail (optional, erased after 6 months) are shown only\nhere, never published nor exported.",
+        "required": [
+          "id",
+          "idea",
+          "reason",
+          "details",
+          "status",
+          "created_at",
+          "rejection_reason_code",
+          "reporter_name",
+          "reporter_email",
+          "good_faith",
+          "review"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "idea": {
+            "$ref": "#/components/schemas/AdminIdeaRef"
+          },
+          "reason": {
+            "$ref": "#/components/schemas/ReportReason"
+          },
+          "details": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Masked details (`null` when none were given or once erased)."
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReportStatus"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "rejection_reason_code": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reporter_name": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "reporter_email": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "good_faith": {
+            "type": "boolean"
+          },
+          "review": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AdminReportReview"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "AdminReportPage": {
+        "type": "object",
+        "description": "A page of reports, most recent first.",
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total",
+          "total_pages"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminReport"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "per_page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Items matching the filters, all pages included.",
+            "minimum": 0
+          },
+          "total_pages": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "AdminReportReview": {
+        "type": "object",
+        "description": "The AI review that handled a report.",
+        "required": [
+          "id",
+          "outcome",
+          "escalate",
+          "explanation",
+          "corrections",
+          "reviewed_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "outcome": {
+            "type": "string",
+            "description": "`maintain`, `update` or `hide`."
+          },
+          "escalate": {
+            "type": "boolean"
+          },
+          "explanation": {
+            "type": "string"
+          },
+          "corrections": {
+            "type": "string"
+          },
+          "reviewed_at": {
+            "type": "string",
+            "format": "date-time"
+          }
+        }
+      },
+      "AdminReviewRequest": {
+        "type": "object",
+        "description": "A human review requested by an author.",
+        "required": [
+          "id",
+          "target_kind",
+          "target_id",
+          "idea",
+          "target_status",
+          "text",
+          "message",
+          "decision",
+          "status",
+          "resolution",
+          "note",
+          "created_at",
+          "handled_at"
+        ],
+        "properties": {
+          "id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "target_kind": {
+            "$ref": "#/components/schemas/TargetKind"
+          },
+          "target_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "idea": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AdminIdeaRef",
+                "description": "The idea concerned (the text itself, or the idea of a contribution or a report)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "target_status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Current status of the text."
+          },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Masked text under review."
+          },
+          "message": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Masked message of the author."
+          },
+          "decision": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/AdminReviewedDecision",
+                "description": "The decision still in force (`null` once overturned or when the text changed since)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "status": {
+            "$ref": "#/components/schemas/ReviewRequestStatus"
+          },
+          "resolution": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReviewResolution"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "handled_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time"
+          }
+        }
+      },
+      "AdminReviewRequestPage": {
+        "type": "object",
+        "description": "A page of review requests: pending ones first, oldest first.",
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total",
+          "total_pages"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminReviewRequest"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "per_page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Items matching the filters, all pages included.",
+            "minimum": 0
+          },
+          "total_pages": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "AdminReviewResolution": {
+        "type": "object",
+        "description": "Decision of the administrator on a review request.",
+        "required": [
+          "resolution"
+        ],
+        "properties": {
+          "resolution": {
+            "$ref": "#/components/schemas/ReviewResolution"
+          },
+          "note": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Note of the administrator (2 000 characters), never shown to the author."
+          }
+        },
+        "additionalProperties": false
+      },
+      "AdminReviewedDecision": {
+        "type": "object",
+        "description": "The automated decision under review.",
+        "required": [
+          "measure",
+          "reason_code"
+        ],
+        "properties": {
+          "measure": {
+            "type": "string",
+            "description": "`rejected` (refused by the screening) or `hidden` (masked idea)."
+          },
+          "reason_code": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Refusal reason code, or `hidden_reason` of a masking."
           }
         }
       },
@@ -1961,6 +3406,14 @@
           }
         }
       },
+      "EscalationOutcome": {
+        "type": "string",
+        "description": "How the administrator closed an escalation of serious content (§7.5).",
+        "enum": [
+          "Transmitted",
+          "Dismissed"
+        ]
+      },
       "EuroRange": {
         "type": "object",
         "description": "Low, median and high estimate, in whole euros.",
@@ -2393,6 +3846,25 @@
           "Feasibility",
           "Delay",
           "Recent"
+        ]
+      },
+      "IdeaStatus": {
+        "type": "string",
+        "description": "Lifecycle of an idea.\n\n```text\nsubmitted ─▶ screening ─┬─▶ rejected ─▶ purged (or accepted: overturned by the admin)\n                        ├─▶ second_opinion ─▶ rejected | accepted\n                        ├─▶ accepted ─▶ dedup ─┬─▶ merged\n                        │                      └─▶ queued_analysis ─▶ analyzing ─┬─▶ published ⇄ hidden ─▶ purged\n                        │                                                        └─▶ analysis_failed ─▶ queued_analysis\n                        └─▶ submitted (decision service unavailable, retried by a job)\n```\n\nRe-analyses of a published (or hidden) idea do not change its status: the idea stays\nvisible with its current analysis until the new one replaces it.",
+        "enum": [
+          "Submitted",
+          "Screening",
+          "SecondOpinion",
+          "Rejected",
+          "Purged",
+          "Accepted",
+          "Dedup",
+          "Merged",
+          "QueuedAnalysis",
+          "Analyzing",
+          "AnalysisFailed",
+          "Published",
+          "Hidden"
         ]
       },
       "IdeaSubmission": {
@@ -2871,6 +4343,19 @@
           "Other"
         ]
       },
+      "ReportStatus": {
+        "type": "string",
+        "description": "Lifecycle of a report (§5.6).",
+        "enum": [
+          "Submitted",
+          "Screening",
+          "SecondOpinion",
+          "Accepted",
+          "Rejected",
+          "Reviewed",
+          "Purged"
+        ]
+      },
       "ReportSubmission": {
         "type": "object",
         "description": "A report about a published idea (§5.6, §7.5).",
@@ -2950,6 +4435,14 @@
         "enum": [
           "Pending",
           "Done"
+        ]
+      },
+      "ReviewResolution": {
+        "type": "string",
+        "description": "Outcome of a human review requested by an author (§7.1).",
+        "enum": [
+          "Confirmed",
+          "Overturned"
         ]
       },
       "RightOfReply": {

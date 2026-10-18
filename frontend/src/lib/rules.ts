@@ -63,8 +63,8 @@ export const screeningRules: readonly ScreeningRule[] = [
     anchor: "critere-donnees-personnelles",
     title: "Aucun particulier identifiable",
     requirement:
-      "Le texte ne désigne aucun particulier identifiable (nom, fonction précise dans un service nommé, adresse…) et ne lui impute aucun fait. Les élus et ministres agissant dans leur fonction ne sont pas des particuliers, mais la règle 4.3 interdit de les viser.",
-    appliesTo: ["idea"],
+      "Le texte ne permet de reconnaître aucun particulier (nom, prénom, signature, poste occupé par une seule personne dans un service, un établissement ou une ville nommés) et ne lui reproche aucun fait. Les responsables politiques agissant dans leur fonction ne sont pas des particuliers, mais la règle 4.3 interdit de les viser.",
+    appliesTo: ["idea", "contribution"],
   },
   {
     number: "4.5",

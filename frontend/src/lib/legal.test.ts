@@ -89,6 +89,12 @@ describe("screening rules", () => {
       "lawful",
       "realism",
     ]);
+    expect(
+      screeningRules.filter((rule) => rule.appliesTo.includes("contribution")).map((r) => r.key),
+    ).toEqual(["injection", "respectful", "targeted", "personal_data", "relevant"]);
+    expect(
+      screeningRules.filter((rule) => rule.appliesTo.includes("report")).map((r) => r.key),
+    ).toEqual(["injection", "respectful", "relevant"]);
     expect(new Set(screeningRules.map((rule) => rule.anchor)).size).toBe(screeningRules.length);
   });
 

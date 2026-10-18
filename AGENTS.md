@@ -766,7 +766,7 @@ configuration liste tous les problèmes et empêche le démarrage) :
 |---|---|---|
 | `DATABASE_CONNECTION_STRING` | **requis** | URL `postgres://` (secret). Une liste d'hôtes `h1,h2` est réduite au premier. |
 | `ADMIN_API_TOKEN`, `ALTCHA_HMAC_KEY` | **requis pour l'api** | secrets, 32 caractères minimum |
-| `MISTRAL_API_KEY` | absent | secret ; sans clé, le worker laisse les jobs IA en file (avertissement) |
+| `MISTRAL_API_KEY` | absent | secret ; sans clé, le worker laisse les jobs IA en file (avertissement) ; un handler IA appelé sans client replanifie son job 1 h plus tard (`jobs/guard.rs`), sans le faire échouer |
 | `BIND_ADDRESS`, `PUBLIC_PORT`, `ADMIN_PORT`, `WORKER_HEALTH_PORT` | `0.0.0.0`, 8080, 8081, 8082 | écoute |
 | `HTTP_REQUEST_TIMEOUT_SECS`, `HTTP_BODY_LIMIT_BYTES` | 30, 65536 | limites HTTP |
 | `TRUSTED_PROXY_HOPS` | 1 | nombre de proxys (Traefik) qui ajoutent à `X-Forwarded-For` |
@@ -779,12 +779,12 @@ configuration liste tous les problèmes et empêche le démarrage) :
 | `MISTRAL_ANALYSIS_INPUT_EUR_PER_MTOK`, `MISTRAL_ANALYSIS_OUTPUT_EUR_PER_MTOK` | 2, 6 | prix par million de tokens |
 | `MISTRAL_REVIEW_INPUT_EUR_PER_MTOK`, `MISTRAL_REVIEW_OUTPUT_EUR_PER_MTOK` | = analyse | idem pour second avis et revue |
 | `MISTRAL_EMBED_EUR_PER_MTOK`, `MISTRAL_WEB_SEARCH_EUR_PER_CALL` | 0.1, 0.03 | embeddings, recherche web |
-| `DEDUP_SIMILARITY_THRESHOLD` | 0.95 | similarité cosinus de fusion (valeur prudente, à calibrer) |
+| `DEDUP_SIMILARITY_THRESHOLD` | 0.95 | similarité cosinus de fusion (valeur prudente, à calibrer ; le réglage `dedup.similarity_threshold`, §13.6, prévaut) |
 | `RATE_LIMIT_IDEAS_PER_HOUR`, `RATE_LIMIT_IDEAS_PER_DAY` | 5, 20 | par empreinte |
 | `RATE_LIMIT_CONTRIBUTIONS_PER_DAY`, `RATE_LIMIT_REPORTS_PER_DAY` | 20, 20 | par empreinte |
 | `PROMPTS_DIR` | `/app/prompts` | prompts versionnés |
 | `RUST_LOG`, `LOG_FORMAT` | `info,sqlx=warn`, `json` | logs (`text` en dev) |
-| `TRAEFIK_HOST`, `ADMIN_HOST` | absents | informatifs |
+| `TRAEFIK_HOST`, `ADMIN_HOST` | absents | `TRAEFIK_HOST` sert aussi aux URL canoniques des exports (`iapolitique.fr` si absent) |
 
 ### 13.2 Routes HTTP
 

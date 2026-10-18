@@ -28,6 +28,7 @@ pub mod health;
 pub mod ideas;
 pub mod middleware;
 pub mod openapi;
+pub mod reference;
 pub mod submissions;
 pub mod tracking;
 
@@ -95,6 +96,9 @@ pub fn public_router(state: AppState) -> Router {
             "/api/ideas/{slug}/reports",
             post(submissions::submit_report),
         )
+        .route("/api/methodology", get(reference::methodology))
+        .route("/api/taxonomy", get(reference::taxonomy))
+        .route("/api/stats", get(reference::stats))
         .route("/api/track", post(tracking::track))
         .route("/api/track/delete", post(tracking::delete))
         .route("/api/track/review-request", post(tracking::request_review))

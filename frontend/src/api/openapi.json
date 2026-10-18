@@ -503,6 +503,27 @@
         }
       }
     },
+    "/api/methodology": {
+      "get": {
+        "tags": [
+          "reference"
+        ],
+        "summary": "The methodology: prompts, screening grid (with the thresholds in force), taxonomy, score\nformula and their versions, read from what the service actually uses.",
+        "operationId": "getMethodology",
+        "responses": {
+          "200": {
+            "description": "Méthodologie en vigueur.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/MethodologyResponse"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/openapi.json": {
       "get": {
         "tags": [
@@ -546,6 +567,48 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/stats": {
+      "get": {
+        "tags": [
+          "reference"
+        ],
+        "summary": "Public counters of the platform.",
+        "operationId": "getStats",
+        "responses": {
+          "200": {
+            "description": "Compteurs publics.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/PublicStats"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/api/taxonomy": {
+      "get": {
+        "tags": [
+          "reference"
+        ],
+        "summary": "Administrative levels, categories, impact publics, labels of the enumerations and refusal\nreasons.",
+        "operationId": "getTaxonomy",
+        "responses": {
+          "200": {
+            "description": "Taxonomie en vigueur.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaxonomyResponse"
                 }
               }
             }
@@ -762,6 +825,33 @@
           "Multi"
         ]
       },
+      "AdminLevelItem": {
+        "type": "object",
+        "description": "An administrative level and the category groups it accepts.",
+        "required": [
+          "key",
+          "label",
+          "description",
+          "category_groups"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "type": "string"
+          },
+          "category_groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "AdminSession": {
         "type": "object",
         "required": [
@@ -908,6 +998,41 @@
           }
         }
       },
+      "CategoryItem": {
+        "type": "object",
+        "description": "A category, its group and the administrative levels that accept it.",
+        "required": [
+          "key",
+          "label",
+          "description",
+          "group",
+          "admin_levels"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          },
+          "group": {
+            "type": "string",
+            "description": "`etat`, `securite_sociale`, `collectivites` or `transverse`."
+          },
+          "admin_levels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
       "CategoryRef": {
         "type": "object",
         "description": "A category of `prompts/taxonomy.yaml` with its French label.",
@@ -934,6 +1059,23 @@
           "Medium",
           "High"
         ]
+      },
+      "ConfidenceFactor": {
+        "type": "object",
+        "description": "A confidence level and its factor in the score.",
+        "required": [
+          "level",
+          "factor"
+        ],
+        "properties": {
+          "level": {
+            "$ref": "#/components/schemas/Confidence"
+          },
+          "factor": {
+            "type": "number",
+            "format": "double"
+          }
+        }
       },
       "ContributionKind": {
         "type": "string",
@@ -1582,6 +1724,23 @@
           "Uncertain"
         ]
       },
+      "KeyCount": {
+        "type": "object",
+        "description": "Number of published ideas of one key (administrative level or kind).",
+        "required": [
+          "key",
+          "count"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "count": {
+            "type": "integer",
+            "format": "int64"
+          }
+        }
+      },
       "LegalVehicle": {
         "type": "string",
         "description": "Legal instrument needed to implement an idea (§6.2 `legal_vehicle`).",
@@ -1603,6 +1762,102 @@
           "Rejected",
           "Hidden"
         ]
+      },
+      "MethodologyFile": {
+        "type": "object",
+        "description": "A file of `prompts/` as used in production.",
+        "required": [
+          "file",
+          "kind",
+          "content"
+        ],
+        "properties": {
+          "file": {
+            "type": "string",
+            "description": "File name in `prompts/`, e.g. `screening.yaml`."
+          },
+          "kind": {
+            "$ref": "#/components/schemas/MethodologyFileKind"
+          },
+          "version": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`version` of the file; none for the JSON schemas (versioned with their prompt)."
+          },
+          "content": {
+            "type": "string",
+            "description": "Full text of the file."
+          }
+        }
+      },
+      "MethodologyFileKind": {
+        "type": "string",
+        "description": "Role of a file of `prompts/` on the methodology page.",
+        "enum": [
+          "Screening",
+          "Taxonomy",
+          "Prompt",
+          "Schema"
+        ]
+      },
+      "MethodologyResponse": {
+        "type": "object",
+        "description": "Prompts, grid, taxonomy and formula as used in production (§6.5).",
+        "required": [
+          "screening_version",
+          "taxonomy_version",
+          "prompt_versions",
+          "analysis_schema_version",
+          "export_schema_version",
+          "cgu_version",
+          "scoring",
+          "screening",
+          "files"
+        ],
+        "properties": {
+          "screening_version": {
+            "type": "string"
+          },
+          "taxonomy_version": {
+            "type": "string"
+          },
+          "prompt_versions": {
+            "type": "object",
+            "description": "Prompt name (`analysis`, `analysis_research`, `second_opinion`, `report_review`) →\nversion.",
+            "additionalProperties": {
+              "type": "string"
+            },
+            "propertyNames": {
+              "type": "string"
+            }
+          },
+          "analysis_schema_version": {
+            "type": "string",
+            "description": "Fingerprint of `analysis.schema.json` stored with each analysis."
+          },
+          "export_schema_version": {
+            "type": "string"
+          },
+          "cgu_version": {
+            "type": "string",
+            "description": "Version of the publication rules (`/regles`)."
+          },
+          "scoring": {
+            "$ref": "#/components/schemas/ScoringMethod"
+          },
+          "screening": {
+            "$ref": "#/components/schemas/ScreeningMethod"
+          },
+          "files": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/MethodologyFile"
+            },
+            "description": "Full text of every file of `prompts/` (to display as plain text)."
+          }
+        }
       },
       "OriginalText": {
         "type": "object",
@@ -1628,6 +1883,107 @@
           "notice": {
             "type": "string",
             "description": "Heading shown above the text."
+          }
+        }
+      },
+      "PublicStats": {
+        "type": "object",
+        "description": "Public counters. Aggregates only: no text, no identifier, no fine timestamp.",
+        "required": [
+          "ideas_received",
+          "ideas_published",
+          "ideas_in_progress",
+          "ideas_rejected",
+          "duplicates_merged",
+          "contributions_integrated",
+          "published_by_admin_level",
+          "published_by_kind",
+          "last_published_on",
+          "computed_on"
+        ],
+        "properties": {
+          "ideas_received": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Ideas received and still known (texts deleted by their authors are not counted)."
+          },
+          "ideas_published": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "ideas_in_progress": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Being screened, deduplicated or analysed."
+          },
+          "ideas_rejected": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Refused by the screening (texts erased after 30 days, the count stays)."
+          },
+          "duplicates_merged": {
+            "type": "integer",
+            "format": "int64",
+            "description": "New ideas recognized as duplicates of a published one."
+          },
+          "contributions_integrated": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Improvements and objections taken into account by an analysis."
+          },
+          "published_by_admin_level": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KeyCount"
+            },
+            "description": "Published ideas per administrative level."
+          },
+          "published_by_kind": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/KeyCount"
+            },
+            "description": "Published ideas per kind (`savings`, `revenue`, `mixed`)."
+          },
+          "last_published_on": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date",
+            "description": "Day of the most recent publication (Europe/Paris)."
+          },
+          "computed_on": {
+            "type": "string",
+            "format": "date",
+            "description": "Day these counters were computed (Europe/Paris)."
+          }
+        }
+      },
+      "RejectionReason": {
+        "type": "object",
+        "description": "A refusal reason of the screening grid and the rule it applies.",
+        "required": [
+          "code",
+          "message",
+          "rule"
+        ],
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "rule": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuleReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
           }
         }
       },
@@ -1817,6 +2173,190 @@
           }
         }
       },
+      "ScoringMethod": {
+        "type": "object",
+        "description": "The composite score (§6.3).",
+        "required": [
+          "version",
+          "formula",
+          "amortization_years",
+          "max_feasibility",
+          "delay_half_life_months",
+          "confidence_factors"
+        ],
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "formula": {
+            "type": "string",
+            "description": "The formula in French, as displayed (plain text, several lines)."
+          },
+          "amortization_years": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Years over which the implementation cost is spread.",
+            "minimum": 0
+          },
+          "max_feasibility": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "delay_half_life_months": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Delay (months) at which the delay factor is halved.",
+            "minimum": 0
+          },
+          "confidence_factors": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ConfidenceFactor"
+            }
+          }
+        }
+      },
+      "ScreeningCriterion": {
+        "type": "object",
+        "description": "A criterion of the screening grid with the thresholds applied in production.",
+        "required": [
+          "key",
+          "question_type",
+          "instructions",
+          "answers",
+          "levels",
+          "pass_when",
+          "pass_from_level",
+          "reject_below",
+          "accept_above",
+          "thresholds_adjusted",
+          "reason_code",
+          "reason_message",
+          "rule"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "question_type": {
+            "type": "string",
+            "description": "`noul` (yes/no question) or `score` (ordered levels).",
+            "example": "noul"
+          },
+          "instructions": {
+            "type": "string",
+            "description": "Question asked to the decision model."
+          },
+          "answers": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/YesNoLabels",
+                "description": "Meaning of the answers of a `noul` question."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "levels": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "Levels of a `score` question, lowest first (empty for `noul`)."
+          },
+          "pass_when": {
+            "type": [
+              "boolean",
+              "null"
+            ],
+            "description": "`noul`: the answer that passes the criterion."
+          },
+          "pass_from_level": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "`score`: index of the lowest level that passes.",
+            "minimum": 0
+          },
+          "reject_below": {
+            "type": "number",
+            "format": "double",
+            "description": "Below this probability of passing, the criterion fails."
+          },
+          "accept_above": {
+            "type": "number",
+            "format": "double",
+            "description": "From this probability of passing, the criterion passes; in between: second opinion."
+          },
+          "thresholds_adjusted": {
+            "type": "boolean",
+            "description": "The thresholds differ from `screening.yaml` (adjusted by the editor for calibration)."
+          },
+          "reason_code": {
+            "type": "string"
+          },
+          "reason_message": {
+            "type": "string",
+            "description": "Message given to the author when this criterion causes a refusal."
+          },
+          "rule": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/RuleReference"
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "ScreeningMethod": {
+        "type": "object",
+        "required": [
+          "version",
+          "sections"
+        ],
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "sections": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScreeningSection"
+            }
+          }
+        }
+      },
+      "ScreeningSection": {
+        "type": "object",
+        "description": "The criteria applied to one kind of text, in the order of evaluation.",
+        "required": [
+          "kind",
+          "label",
+          "criteria"
+        ],
+        "properties": {
+          "kind": {
+            "$ref": "#/components/schemas/TargetKind"
+          },
+          "label": {
+            "type": "string",
+            "example": "idée"
+          },
+          "criteria": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/ScreeningCriterion"
+            }
+          }
+        }
+      },
       "SearchMatch": {
         "type": "string",
         "description": "How the search text matched.",
@@ -1961,6 +2501,112 @@
           "Report"
         ]
       },
+      "TaxonomyItem": {
+        "type": "object",
+        "description": "An entry of a taxonomy list.",
+        "required": [
+          "key",
+          "label",
+          "description"
+        ],
+        "properties": {
+          "key": {
+            "type": "string"
+          },
+          "label": {
+            "type": "string"
+          },
+          "description": {
+            "type": [
+              "string",
+              "null"
+            ]
+          }
+        }
+      },
+      "TaxonomyResponse": {
+        "type": "object",
+        "description": "`prompts/taxonomy.yaml` and the refusal reasons of `prompts/screening.yaml`.",
+        "required": [
+          "version",
+          "admin_levels",
+          "categories",
+          "impact_publics",
+          "impact_effects",
+          "idea_kinds",
+          "confidence_levels",
+          "legal_vehicles",
+          "report_reasons",
+          "contribution_kinds",
+          "rejection_reasons"
+        ],
+        "properties": {
+          "version": {
+            "type": "string"
+          },
+          "admin_levels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminLevelItem"
+            }
+          },
+          "categories": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/CategoryItem"
+            },
+            "description": "Every category, in file order."
+          },
+          "impact_publics": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaxonomyItem"
+            }
+          },
+          "impact_effects": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaxonomyItem"
+            }
+          },
+          "idea_kinds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaxonomyItem"
+            }
+          },
+          "confidence_levels": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaxonomyItem"
+            }
+          },
+          "legal_vehicles": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaxonomyItem"
+            }
+          },
+          "report_reasons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaxonomyItem"
+            }
+          },
+          "contribution_kinds": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/TaxonomyItem"
+            }
+          },
+          "rejection_reasons": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/RejectionReason"
+            }
+          }
+        }
+      },
       "TerritoryRef": {
         "type": "object",
         "description": "Territory targeted by an idea.",
@@ -2098,6 +2744,22 @@
           }
         },
         "additionalProperties": false
+      },
+      "YesNoLabels": {
+        "type": "object",
+        "description": "Answers of a yes/no criterion, as described to the decision model.",
+        "required": [
+          "yes",
+          "no"
+        ],
+        "properties": {
+          "yes": {
+            "type": "string"
+          },
+          "no": {
+            "type": "string"
+          }
+        }
       }
     },
     "securitySchemes": {
@@ -2120,6 +2782,10 @@
     {
       "name": "portal",
       "description": "Classement et pages des idées publiées"
+    },
+    {
+      "name": "reference",
+      "description": "Méthodologie, taxonomie et compteurs publics"
     },
     {
       "name": "submissions",

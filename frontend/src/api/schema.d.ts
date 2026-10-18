@@ -137,6 +137,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/methodology": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * The methodology: prompts, screening grid (with the thresholds in force), taxonomy, score
+         *     formula and their versions, read from what the service actually uses.
+         */
+        get: operations["getMethodology"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/openapi.json": {
         parameters: {
             query?: never;
@@ -163,6 +183,43 @@ export interface paths {
         };
         /** Readiness: the database is reachable. */
         get: operations["getReady"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/stats": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Public counters of the platform. */
+        get: operations["getStats"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/taxonomy": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Administrative levels, categories, impact publics, labels of the enumerations and refusal
+         *     reasons.
+         */
+        get: operations["getTaxonomy"];
         put?: never;
         post?: never;
         delete?: never;
@@ -237,6 +294,13 @@ export interface components {
          * @enum {string}
          */
         AdminLevel: "Etat" | "SecuriteSociale" | "Region" | "Departement" | "Intercommunalite" | "Commune" | "Multi";
+        /** @description An administrative level and the category groups it accepts. */
+        AdminLevelItem: {
+            key: string;
+            label: string;
+            description: string;
+            category_groups: string[];
+        };
         AdminSession: {
             authenticated: boolean;
         };
@@ -297,6 +361,15 @@ export interface components {
             high: number;
             calculation: string;
         };
+        /** @description A category, its group and the administrative levels that accept it. */
+        CategoryItem: {
+            key: string;
+            label: string;
+            description: string | null;
+            /** @description `etat`, `securite_sociale`, `collectivites` or `transverse`. */
+            group: string;
+            admin_levels: string[];
+        };
         /** @description A category of `prompts/taxonomy.yaml` with its French label. */
         CategoryRef: {
             /** @example achats_publics */
@@ -309,6 +382,12 @@ export interface components {
          * @enum {string}
          */
         Confidence: "Low" | "Medium" | "High";
+        /** @description A confidence level and its factor in the score. */
+        ConfidenceFactor: {
+            level: components["schemas"]["Confidence"];
+            /** Format: double */
+            factor: number;
+        };
         /**
          * @description Kind of contribution attached to a published idea (§5.4, §5.5). Keys of
          *     `contribution_kinds` in `prompts/taxonomy.yaml`, plus `doublon` for merged duplicates.
@@ -555,6 +634,12 @@ export interface components {
          * @enum {string}
          */
         ImpactDirection: "Positive" | "Neutral" | "Negative" | "Uncertain";
+        /** @description Number of published ideas of one key (administrative level or kind). */
+        KeyCount: {
+            key: string;
+            /** Format: int64 */
+            count: number;
+        };
         /**
          * @description Legal instrument needed to implement an idea (§6.2 `legal_vehicle`).
          * @enum {string}
@@ -565,6 +650,42 @@ export interface components {
          * @enum {string}
          */
         Measure: "Rejected" | "Hidden";
+        /** @description A file of `prompts/` as used in production. */
+        MethodologyFile: {
+            /** @description File name in `prompts/`, e.g. `screening.yaml`. */
+            file: string;
+            kind: components["schemas"]["MethodologyFileKind"];
+            /** @description `version` of the file; none for the JSON schemas (versioned with their prompt). */
+            version?: string | null;
+            /** @description Full text of the file. */
+            content: string;
+        };
+        /**
+         * @description Role of a file of `prompts/` on the methodology page.
+         * @enum {string}
+         */
+        MethodologyFileKind: "Screening" | "Taxonomy" | "Prompt" | "Schema";
+        /** @description Prompts, grid, taxonomy and formula as used in production (§6.5). */
+        MethodologyResponse: {
+            screening_version: string;
+            taxonomy_version: string;
+            /**
+             * @description Prompt name (`analysis`, `analysis_research`, `second_opinion`, `report_review`) →
+             *     version.
+             */
+            prompt_versions: {
+                [key: string]: string;
+            };
+            /** @description Fingerprint of `analysis.schema.json` stored with each analysis. */
+            analysis_schema_version: string;
+            export_schema_version: string;
+            /** @description Version of the publication rules (`/regles`). */
+            cgu_version: string;
+            scoring: components["schemas"]["ScoringMethod"];
+            screening: components["schemas"]["ScreeningMethod"];
+            /** @description Full text of every file of `prompts/` (to display as plain text). */
+            files: components["schemas"]["MethodologyFile"][];
+        };
         /** @description Masked original text of the author, shown apart from the generated content. */
         OriginalText: {
             text: string;
@@ -574,6 +695,56 @@ export interface components {
             attribution: string;
             /** @description Heading shown above the text. */
             notice: string;
+        };
+        /** @description Public counters. Aggregates only: no text, no identifier, no fine timestamp. */
+        PublicStats: {
+            /**
+             * Format: int64
+             * @description Ideas received and still known (texts deleted by their authors are not counted).
+             */
+            ideas_received: number;
+            /** Format: int64 */
+            ideas_published: number;
+            /**
+             * Format: int64
+             * @description Being screened, deduplicated or analysed.
+             */
+            ideas_in_progress: number;
+            /**
+             * Format: int64
+             * @description Refused by the screening (texts erased after 30 days, the count stays).
+             */
+            ideas_rejected: number;
+            /**
+             * Format: int64
+             * @description New ideas recognized as duplicates of a published one.
+             */
+            duplicates_merged: number;
+            /**
+             * Format: int64
+             * @description Improvements and objections taken into account by an analysis.
+             */
+            contributions_integrated: number;
+            /** @description Published ideas per administrative level. */
+            published_by_admin_level: components["schemas"]["KeyCount"][];
+            /** @description Published ideas per kind (`savings`, `revenue`, `mixed`). */
+            published_by_kind: components["schemas"]["KeyCount"][];
+            /**
+             * Format: date
+             * @description Day of the most recent publication (Europe/Paris).
+             */
+            last_published_on: string | null;
+            /**
+             * Format: date
+             * @description Day these counters were computed (Europe/Paris).
+             */
+            computed_on: string;
+        };
+        /** @description A refusal reason of the screening grid and the rule it applies. */
+        RejectionReason: {
+            code: string;
+            message: string;
+            rule: components["schemas"]["RuleReference"] | null;
         };
         /**
          * @description Reason selected by the author of a report (§5.6): keys of `report_reasons` in
@@ -658,6 +829,73 @@ export interface components {
             /** Format: int64 */
             score: number;
         };
+        /** @description The composite score (§6.3). */
+        ScoringMethod: {
+            version: string;
+            /** @description The formula in French, as displayed (plain text, several lines). */
+            formula: string;
+            /**
+             * Format: int32
+             * @description Years over which the implementation cost is spread.
+             */
+            amortization_years: number;
+            /** Format: int32 */
+            max_feasibility: number;
+            /**
+             * Format: int32
+             * @description Delay (months) at which the delay factor is halved.
+             */
+            delay_half_life_months: number;
+            confidence_factors: components["schemas"]["ConfidenceFactor"][];
+        };
+        /** @description A criterion of the screening grid with the thresholds applied in production. */
+        ScreeningCriterion: {
+            key: string;
+            /**
+             * @description `noul` (yes/no question) or `score` (ordered levels).
+             * @example noul
+             */
+            question_type: string;
+            /** @description Question asked to the decision model. */
+            instructions: string;
+            answers: components["schemas"]["YesNoLabels"] | null;
+            /** @description Levels of a `score` question, lowest first (empty for `noul`). */
+            levels: string[];
+            /** @description `noul`: the answer that passes the criterion. */
+            pass_when: boolean | null;
+            /**
+             * Format: int32
+             * @description `score`: index of the lowest level that passes.
+             */
+            pass_from_level: number | null;
+            /**
+             * Format: double
+             * @description Below this probability of passing, the criterion fails.
+             */
+            reject_below: number;
+            /**
+             * Format: double
+             * @description From this probability of passing, the criterion passes; in between: second opinion.
+             */
+            accept_above: number;
+            /** @description The thresholds differ from `screening.yaml` (adjusted by the editor for calibration). */
+            thresholds_adjusted: boolean;
+            reason_code: string;
+            /** @description Message given to the author when this criterion causes a refusal. */
+            reason_message: string;
+            rule: components["schemas"]["RuleReference"] | null;
+        };
+        ScreeningMethod: {
+            version: string;
+            sections: components["schemas"]["ScreeningSection"][];
+        };
+        /** @description The criteria applied to one kind of text, in the order of evaluation. */
+        ScreeningSection: {
+            kind: components["schemas"]["TargetKind"];
+            /** @example idée */
+            label: string;
+            criteria: components["schemas"]["ScreeningCriterion"][];
+        };
         /**
          * @description How the search text matched.
          * @enum {string}
@@ -734,6 +972,27 @@ export interface components {
          * @enum {string}
          */
         TargetKind: "Idea" | "Contribution" | "Report";
+        /** @description An entry of a taxonomy list. */
+        TaxonomyItem: {
+            key: string;
+            label: string;
+            description: string | null;
+        };
+        /** @description `prompts/taxonomy.yaml` and the refusal reasons of `prompts/screening.yaml`. */
+        TaxonomyResponse: {
+            version: string;
+            admin_levels: components["schemas"]["AdminLevelItem"][];
+            /** @description Every category, in file order. */
+            categories: components["schemas"]["CategoryItem"][];
+            impact_publics: components["schemas"]["TaxonomyItem"][];
+            impact_effects: components["schemas"]["TaxonomyItem"][];
+            idea_kinds: components["schemas"]["TaxonomyItem"][];
+            confidence_levels: components["schemas"]["TaxonomyItem"][];
+            legal_vehicles: components["schemas"]["TaxonomyItem"][];
+            report_reasons: components["schemas"]["TaxonomyItem"][];
+            contribution_kinds: components["schemas"]["TaxonomyItem"][];
+            rejection_reasons: components["schemas"]["RejectionReason"][];
+        };
         /** @description Territory targeted by an idea. */
         TerritoryRef: {
             /** @example Lyon */
@@ -782,6 +1041,11 @@ export interface components {
             /** @description Tracking token (43 base64url characters), from the fragment of the tracking link. */
             token: string;
         };
+        /** @description Answers of a yes/no criterion, as described to the decision model. */
+        YesNoLabels: {
+            yes: string;
+            no: string;
+        };
     };
     responses: never;
     parameters: never;
@@ -790,12 +1054,15 @@ export interface components {
     pathItems: never;
 }
 export type SchemaAdminLevel = components['schemas']['AdminLevel'];
+export type SchemaAdminLevelItem = components['schemas']['AdminLevelItem'];
 export type SchemaAdminSession = components['schemas']['AdminSession'];
 export type SchemaAiMarking = components['schemas']['AiMarking'];
 export type SchemaAltchaChallenge = components['schemas']['AltchaChallenge'];
 export type SchemaAmountEstimate = components['schemas']['AmountEstimate'];
+export type SchemaCategoryItem = components['schemas']['CategoryItem'];
 export type SchemaCategoryRef = components['schemas']['CategoryRef'];
 export type SchemaConfidence = components['schemas']['Confidence'];
+export type SchemaConfidenceFactor = components['schemas']['ConfidenceFactor'];
 export type SchemaContributionKind = components['schemas']['ContributionKind'];
 export type SchemaContributionSubmission = components['schemas']['ContributionSubmission'];
 export type SchemaContributionSubmissionKind = components['schemas']['ContributionSubmissionKind'];
@@ -816,9 +1083,15 @@ export type SchemaIdeaSort = components['schemas']['IdeaSort'];
 export type SchemaIdeaSubmission = components['schemas']['IdeaSubmission'];
 export type SchemaImpactAssessment = components['schemas']['ImpactAssessment'];
 export type SchemaImpactDirection = components['schemas']['ImpactDirection'];
+export type SchemaKeyCount = components['schemas']['KeyCount'];
 export type SchemaLegalVehicle = components['schemas']['LegalVehicle'];
 export type SchemaMeasure = components['schemas']['Measure'];
+export type SchemaMethodologyFile = components['schemas']['MethodologyFile'];
+export type SchemaMethodologyFileKind = components['schemas']['MethodologyFileKind'];
+export type SchemaMethodologyResponse = components['schemas']['MethodologyResponse'];
 export type SchemaOriginalText = components['schemas']['OriginalText'];
+export type SchemaPublicStats = components['schemas']['PublicStats'];
+export type SchemaRejectionReason = components['schemas']['RejectionReason'];
 export type SchemaReportReason = components['schemas']['ReportReason'];
 export type SchemaReportSubmission = components['schemas']['ReportSubmission'];
 export type SchemaReviewOutcome = components['schemas']['ReviewOutcome'];
@@ -827,16 +1100,23 @@ export type SchemaReviewRequestStatus = components['schemas']['ReviewRequestStat
 export type SchemaRightOfReply = components['schemas']['RightOfReply'];
 export type SchemaRuleReference = components['schemas']['RuleReference'];
 export type SchemaScoreComponents = components['schemas']['ScoreComponents'];
+export type SchemaScoringMethod = components['schemas']['ScoringMethod'];
+export type SchemaScreeningCriterion = components['schemas']['ScreeningCriterion'];
+export type SchemaScreeningMethod = components['schemas']['ScreeningMethod'];
+export type SchemaScreeningSection = components['schemas']['ScreeningSection'];
 export type SchemaSearchMatch = components['schemas']['SearchMatch'];
 export type SchemaSourceReference = components['schemas']['SourceReference'];
 export type SchemaStatementOfReasons = components['schemas']['StatementOfReasons'];
 export type SchemaSubmissionResponse = components['schemas']['SubmissionResponse'];
 export type SchemaTargetKind = components['schemas']['TargetKind'];
+export type SchemaTaxonomyItem = components['schemas']['TaxonomyItem'];
+export type SchemaTaxonomyResponse = components['schemas']['TaxonomyResponse'];
 export type SchemaTerritoryRef = components['schemas']['TerritoryRef'];
 export type SchemaTrackedIdea = components['schemas']['TrackedIdea'];
 export type SchemaTrackedItem = components['schemas']['TrackedItem'];
 export type SchemaTrackedReviewRequest = components['schemas']['TrackedReviewRequest'];
 export type SchemaTrackingRequest = components['schemas']['TrackingRequest'];
+export type SchemaYesNoLabels = components['schemas']['YesNoLabels'];
 export type $defs = Record<string, never>;
 export interface operations {
     getAdminSession: {
@@ -1206,6 +1486,26 @@ export interface operations {
             };
         };
     };
+    getMethodology: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Méthodologie en vigueur. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["MethodologyResponse"];
+                };
+            };
+        };
+    };
     getOpenApi: {
         parameters: {
             query?: never;
@@ -1251,6 +1551,46 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    getStats: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Compteurs publics. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["PublicStats"];
+                };
+            };
+        };
+    };
+    getTaxonomy: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Taxonomie en vigueur. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["TaxonomyResponse"];
                 };
             };
         };

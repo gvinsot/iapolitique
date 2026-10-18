@@ -18,6 +18,11 @@ use super::ideas::{
     ImpactAssessment, OriginalText, RightOfReply, ScoreComponents, SearchMatch, SourceReference,
     TerritoryRef,
 };
+use super::reference::{
+    self, AdminLevelItem, CategoryItem, ConfidenceFactor, KeyCount, MethodologyResponse,
+    PublicStats, RejectionReason, ScoringMethod, ScreeningCriterion, ScreeningMethod,
+    ScreeningSection, TaxonomyItem, TaxonomyResponse, YesNoLabels,
+};
 use super::submissions::{
     self, ContributionSubmission, ContributionSubmissionKind, IdeaSubmission, ReportSubmission,
     SubmissionResponse,
@@ -26,6 +31,7 @@ use super::tracking::{
     self, DeletionResponse, ReviewRequestBody, TrackedIdea, TrackedItem, TrackedReviewRequest,
     TrackingRequest,
 };
+use crate::ai::prompts::{MethodologyFile, MethodologyFileKind};
 use crate::antispam::altcha::AltchaChallenge;
 use crate::db::portal::IdeaSort;
 use crate::domain::rules::RuleReference;
@@ -53,6 +59,9 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         antispam::altcha_challenge,
         ideas::list,
         ideas::detail,
+        reference::methodology,
+        reference::taxonomy,
+        reference::stats,
         submissions::submit_idea,
         submissions::submit_contribution,
         submissions::submit_report,
@@ -109,13 +118,30 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         ScoreComponents,
         AiMarking,
         ContributionSummary,
-        RightOfReply
+        RightOfReply,
+        MethodologyResponse,
+        MethodologyFile,
+        MethodologyFileKind,
+        ScoringMethod,
+        ConfidenceFactor,
+        ScreeningMethod,
+        ScreeningSection,
+        ScreeningCriterion,
+        YesNoLabels,
+        TaxonomyResponse,
+        TaxonomyItem,
+        AdminLevelItem,
+        CategoryItem,
+        RejectionReason,
+        PublicStats,
+        KeyCount
     )),
     modifiers(&AdminSecurity),
     tags(
         (name = "system", description = "Santé du service et spécification"),
         (name = "antispam", description = "Protection anti-abus des formulaires (ALTCHA)"),
         (name = "portal", description = "Classement et pages des idées publiées"),
+        (name = "reference", description = "Méthodologie, taxonomie et compteurs publics"),
         (name = "submissions", description = "Dépôt d'idées, de contributions et de signalements"),
         (name = "tracking", description = "Suivi anonyme d'un envoi par son jeton"),
         (name = "admin", description = "Administration (réseau local uniquement, jeton requis)")
@@ -233,6 +259,9 @@ mod tests {
             "/api/ideas/{slug}",
             "/api/ideas/{slug}/contributions",
             "/api/ideas/{slug}/reports",
+            "/api/methodology",
+            "/api/taxonomy",
+            "/api/stats",
             "/api/track",
             "/api/track/delete",
             "/api/track/review-request",

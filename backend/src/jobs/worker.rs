@@ -14,6 +14,7 @@ use sqlx::PgPool;
 use tokio::sync::{Semaphore, watch};
 use tokio::time::Instant;
 
+use super::dedup::DedupHandler;
 use super::health::Liveness;
 use super::moderation::{ScreenHandler, SecondOpinionHandler};
 use super::purge::PurgeHandler;
@@ -118,6 +119,7 @@ pub fn default_registry() -> Registry {
         .register(ScreenHandler::new(TargetKind::Contribution))
         .register(ScreenHandler::new(TargetKind::Report))
         .register(SecondOpinionHandler)
+        .register(DedupHandler)
         .register(PurgeHandler);
     registry
 }
@@ -444,6 +446,7 @@ mod tests {
             vec![
                 JobKind::ScreenIdea,
                 JobKind::SecondOpinion,
+                JobKind::DedupIdea,
                 JobKind::AnalyzeIdea,
                 JobKind::ScreenContribution,
                 JobKind::ScreenReport,
@@ -459,11 +462,11 @@ mod tests {
                 JobKind::Purge
             ]
         );
-        assert_eq!(registry.claimable_kinds(true).len(), 6);
+        assert_eq!(registry.claimable_kinds(true).len(), 7);
         assert_eq!(registry.schedules(), vec![crate::jobs::purge::SCHEDULE]);
         assert_eq!(
             format!("{registry:?}"),
-            "[ScreenIdea, SecondOpinion, AnalyzeIdea, ScreenContribution, ScreenReport, Purge]"
+            "[ScreenIdea, SecondOpinion, DedupIdea, AnalyzeIdea, ScreenContribution, ScreenReport, Purge]"
         );
     }
 

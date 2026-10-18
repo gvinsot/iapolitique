@@ -147,7 +147,10 @@ pub async fn lock<S: StatusTable>(
     }
 }
 
-async fn append_event<S: StatusTable>(
+/// Appends a status change to the history table of `S`. Callers that cannot use
+/// [`transition`] (a status change that must set other columns in the same statement, because
+/// of a CHECK constraint) validate the change with [`StateMachine::transition`] first.
+pub(crate) async fn append_event<S: StatusTable>(
     conn: &mut PgConnection,
     id: Uuid,
     from: Option<S>,
@@ -173,6 +176,17 @@ pub async fn record_creation<S: StatusTable>(
     change: &Change,
 ) -> sqlx::Result<()> {
     append_event::<S>(conn, id, None, S::INITIAL, change).await
+}
+
+/// Records the creation of an entity stored directly in `status` (e.g. a merged duplicate,
+/// stored as an accepted contribution of the idea it duplicates).
+pub async fn record_creation_as<S: StatusTable>(
+    conn: &mut PgConnection,
+    id: Uuid,
+    status: S,
+    change: &Change,
+) -> sqlx::Result<()> {
+    append_event::<S>(conn, id, None, status, change).await
 }
 
 /// Moves the entity to `to` and records the change. Returns the previous status.

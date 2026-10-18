@@ -274,7 +274,15 @@ n'appeler que `/v1/systemone`.
 - Similarité ≥ `DEDUP_SIMILARITY_THRESHOLD` → l'idée devient une **contribution** de l'idée
   existante (`merged`), le compteur « proposée N fois » augmente et l'idée parente est
   ré-analysée. Le lien de suivi de l'auteur pointe vers l'idée parente.
-- Le seuil se calibre via l'admin ; en cas de doute, ne pas fusionner.
+- Le seuil se calibre via l'admin (réglage `dedup.similarity_threshold`, §13.6, prioritaire sur
+  la variable) ; en cas de doute, ne pas fusionner.
+- Mise en œuvre (job `dedup_idea`, `jobs/dedup.rs`) : `accepted → dedup`, embedding du texte
+  masqué (réutilisé s'il a déjà été calculé pour le même texte et le même modèle), recherche
+  parmi les idées `published` uniquement, puis `merged` (contribution `doublon` acceptée de
+  l'idée parente, sans texte : celui de l'idée fusionnée est fourni à la ré-analyse, déclencheur
+  `merge`) ou `queued_analysis` (première analyse). Si l'embedding est impossible (erreur
+  Mistral non transitoire, ou dernière tentative du job), l'idée part en analyse sans
+  dédoublonnage.
 
 ### 5.5 Contributions (améliorations et objections)
 
@@ -829,6 +837,7 @@ le défaut s'applique.
 | Clé | Valeur | Rôle |
 |---|---|---|
 | `screening.thresholds` | `{ "<section>": { "<clé du critère>": { "reject_below"?: nombre, "accept_above"?: nombre } } }`, sections `idea`, `contribution`, `report` | Surcharge, critère par critère, des seuils de `screening.yaml` (§5.3). Un seuil omis garde la valeur du fichier ; il faut `0 ≤ reject_below ≤ accept_above ≤ 1`. Les seuils appliqués sont enregistrés avec chaque décision (`screenings.thresholds`). |
+| `dedup.similarity_threshold` | nombre entre 0 et 1 | Similarité cosinus à partir de laquelle une idée acceptée est fusionnée dans l'idée publiée la plus proche (§5.4) ; surcharge `DEDUP_SIMILARITY_THRESHOLD`. |
 
 ---
 

@@ -82,6 +82,28 @@ pub fn chat_response(content: &Value) -> Value {
     })
 }
 
+/// Unit vector of `mistral-embed` dimensions in the plane (e0, e1), at angle `theta`: the cosine
+/// similarity of two such vectors is the cosine of the difference of their angles.
+pub fn unit_vector(theta: f64) -> Vec<f32> {
+    let mut v = vec![0.0f32; crate::ai::mistral::EMBEDDING_DIMENSIONS];
+    v[0] = theta.cos() as f32;
+    v[1] = theta.sin() as f32;
+    v
+}
+
+/// An embeddings response with one vector per input.
+pub fn embedding_response(vectors: &[Vec<f32>]) -> Value {
+    json!({
+        "id": "embd-test",
+        "object": "list",
+        "model": "mistral-embed",
+        "data": vectors.iter().enumerate().map(|(index, v)| json!({
+            "object": "embedding", "index": index, "embedding": v
+        })).collect::<Vec<_>>(),
+        "usage": { "prompt_tokens": 40, "total_tokens": 40 }
+    })
+}
+
 /// Configuration pointing at the mocks, with `extra` variables.
 pub fn config(
     role: Role,
@@ -222,6 +244,16 @@ impl TestApp {
             .await;
     }
 
+    /// The Mistral embeddings endpoint answers `vector` for every (single) input.
+    pub async fn embedding(&self, vector: Vec<f32>) {
+        let server = self.mistral.as_ref().expect("app built with Mistral");
+        Mock::given(method("POST"))
+            .and(path("/v1/embeddings"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(embedding_response(&[vector])))
+            .mount(server)
+            .await;
+    }
+
     /// A fresh ALTCHA solution.
     pub fn altcha(&self) -> String {
         solve(&self.state.altcha.create_challenge())
@@ -281,6 +313,21 @@ impl TestApp {
         .await
         .unwrap()
     }
+}
+
+/// Inserts an idea in `status` (not one of the statuses that need more columns: published,
+/// hidden, merged, purged) and returns its id.
+pub async fn idea_with_status(pool: &PgPool, status: &str) -> Uuid {
+    sqlx::query_scalar(
+        "INSERT INTO ideas (original_text, status, cgu_version, cgu_accepted_at)
+         VALUES ('Mutualiser les achats de fournitures entre communes voisines.', $1, '1.0',
+                 current_date)
+         RETURNING id",
+    )
+    .bind(status)
+    .fetch_one(pool)
+    .await
+    .unwrap()
 }
 
 /// Inserts a published idea and returns its id (slug `slug`).

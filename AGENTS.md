@@ -588,6 +588,16 @@ et les types TS sont générés par `npm run gen:api` (`openapi-typescript`) ver
 `frontend/src/api/schema.d.ts`. Un test backend échoue si la spec committée diffère de la spec
 générée : toute modification d'API régénère les deux fichiers dans le même commit.
 
+- Les `paths` de la spec sont les chemins **servis**, préfixe `/api` inclus (`/api/ideas`, pas
+  `/ideas` avec un `servers: [{ url: "/api" }]`) : le client front (`openapi-fetch`) les résout
+  sur l'origine courante.
+- Sans Node local, régénérer via Docker :
+  `docker run --rm -v "<repo>/frontend:/app" -v iapolitique_node_modules:/app/node_modules -w /app node:22-alpine sh -c "npm ci && npm run gen:api"`.
+- `npm run lint` échoue si `schema.d.ts` n'est pas à jour par rapport à `openapi.json`.
+- Les erreurs sont normalisées côté front en `ApiError { status, code, message }` à partir du
+  corps `{ "error": { "code", "message" } }` : le `message` est affiché tel quel à l'utilisateur
+  (donc en français, sans détail technique).
+
 ### 13.4 Fichiers `prompts/`
 
 Embarqués dans l'image (`/app/prompts`, chemin configurable `PROMPTS_DIR`), chargés et validés

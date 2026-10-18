@@ -577,7 +577,9 @@ tableau de bord, file de jobs, coûts IA, idées masquées et signalements, masq
 relancer une analyse, décisions de filtrage avec étiquetage, réglages des seuils.
 
 Le frontend appelle toujours des chemins relatifs `/api/...`. En dev, Vite proxifie `/api` vers
-`localhost:8080` (et vers `8081` pour `/api/admin`).
+`localhost:8080` (et vers `8081` pour `/api/admin`). En production, Traefik fait de même sur
+`ADMIN_HOST` (`/api/admin` → 8081, reste de `/api` → 8080, les deux filtrés par
+`dashboard-allowlist@file`) ; sur `TRAEFIK_HOST`, seul le port 8080 est routé.
 
 ### 13.3 Types d'API partagés
 
@@ -606,8 +608,16 @@ Le service `test` du compose construit `devops/Dockerfile.test` (contexte `..`) 
 2. stage `backend-test` (rust) : `cargo fmt --check`, `cargo clippy -D warnings`, compilation des
    tests ; il copie un fichier témoin produit par `frontend-check` (sinon BuildKit saute ce
    stage) ;
-3. à l'exécution : `cargo test` avec `DATABASE_URL` vers le service `test-db`
-   (`pgvector/pgvector:pg18`, `replicas: 0`, réseau interne au compose).
+3. à l'exécution (`devops/run-tests.sh`) : attente du port de `test-db`, puis
+   `cargo test --locked --offline` (rien n'est recompilé) avec `DATABASE_URL` vers le service
+   `test-db` (`pgvector/pgvector:pg18` en mémoire, sans mot de passe, réseau interne au compose).
+   `test-db` n'est **pas** en `replicas: 0` (compose ne démarrerait pas la dépendance) mais en
+   `mode: global` contraint sur une étiquette qu'aucun nœud ne porte : zéro tâche sur le swarm.
+   Le service `test` lui-même est en `replicas: 0`.
+
+Les deux stages utilisent des cache mounts BuildKit (npm, registre cargo, `target/`) ; le
+`target/` est recopié dans l'image pour que `cargo test` n'ait rien à recompiler. La version de
+Rust de `Dockerfile.test` (`RUST_VERSION`) suit celle de `backend/Dockerfile`.
 
 En local, sans Node installé : `docker run --rm -v "<repo>/frontend:/app" -v iapolitique_node_modules:/app/node_modules -w /app node:22-alpine npm …`.
 Postgres local de test : `docker run -d --name iapolitique-test-pg -e POSTGRES_PASSWORD=postgres -p 55432:5432 pgvector/pgvector:pg18`

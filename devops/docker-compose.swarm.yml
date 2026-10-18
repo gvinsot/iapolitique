@@ -1,0 +1,328 @@
+# Docker Swarm stack "iapolitique", built, tested and deployed by PulsarCD only (AGENTS.md §10).
+#
+#   api       Rust binary `iapolitique api`: public API on 8080 (Internet, through Traefik and its WAF)
+#             and admin API on 8081 (ADMIN_HOST only, LAN allowlist). Applies the migrations at startup.
+#   worker    same image, `iapolitique worker`: job queue (Mistral analyses, dedup, purge). Not routed;
+#             /health on 8082 for the Docker healthcheck only.
+#   frontend  nginx serving the React SPA on TRAEFIK_HOST (public) and ADMIN_HOST (LAN only).
+#   test      CI image (Dockerfile.test). Never runs on the swarm (replicas: 0): the PulsarCD test stage
+#             runs `docker compose run --rm test`, which also starts test-db.
+#   test-db   throwaway PostgreSQL + pgvector for the integration tests, see the note on its `deploy`.
+#
+# Hosts come from TRAEFIK_HOST / ADMIN_HOST; PulsarCD prefixes them with `qa.` for the QA stack and
+# renames the Traefik routers, services and middlewares itself. Variables: see .env.example.
+# Secrets (*_CONNECTION_STRING, *_KEY, *_TOKEN) are turned into Docker secrets by PulsarCD and read
+# back from /run/secrets by the backend (AGENTS.md §10.3).
+
+version: "3.9"
+
+# Settings shared by the api and the worker. Empty values are treated as unset by the backend, which
+# then applies its own default (backend/src/config.rs).
+x-backend-env: &backend-env
+  DATABASE_CONNECTION_STRING: ${DATABASE_CONNECTION_STRING:?DATABASE_CONNECTION_STRING must be set in devops/.env}
+  MISTRAL_API_KEY: ${MISTRAL_API_KEY:-}
+  MISTRAL_API_BASE_URL: ${MISTRAL_API_BASE_URL:-}
+  DECISION_SERVICE_URL: ${DECISION_SERVICE_URL:-http://llamacpp-decision-service:8000/v1/systemone}
+  DECISION_SERVICE_TIMEOUT_SECS: ${DECISION_SERVICE_TIMEOUT_SECS:-}
+  MISTRAL_ANALYSIS_MODEL: ${MISTRAL_ANALYSIS_MODEL:-mistral-large-latest}
+  MISTRAL_REVIEW_MODEL: ${MISTRAL_REVIEW_MODEL:-}
+  MISTRAL_EMBED_MODEL: ${MISTRAL_EMBED_MODEL:-mistral-embed}
+  MISTRAL_DAILY_BUDGET_EUR: ${MISTRAL_DAILY_BUDGET_EUR:-}
+  MISTRAL_ANALYSIS_INPUT_EUR_PER_MTOK: ${MISTRAL_ANALYSIS_INPUT_EUR_PER_MTOK:-}
+  MISTRAL_ANALYSIS_OUTPUT_EUR_PER_MTOK: ${MISTRAL_ANALYSIS_OUTPUT_EUR_PER_MTOK:-}
+  MISTRAL_REVIEW_INPUT_EUR_PER_MTOK: ${MISTRAL_REVIEW_INPUT_EUR_PER_MTOK:-}
+  MISTRAL_REVIEW_OUTPUT_EUR_PER_MTOK: ${MISTRAL_REVIEW_OUTPUT_EUR_PER_MTOK:-}
+  MISTRAL_EMBED_EUR_PER_MTOK: ${MISTRAL_EMBED_EUR_PER_MTOK:-}
+  MISTRAL_WEB_SEARCH_EUR_PER_CALL: ${MISTRAL_WEB_SEARCH_EUR_PER_CALL:-}
+  DEDUP_SIMILARITY_THRESHOLD: ${DEDUP_SIMILARITY_THRESHOLD:-}
+  DATABASE_MAX_CONNECTIONS: ${DATABASE_MAX_CONNECTIONS:-}
+  WORKER_CONCURRENCY: ${WORKER_CONCURRENCY:-}
+  TRAEFIK_HOST: ${TRAEFIK_HOST:?TRAEFIK_HOST must be set in devops/.env}
+  ADMIN_HOST: ${ADMIN_HOST:?ADMIN_HOST must be set in devops/.env}
+  RUST_LOG: ${RUST_LOG:-info,sqlx=warn}
+  LOG_FORMAT: json
+
+services:
+  api:
+    image: registry.methodinfo.fr/iapolitique-api:latest
+    build:
+      context: ..
+      dockerfile: backend/Dockerfile
+      target: runtime
+    command: ["api"]
+    environment:
+      <<: *backend-env
+      ADMIN_API_TOKEN: ${ADMIN_API_TOKEN:?ADMIN_API_TOKEN must be set in devops/.env}
+      ALTCHA_HMAC_KEY: ${ALTCHA_HMAC_KEY:?ALTCHA_HMAC_KEY must be set in devops/.env}
+      RATE_LIMIT_IDEAS_PER_HOUR: ${RATE_LIMIT_IDEAS_PER_HOUR:-}
+      RATE_LIMIT_IDEAS_PER_DAY: ${RATE_LIMIT_IDEAS_PER_DAY:-}
+      RATE_LIMIT_CONTRIBUTIONS_PER_DAY: ${RATE_LIMIT_CONTRIBUTIONS_PER_DAY:-}
+      RATE_LIMIT_REPORTS_PER_DAY: ${RATE_LIMIT_REPORTS_PER_DAY:-}
+      # Traefik is the only proxy in front of the api: the client IP is the last X-Forwarded-For hop.
+      TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
+    networks:
+      - proxy
+      - postgresqlcluster_internal
+      - llm
+    healthcheck:
+      # The runtime image has no curl/wget: the binary probes itself.
+      test: ["CMD", "/app/iapolitique", "healthcheck", "--url", "http://127.0.0.1:8080/api/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      # Migrations run before the listener starts.
+      start_period: 60s
+    stop_grace_period: 30s
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.gpu == none
+      update_config:
+        # The new task must be healthy before the old one stops (migrations are backward compatible).
+        order: start-first
+        parallelism: 1
+        failure_action: rollback
+        monitor: 60s
+      rollback_config:
+        order: start-first
+        parallelism: 1
+      restart_policy:
+        condition: any
+        delay: 5s
+      resources:
+        limits:
+          memory: 512M
+      labels:
+        - "traefik.enable=true"
+        # Three networks: Traefik reaches the api on proxy only.
+        - "traefik.swarm.network=proxy"
+
+        # Two Traefik services on the same Swarm service: every router names its own explicitly.
+        - "traefik.http.services.iapolitique-api.loadbalancer.server.port=8080"
+        - "traefik.http.services.iapolitique-api-admin.loadbalancer.server.port=8081"
+
+        # Public API, no strip prefix (the backend serves /api/...). Above the frontend's router.
+        - "traefik.http.routers.iapolitique-api.rule=Host(`${TRAEFIK_HOST}`) && PathPrefix(`/api`)"
+        - "traefik.http.routers.iapolitique-api.priority=100"
+        - "traefik.http.routers.iapolitique-api.entrypoints=websecure"
+        - "traefik.http.routers.iapolitique-api.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.iapolitique-api.middlewares=global@file"
+        - "traefik.http.routers.iapolitique-api.service=iapolitique-api"
+        - "traefik.http.routers.iapolitique-api-http.rule=Host(`${TRAEFIK_HOST}`) && PathPrefix(`/api`)"
+        - "traefik.http.routers.iapolitique-api-http.priority=100"
+        - "traefik.http.routers.iapolitique-api-http.entrypoints=web"
+        - "traefik.http.routers.iapolitique-api-http.middlewares=redirect-to-https@file"
+        - "traefik.http.routers.iapolitique-api-http.service=noop@internal"
+
+        # Admin host, LAN only (dashboard-allowlist@file), like the Vite dev proxy (AGENTS.md §13.2):
+        # /api/admin/... goes to the admin port 8081, the rest of /api to the public port 8080.
+        # Port 8081 is never routed from TRAEFIK_HOST.
+        - "traefik.http.routers.iapolitique-admin-api.rule=Host(`${ADMIN_HOST}`) && PathPrefix(`/api/admin`)"
+        - "traefik.http.routers.iapolitique-admin-api.priority=110"
+        - "traefik.http.routers.iapolitique-admin-api.entrypoints=websecure"
+        - "traefik.http.routers.iapolitique-admin-api.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.iapolitique-admin-api.middlewares=dashboard-allowlist@file,security-headers@file"
+        - "traefik.http.routers.iapolitique-admin-api.service=iapolitique-api-admin"
+        - "traefik.http.routers.iapolitique-admin-public-api.rule=Host(`${ADMIN_HOST}`) && PathPrefix(`/api`)"
+        - "traefik.http.routers.iapolitique-admin-public-api.priority=100"
+        - "traefik.http.routers.iapolitique-admin-public-api.entrypoints=websecure"
+        - "traefik.http.routers.iapolitique-admin-public-api.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.iapolitique-admin-public-api.middlewares=dashboard-allowlist@file,security-headers@file"
+        - "traefik.http.routers.iapolitique-admin-public-api.service=iapolitique-api"
+        - "traefik.http.routers.iapolitique-admin-api-http.rule=Host(`${ADMIN_HOST}`) && PathPrefix(`/api`)"
+        - "traefik.http.routers.iapolitique-admin-api-http.priority=100"
+        - "traefik.http.routers.iapolitique-admin-api-http.entrypoints=web"
+        - "traefik.http.routers.iapolitique-admin-api-http.middlewares=redirect-to-https@file"
+        - "traefik.http.routers.iapolitique-admin-api-http.service=noop@internal"
+
+  worker:
+    image: registry.methodinfo.fr/iapolitique-api:latest
+    command: ["worker"]
+    environment:
+      <<: *backend-env
+    # No proxy network: the worker is never routed. Overlay networks still give it Internet egress
+    # (docker_gwbridge) for the Mistral API.
+    networks:
+      - postgresqlcluster_internal
+      - llm
+    healthcheck:
+      test: ["CMD", "/app/iapolitique", "healthcheck", "--url", "http://127.0.0.1:8082/health"]
+      interval: 15s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+    # Lets a running job finish or release its lock before the task is killed.
+    stop_grace_period: 60s
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.gpu == none
+      update_config:
+        # Two workers side by side are safe: jobs are claimed with FOR UPDATE SKIP LOCKED.
+        order: start-first
+        parallelism: 1
+        failure_action: rollback
+        monitor: 60s
+      rollback_config:
+        order: start-first
+        parallelism: 1
+      restart_policy:
+        condition: any
+        delay: 5s
+      resources:
+        limits:
+          memory: 512M
+
+  frontend:
+    image: registry.methodinfo.fr/iapolitique-frontend:latest
+    build:
+      context: ..
+      dockerfile: frontend/Dockerfile
+      target: runtime
+    networks:
+      - proxy
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:80/"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 10s
+    deploy:
+      mode: replicated
+      replicas: 1
+      placement:
+        constraints:
+          - node.labels.gpu == none
+      update_config:
+        order: start-first
+        parallelism: 1
+        failure_action: rollback
+        monitor: 30s
+      rollback_config:
+        order: start-first
+        parallelism: 1
+      restart_policy:
+        condition: any
+        delay: 5s
+      resources:
+        limits:
+          memory: 128M
+      labels:
+        - "traefik.enable=true"
+        - "traefik.swarm.network=proxy"
+        - "traefik.http.services.iapolitique-front.loadbalancer.server.port=80"
+
+        # Public site. Low priority: the api routers (PathPrefix /api) win.
+        - "traefik.http.routers.iapolitique-front.rule=Host(`${TRAEFIK_HOST}`)"
+        - "traefik.http.routers.iapolitique-front.priority=10"
+        - "traefik.http.routers.iapolitique-front.entrypoints=websecure"
+        - "traefik.http.routers.iapolitique-front.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.iapolitique-front.middlewares=global@file"
+        - "traefik.http.routers.iapolitique-front.service=iapolitique-front"
+        - "traefik.http.routers.iapolitique-front-http.rule=Host(`${TRAEFIK_HOST}`)"
+        - "traefik.http.routers.iapolitique-front-http.priority=10"
+        - "traefik.http.routers.iapolitique-front-http.entrypoints=web"
+        - "traefik.http.routers.iapolitique-front-http.middlewares=redirect-to-https@file"
+        - "traefik.http.routers.iapolitique-front-http.service=noop@internal"
+
+        # www.<host> -> https://<host>, permanent (301), in one hop from http or https.
+        - "traefik.http.middlewares.iapolitique-www-to-apex.redirectregex.regex=^https?://www\\.(.*)"
+        - "traefik.http.middlewares.iapolitique-www-to-apex.redirectregex.replacement=https://$${1}"
+        - "traefik.http.middlewares.iapolitique-www-to-apex.redirectregex.permanent=true"
+        - "traefik.http.routers.iapolitique-www.rule=Host(`www.${TRAEFIK_HOST}`)"
+        - "traefik.http.routers.iapolitique-www.priority=10"
+        - "traefik.http.routers.iapolitique-www.entrypoints=websecure"
+        - "traefik.http.routers.iapolitique-www.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.iapolitique-www.middlewares=global@file,iapolitique-www-to-apex"
+        - "traefik.http.routers.iapolitique-www.service=noop@internal"
+        - "traefik.http.routers.iapolitique-www-http.rule=Host(`www.${TRAEFIK_HOST}`)"
+        - "traefik.http.routers.iapolitique-www-http.priority=10"
+        - "traefik.http.routers.iapolitique-www-http.entrypoints=web"
+        - "traefik.http.routers.iapolitique-www-http.middlewares=iapolitique-www-to-apex"
+        - "traefik.http.routers.iapolitique-www-http.service=noop@internal"
+
+        # Admin site (same files, /admin pages), LAN only.
+        - "traefik.http.routers.iapolitique-admin-front.rule=Host(`${ADMIN_HOST}`)"
+        - "traefik.http.routers.iapolitique-admin-front.priority=10"
+        - "traefik.http.routers.iapolitique-admin-front.entrypoints=websecure"
+        - "traefik.http.routers.iapolitique-admin-front.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.iapolitique-admin-front.middlewares=dashboard-allowlist@file,security-headers@file"
+        - "traefik.http.routers.iapolitique-admin-front.service=iapolitique-front"
+        - "traefik.http.routers.iapolitique-admin-front-http.rule=Host(`${ADMIN_HOST}`)"
+        - "traefik.http.routers.iapolitique-admin-front-http.priority=10"
+        - "traefik.http.routers.iapolitique-admin-front-http.entrypoints=web"
+        - "traefik.http.routers.iapolitique-admin-front-http.middlewares=redirect-to-https@file"
+        - "traefik.http.routers.iapolitique-admin-front-http.service=noop@internal"
+
+  test:
+    image: registry.methodinfo.fr/iapolitique-test:latest
+    build:
+      context: ..
+      dockerfile: devops/Dockerfile.test
+    environment:
+      # Test-only database (AGENTS.md §13.1): never a deployment setting, hence no secret suffix.
+      DATABASE_URL: postgres://postgres@test-db:5432/postgres
+      TEST_DB_HOST: test-db
+      TEST_DB_PORT: "5432"
+    # Started by `docker compose run`; ignored by `docker stack deploy`. The entrypoint also waits
+    # for the port, as the short syntax cannot wait for readiness.
+    depends_on:
+      - test-db
+    networks:
+      - test
+    deploy:
+      replicas: 0
+      restart_policy:
+        condition: none
+
+  test-db:
+    image: pgvector/pgvector:pg18
+    environment:
+      # No password (a *_PASSWORD variable would become a Docker secret): the network is internal
+      # and the database is thrown away after the run.
+      POSTGRES_HOST_AUTH_METHOD: trust
+    # Durability is useless for a throwaway database; many parallel #[sqlx::test] databases.
+    command:
+      - postgres
+      - -c
+      - fsync=off
+      - -c
+      - synchronous_commit=off
+      - -c
+      - full_page_writes=off
+      - -c
+      - max_connections=300
+    # In memory, which also avoids an anonymous volume left behind by every CI run.
+    tmpfs:
+      - /var/lib/postgresql
+    networks:
+      - test
+    deploy:
+      # `replicas: 0` would also stop `docker compose run test` from starting this dependency
+      # (compose honours deploy.replicas). A global service constrained to a label no node carries
+      # runs no task on the swarm, while compose ignores placement and starts one container.
+      mode: global
+      placement:
+        constraints:
+          - node.labels.iapolitique-compose-only == true
+      restart_policy:
+        condition: none
+
+networks:
+  proxy:
+    external: true
+  postgresqlcluster_internal:
+    external: true
+  # Shared overlay of the LLM services (llamacpp-decision-service). For the QA stack PulsarCD
+  # prefixes the name of external networks with `qa-`: the QA stack joins qa-llm-net by itself, so
+  # .env.qa must NOT set LLM_NETWORK (qa-qa-llm-net does not exist).
+  llm:
+    external: true
+    name: ${LLM_NETWORK:-llm-net}
+  # CI only: test <-> test-db, no egress.
+  test:
+    internal: true

@@ -22,7 +22,7 @@
 #                   "contribution": <texte de la contribution>} ;
 # - report       : {"idee": <résumé neutre de l'idée publiée>, "motif": <libellé du motif de
 #                   taxonomy.yaml>, "precision": <texte facultatif du signalement>}.
-version: "1.0.0"
+version: "1.1.0"
 
 idea:
   - key: injection
@@ -49,15 +49,26 @@ idea:
     reason_message: "Votre texte contient des propos insultants, haineux ou violents. Vous pouvez critiquer une dépense ou un dispositif : reformulez votre idée sur un ton neutre, sans attaquer qui que ce soit."
   - key: targeted
     type: noul
-    instructions: "Ce texte cite-t-il le nom d'une personne ou d'un parti politique, ou s'en prend-il à des personnes à cause de leur religion, de leur origine, de leur sexe ou de leur orientation sexuelle ?"
+    instructions: "Ce texte cite-t-il le nom d'une personnalité ou d'un parti politique, fait-il campagne électorale (voter ou ne pas voter, élire ou ne pas réélire), ou s'en prend-il à des personnes à cause de leur religion, de leur origine, de leur sexe ou de leur orientation sexuelle ?"
     criteria:
-      "true": "oui : nom d'un élu, d'une personnalité ou d'un parti, ou attaque contre un groupe religieux, ethnique, de sexe ou d'orientation"
-      "false": "non : aucun nom de personne ni de parti, aucune attaque contre un groupe religieux, ethnique, de sexe ou d'orientation"
+      "true": "oui : nom d'un élu, d'un candidat, d'une personnalité ou d'un parti (ou de ses partisans), consigne de vote, ou attaque contre un groupe religieux, ethnique, de sexe ou d'orientation"
+      "false": "non : il parle de mesures, de lois, d'institutions ou de fonctions (le Gouvernement, le président de la République, les élus), sans nom de personnalité ni de parti, sans consigne de vote et sans attaque contre un groupe"
     pass_when: false
     reject_below: 0.35
     accept_above: 0.8
     reason_code: targeted
-    reason_message: "Votre texte vise nommément une personne, un élu ou un parti, ou un groupe de personnes selon leur origine, leur religion, leur sexe ou leur orientation. Décrivez plutôt la mesure elle-même (le dispositif, la dépense ou la recette concernée), sans nommer personne."
+    reason_message: "Votre texte nomme une personne, un élu ou un parti, appelle à voter pour ou contre quelqu'un, ou vise un groupe de personnes selon leur origine, leur religion, leur sexe ou leur orientation. La plateforme est apartisane : décrivez plutôt la mesure elle-même (le dispositif, la dépense ou la recette concernée), sans nommer personne ni donner de consigne de vote."
+  - key: personal_data
+    type: noul
+    instructions: "Ce texte vise-t-il une personne précise et reconnaissable qui n'est pas un responsable politique, par son nom ou par son poste dans un service, un établissement ou une ville nommés ?"
+    criteria:
+      "true": "oui : nom, prénom ou signature d'un particulier, ou poste occupé par une seule personne dans un lieu nommé (le directeur de telle caisse, le chef de tel service, le proviseur de tel lycée)"
+      "false": "non : seulement des institutions, des lois, des fonctions en général, des catégories de personnes, ou des responsables politiques"
+    pass_when: false
+    reject_below: 0.35
+    accept_above: 0.7
+    reason_code: personal_data
+    reason_message: "Votre texte permet de reconnaître une personne (nom, prénom, signature ou poste précis dans un service nommé) ou lui reproche des faits. Pour protéger les personnes concernées, retirez les noms et les détails qui permettent de les identifier, ne signez pas votre texte, et décrivez plutôt le dispositif ou la dépense en cause."
   - key: on_topic
     type: noul
     instructions: "Ce texte propose-t-il une mesure précise qui réduirait une dépense ou augmenterait une recette d'une administration publique française (État, sécurité sociale, collectivité) ?"
@@ -119,15 +130,26 @@ contribution:
     reason_message: "Votre contribution contient des propos insultants, haineux ou violents. Reformulez-la sur un ton neutre : une objection argumentée est la bienvenue."
   - key: targeted
     type: noul
-    instructions: "La contribution cite-t-elle le nom d'une personne ou d'un parti politique, ou s'en prend-elle à des personnes à cause de leur religion, de leur origine, de leur sexe ou de leur orientation sexuelle ?"
+    instructions: "La contribution cite-t-elle le nom d'une personnalité ou d'un parti politique, fait-elle campagne électorale (voter ou ne pas voter, élire ou ne pas réélire), ou s'en prend-elle à des personnes à cause de leur religion, de leur origine, de leur sexe ou de leur orientation sexuelle ?"
     criteria:
-      "true": "oui : nom d'un élu, d'une personnalité ou d'un parti, ou attaque contre un groupe religieux, ethnique, de sexe ou d'orientation"
-      "false": "non : aucun nom de personne ni de parti, aucune attaque contre un groupe religieux, ethnique, de sexe ou d'orientation"
+      "true": "oui : nom d'un élu, d'un candidat, d'une personnalité ou d'un parti (ou de ses partisans), consigne de vote, ou attaque contre un groupe religieux, ethnique, de sexe ou d'orientation"
+      "false": "non : elle parle de mesures, de lois, d'institutions ou de fonctions (le Gouvernement, le président de la République, les élus), sans nom de personnalité ni de parti, sans consigne de vote et sans attaque contre un groupe"
     pass_when: false
     reject_below: 0.35
     accept_above: 0.8
     reason_code: targeted
-    reason_message: "Votre contribution vise nommément une personne, un élu ou un parti, ou un groupe de personnes selon leur origine, leur religion, leur sexe ou leur orientation. Parlez plutôt de la mesure et de ses effets, sans nommer personne."
+    reason_message: "Votre contribution nomme une personne, un élu ou un parti, appelle à voter pour ou contre quelqu'un, ou vise un groupe de personnes selon leur origine, leur religion, leur sexe ou leur orientation. Parlez plutôt de la mesure et de ses effets, sans nommer personne ni donner de consigne de vote."
+  - key: personal_data
+    type: noul
+    instructions: "La contribution vise-t-elle une personne précise et reconnaissable qui n'est pas un responsable politique, par son nom ou par son poste dans un service, un établissement ou une ville nommés ?"
+    criteria:
+      "true": "oui : nom, prénom ou signature d'un particulier, ou poste occupé par une seule personne dans un lieu nommé (le directeur de telle caisse, le chef de tel service, le proviseur de tel lycée)"
+      "false": "non : seulement des institutions, des lois, des fonctions en général, des catégories de personnes, ou des responsables politiques"
+    pass_when: false
+    reject_below: 0.35
+    accept_above: 0.7
+    reason_code: personal_data
+    reason_message: "Votre contribution permet de reconnaître une personne (nom, prénom, signature ou poste précis dans un service nommé) ou lui reproche des faits. Pour protéger les personnes concernées, retirez les noms et les détails qui permettent de les identifier, et parlez plutôt du dispositif en cause."
   - key: relevant
     type: noul
     instructions: "La contribution porte-t-elle sur l'idée : la précise, la complète, la corrige ou lui oppose un argument ?"
@@ -165,9 +187,9 @@ report:
     reason_message: "Votre signalement contient des propos insultants, haineux ou violents. Décrivez le problème sur un ton neutre pour qu'il puisse être examiné."
   - key: relevant
     type: noul
-    instructions: "Le signalement décrit-il un problème précis de l'idée ou de son analyse : chiffre erroné, source, manque de neutralité ou d'équilibre, contenu choquant ou doublon ?"
+    instructions: "Le signalement décrit-il un problème précis de l'idée ou de son analyse : chiffre erroné, source, manque de neutralité ou d'équilibre, contenu choquant, données personnelles ou doublon ?"
     criteria:
-      "true": "oui, il signale une erreur, une source, un passage partial ou choquant, ou un doublon de cette idée"
+      "true": "oui, il signale une erreur, une source, un passage partial ou choquant (y compris un nom de personne, une accusation ou une propagande électorale), ou un doublon de cette idée"
       "false": "non, il exprime un simple désaccord, pose une question ou parle d'autre chose"
     pass_when: true
     reject_below: 0.3

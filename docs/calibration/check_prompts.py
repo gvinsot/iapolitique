@@ -210,8 +210,14 @@ def check_schemas(tax: dict | None, grid: dict | None) -> dict:
         if so["properties"]["decision"]["enum"] != ["accept", "reject"]:
             err("second_opinion.schema.json", "decision must be accept|reject")
     rr = schemas.get("report_review.schema.json")
-    if rr and rr["properties"]["outcome"]["enum"] != ["maintain", "update", "hide"]:
-        err("report_review.schema.json", "outcome must be maintain|update|hide")
+    if rr:
+        rp = rr["properties"]
+        if list(rp) != ["outcome", "escalate", "explanation", "corrections"]:
+            err("report_review.schema.json", "properties must be outcome, escalate, explanation, corrections")
+        if rp.get("outcome", {}).get("enum") != ["maintain", "update", "hide"]:
+            err("report_review.schema.json", "outcome must be maintain|update|hide")
+        if rp.get("escalate", {}).get("type") != "boolean":
+            err("report_review.schema.json", "escalate must be a boolean (AGENTS.md §7.5)")
     return schemas
 
 

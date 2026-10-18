@@ -1,6 +1,6 @@
 {
   "type": "object",
-  "description": "Réévaluation d'une idée publiée à la suite de signalements (AGENTS.md §5.6).",
+  "description": "Réévaluation d'une idée publiée à la suite de signalements (AGENTS.md §5.6 et §7.5).",
   "properties": {
     "outcome": {
       "type": "string",
@@ -10,6 +10,10 @@
         "hide"
       ],
       "description": "maintain : l'analyse reste valable ; update : elle doit être refaite avec des corrections ; hide : l'idée doit être masquée."
+    },
+    "escalate": {
+      "type": "boolean",
+      "description": "true si l'idée ou son analyse contient un contenu grave (diffamation, menace, haine, apologie ou provocation au terrorisme, pédocriminalité) : le backend la masque immédiatement et la place dans la file d'escalade humaine. outcome vaut alors hide. Sinon false."
     },
     "explanation": {
       "type": "string",
@@ -22,6 +26,7 @@
   },
   "required": [
     "outcome",
+    "escalate",
     "explanation",
     "corrections"
   ],

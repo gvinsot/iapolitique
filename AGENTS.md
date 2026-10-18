@@ -569,7 +569,7 @@ au démarrage (un fichier invalide empêche le démarrage).
 | `second_opinion.md`, `analysis.md`, `report_review.md` | En-tête YAML (`version`, `model_hint`), corps en français avec des variables `{{nom}}`. |
 | `analysis.schema.json` | JSON Schema de la sortie d'analyse (§6.2), utilisé tel quel en `response_format` Mistral et pour valider la réponse. |
 | `second_opinion.schema.json`, `report_review.schema.json` | Idem pour le second avis (`decision: accept\|reject`, `reason_code`, `explanation`) et la revue de signalement (`outcome: maintain\|update\|hide`, `explanation`). |
-| `taxonomy.yaml` | `version`, `admin_levels`, `categories` (par niveau), `impact_publics`, `legal_vehicles`, `report_reasons`, `contribution_kinds`, libellés français. |
+| `taxonomy.yaml` | `version`, `admin_levels` (`{ key, label, description, category_groups }`), `categories` (map groupe → liste `{ key, label, description }` ; groupes `etat`, `securite_sociale`, `collectivites`, `transverse` ; clé de catégorie unique dans tout le fichier ; un niveau n'accepte que les catégories de ses `category_groups`), `impact_publics`, `impact_effects`, `idea_kinds`, `confidence_levels`, `legal_vehicles`, `report_reasons`, `contribution_kinds` (listes `{ key, label, description? }`), libellés français. |
 
 ### 13.5 Tests en CI
 

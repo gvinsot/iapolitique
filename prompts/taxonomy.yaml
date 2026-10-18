@@ -1,0 +1,325 @@
+# Taxonomie publique d'iapolitique.
+#
+# Publiée telle quelle sur la page « Méthodologie » et servie par GET /api/taxonomy.
+# Les clés (`key`) sont des identifiants stables stockés en base : ne jamais renommer ni
+# supprimer une clé publiée, en ajouter une nouvelle (et incrémenter `version`).
+#
+# Structure :
+# - admin_levels[].category_groups : groupes de catégories utilisables à ce niveau.
+# - categories : catégories regroupées par groupe (etat, securite_sociale, collectivites,
+#   transverse). Une clé de catégorie est unique dans tout le fichier.
+# - impact_publics : publics pour lesquels l'analyse décrit obligatoirement un impact.
+# - legal_vehicles, report_reasons, contribution_kinds, idea_kinds, impact_effects,
+#   confidence_levels : énumérations avec libellés français.
+version: "1.0.0"
+
+admin_levels:
+  - key: etat
+    label: État
+    description: Budget de l'État (ministères, opérateurs, recettes fiscales de l'État).
+    category_groups: [etat, transverse]
+  - key: securite_sociale
+    label: Sécurité sociale
+    description: Régimes obligatoires de base et organismes concourant à leur financement (LFSS).
+    category_groups: [securite_sociale, transverse]
+  - key: region
+    label: Région
+    description: Conseils régionaux et collectivités à statut particulier exerçant les compétences régionales.
+    category_groups: [collectivites, transverse]
+  - key: departement
+    label: Département
+    description: Conseils départementaux et collectivités exerçant les compétences départementales.
+    category_groups: [collectivites, transverse]
+  - key: intercommunalite
+    label: Intercommunalité
+    description: Métropoles, communautés urbaines, d'agglomération et de communes, syndicats intercommunaux.
+    category_groups: [collectivites, transverse]
+  - key: commune
+    label: Commune
+    description: Communes et leurs établissements (CCAS, caisses des écoles…).
+    category_groups: [collectivites, transverse]
+  - key: multi
+    label: Plusieurs niveaux
+    description: Mesure qui concerne plusieurs administrations publiques à la fois.
+    category_groups: [etat, securite_sociale, collectivites, transverse]
+
+categories:
+  # Missions du budget général de l'État telles que présentées au projet de loi de finances
+  # pour 2026 (fiches missions du PLF 2026, état B), complétées des recettes de l'État, qui
+  # n'ont pas de mission. « Monde combattant, mémoire et liens avec la Nation » est le nouveau
+  # nom de « Anciens combattants, mémoire et liens avec la Nation » ; la clé reste stable.
+  etat:
+    - key: action_exterieure
+      label: Action extérieure de l'État
+      description: Réseau diplomatique et consulaire, influence, Français de l'étranger, attractivité.
+    - key: administration_territoriale
+      label: Administration générale et territoriale de l'État
+      description: Préfectures, titres sécurisés, vie politique, administration centrale de l'Intérieur.
+    - key: agriculture
+      label: Agriculture, alimentation, forêt et affaires rurales
+      description: Aides agricoles nationales, sécurité sanitaire de l'alimentation, forêt.
+    - key: aide_developpement
+      label: Aide publique au développement
+      description: Coopération bilatérale et multilatérale, dons et prêts aux pays en développement.
+    - key: anciens_combattants
+      label: Monde combattant, mémoire et liens avec la Nation
+      description: Pensions et droits des anciens combattants, mémoire, journée défense et citoyenneté.
+    - key: cohesion_territoires
+      label: Cohésion des territoires
+      description: Aides personnelles au logement, hébergement d'urgence, politique de la ville, aménagement du territoire.
+    - key: conseil_controle
+      label: Conseil et contrôle de l'État
+      description: Conseil d'État et juridictions administratives, Cour des comptes et chambres régionales, CESE.
+    - key: credits_non_repartis
+      label: Crédits non répartis
+      description: Provisions et dotation pour dépenses accidentelles et imprévisibles.
+    - key: culture
+      label: Culture
+      description: Patrimoine, création artistique, transmission des savoirs et démocratisation de la culture.
+    - key: defense
+      label: Défense
+      description: Armées, équipements, préparation et emploi des forces, soutien de la politique de défense.
+    - key: action_gouvernement
+      label: Direction de l'action du Gouvernement
+      description: Services du Premier ministre, SGDSN, autorités administratives indépendantes rattachées.
+    - key: ecologie
+      label: Écologie, développement et mobilité durables
+      description: Infrastructures et services de transport, énergie, climat, biodiversité, prévention des risques.
+    - key: economie
+      label: Économie
+      description: Développement des entreprises, statistiques (INSEE), stratégies économiques, régulation.
+    - key: engagements_financiers
+      label: Engagements financiers de l'État
+      description: Charge de la dette et trésorerie de l'État, appels en garantie.
+    - key: enseignement_scolaire
+      label: Enseignement scolaire
+      description: Enseignement primaire et secondaire public et privé sous contrat, vie de l'élève.
+    - key: finances_publiques
+      label: Gestion des finances publiques
+      description: Administration fiscale (DGFiP), douanes, fonction financière de l'État.
+    - key: immigration_asile
+      label: Immigration, asile et intégration
+      description: Accueil et hébergement des demandeurs d'asile, intégration, éloignement.
+    - key: france_2030
+      label: Investir pour la France de 2030
+      description: Plan d'investissement France 2030 et programmes d'investissements d'avenir.
+    - key: justice
+      label: Justice
+      description: Justice judiciaire, administration pénitentiaire, protection judiciaire de la jeunesse, aide juridictionnelle.
+    - key: medias_industries_culturelles
+      label: Médias, livre et industries culturelles
+      description: Presse, livre, industries culturelles et audiovisuel extérieur.
+    - key: audiovisuel_public
+      label: Audiovisuel public
+      description: Financement des sociétés de l'audiovisuel public (compte de concours financiers « Avances à l'audiovisuel public »).
+    - key: outre_mer
+      label: Outre-mer
+      description: Emploi, conditions de vie et exonérations spécifiques aux outre-mer.
+    - key: pouvoirs_publics
+      label: Pouvoirs publics
+      description: Présidence de la République, assemblées parlementaires, Conseil constitutionnel, Cour de justice de la République.
+    - key: recherche_enseignement_superieur
+      label: Recherche et enseignement supérieur
+      description: Universités, organismes de recherche, vie étudiante, recherche spatiale.
+    - key: regimes_sociaux_retraite
+      label: Régimes sociaux et de retraite
+      description: Subventions de l'État aux régimes spéciaux de retraite (SNCF, RATP, marins, mines…).
+    - key: relations_collectivites
+      label: Relations avec les collectivités territoriales
+      description: Dotations budgétaires de l'État aux collectivités (hors prélèvements sur recettes).
+    - key: concours_collectivites
+      label: Prélèvements sur recettes au profit des collectivités
+      description: DGF, FCTVA et autres prélèvements sur recettes de l'État versés aux collectivités.
+    - key: remboursements_degrevements
+      label: Remboursements et dégrèvements
+      description: Remboursements et dégrèvements d'impôts d'État et d'impôts locaux pris en charge par l'État.
+    - key: sante
+      label: Santé
+      description: Prévention, sécurité sanitaire, aide médicale de l'État (AME).
+    - key: securites
+      label: Sécurités
+      description: Police nationale, gendarmerie nationale, sécurité civile, sécurité routière.
+    - key: solidarite_insertion
+      label: Solidarité, insertion et égalité des chances
+      description: Prime d'activité, allocation aux adultes handicapés, protection des personnes vulnérables, égalité femmes-hommes.
+    - key: sport_jeunesse
+      label: Sport, jeunesse et vie associative
+      description: Politique du sport, service civique, jeunesse et vie associative.
+    - key: fonction_publique
+      label: Transformation et fonction publiques
+      description: Rénovation des cités administratives, fonction publique, innovation et transformation publiques.
+    - key: travail_emploi
+      label: Travail, emploi et administration des ministères sociaux
+      description: Politiques de l'emploi, apprentissage, formation professionnelle, France Travail.
+    - key: fiscalite_etat
+      label: Recettes fiscales de l'État
+      description: Impôts et taxes perçus par l'État (impôt sur le revenu, sur les sociétés, TVA, accises…), dépenses fiscales (niches).
+    - key: recettes_non_fiscales_etat
+      label: Recettes non fiscales de l'État
+      description: Dividendes et participations, redevances, cessions d'actifs, amendes, produits du domaine.
+
+  # Branches et activités de la sécurité sociale (loi de financement de la sécurité sociale).
+  securite_sociale:
+    - key: maladie
+      label: Branche maladie
+      description: Soins de ville, hôpital, médicaments, indemnités journalières, ONDAM.
+    - key: vieillesse
+      label: Branche vieillesse
+      description: Pensions de retraite des régimes de base, minimum vieillesse.
+    - key: famille
+      label: Branche famille
+      description: Allocations familiales, prestations d'accueil du jeune enfant, aides au logement versées par les CAF.
+    - key: at_mp
+      label: Branche accidents du travail et maladies professionnelles
+      description: Indemnisation et prévention des accidents du travail et des maladies professionnelles.
+    - key: autonomie
+      label: Branche autonomie
+      description: Perte d'autonomie des personnes âgées et handicapées (CNSA, établissements et services médico-sociaux).
+    - key: recouvrement
+      label: Recouvrement
+      description: Cotisations et contributions sociales (URSSAF), exonérations, lutte contre la fraude aux prélèvements.
+
+  # Fonctions de la nomenclature budgétaire et comptable M57 des collectivités locales,
+  # complétées des recettes locales.
+  collectivites:
+    - key: services_generaux
+      label: Services généraux
+      description: Administration générale, assemblées locales, personnel, bâtiments administratifs, numérique.
+    - key: securite_locale
+      label: Sécurité
+      description: Police municipale, incendie et secours (SDIS), hygiène et salubrité publique.
+    - key: enseignement_formation
+      label: Enseignement, formation professionnelle et apprentissage
+      description: Écoles, collèges, lycées, restauration scolaire, formation professionnelle.
+    - key: culture_sport_jeunesse
+      label: Culture, vie sociale, jeunesse, sports et loisirs
+      description: Équipements culturels et sportifs, subventions aux associations, jeunesse.
+    - key: sante_action_sociale
+      label: Santé et action sociale
+      description: RSA, APA, PCH, aide sociale à l'enfance, petite enfance, CCAS, centres de santé.
+    - key: amenagement_habitat
+      label: Aménagement des territoires et habitat
+      description: Urbanisme, voirie, éclairage public, logement, politique de la ville.
+    - key: action_economique
+      label: Action économique
+      description: Aides aux entreprises, tourisme, agriculture, commerce, développement économique.
+    - key: environnement
+      label: Environnement
+      description: Eau et assainissement, collecte et traitement des déchets, espaces verts, transition énergétique.
+    - key: transports
+      label: Transports
+      description: Transports scolaires et collectifs, transport ferroviaire régional, ports, aéroports, routes.
+    - key: fiscalite_locale
+      label: Fiscalité locale
+      description: Taxes foncières, taxe d'habitation sur les résidences secondaires, droits de mutation, taxe de séjour, versement mobilité.
+    - key: tarifs_domaine
+      label: Tarifs, domaine et patrimoine
+      description: Tarification des services publics locaux, redevances d'occupation du domaine, gestion et cession du patrimoine.
+
+  # Leviers communs à toutes les administrations.
+  transverse:
+    - key: achats_publics
+      label: Achats publics
+      description: Mutualisation et performance des achats, commande publique.
+    - key: immobilier_public
+      label: Immobilier public
+      description: Rationalisation des surfaces, cessions, sobriété énergétique des bâtiments publics.
+    - key: numerique_public
+      label: Numérique et simplification
+      description: Dématérialisation, mutualisation des systèmes d'information, simplification administrative.
+    - key: organisation_effectifs
+      label: Organisation et effectifs
+      description: Organisation des services, doublons entre administrations, temps de travail, recours à des prestataires.
+    - key: lutte_fraude
+      label: Lutte contre la fraude
+      description: Fraude fiscale, sociale et aux aides publiques, recouvrement des créances.
+    - key: subventions_organismes
+      label: Subventions et organismes publics
+      description: Agences, opérateurs, organismes consultatifs, subventions à des tiers.
+
+impact_publics:
+  - key: menages_modestes
+    label: Ménages modestes
+  - key: classes_moyennes
+    label: Classes moyennes
+  - key: menages_aises
+    label: Ménages aisés
+  - key: entreprises
+    label: Entreprises
+  - key: agents_publics
+    label: Agents publics
+  - key: usagers_services_publics
+    label: Usagers des services publics
+  - key: territoires_ruraux
+    label: Territoires ruraux
+  - key: territoires_urbains
+    label: Territoires urbains
+  - key: environnement
+    label: Environnement
+
+impact_effects:
+  - key: positive
+    label: Positif
+  - key: neutral
+    label: Neutre
+  - key: negative
+    label: Négatif
+  - key: uncertain
+    label: Incertain
+
+idea_kinds:
+  - key: savings
+    label: Baisse de dépense
+  - key: revenue
+    label: Hausse de recette
+  - key: mixed
+    label: Mixte
+
+confidence_levels:
+  - key: low
+    label: Faible
+    description: Peu de données publiques, chiffrage fondé surtout sur des hypothèses.
+  - key: medium
+    label: Moyenne
+    description: Données publiques partielles ou anciennes, hypothèses raisonnables.
+  - key: high
+    label: Élevée
+    description: Données publiques récentes et directement applicables.
+
+legal_vehicles:
+  - key: loi
+    label: Loi ordinaire ou organique
+  - key: loi_de_finances
+    label: Loi de finances ou de financement de la sécurité sociale
+  - key: decret
+    label: Décret
+  - key: arrete
+    label: Arrêté
+  - key: deliberation
+    label: Délibération d'une collectivité
+  - key: circulaire
+    label: Circulaire ou instruction
+  - key: organisation_interne
+    label: Décision d'organisation interne
+  - key: autre
+    label: Autre
+
+report_reasons:
+  - key: erreur_chiffrage
+    label: Erreur de chiffrage
+  - key: source_erronee
+    label: Source erronée ou absente
+  - key: contenu_problematique
+    label: Contenu problématique
+  - key: doublon
+    label: Doublon d'une autre idée
+  - key: autre
+    label: Autre
+
+contribution_kinds:
+  - key: amelioration
+    label: Amélioration
+    description: Précise, complète ou corrige l'idée.
+  - key: objection
+    label: Objection
+    description: Signale un inconvénient, un risque ou un obstacle.

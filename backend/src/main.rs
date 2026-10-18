@@ -1,11 +1,13 @@
 //! `iapolitique` command line: see `iapolitique --help` and AGENTS.md §13.1.
 
+use std::path::Path;
 use std::process::ExitCode;
 use std::time::Duration;
 
 use clap::{Parser, Subcommand};
 
-use iapolitique::healthcheck;
+use iapolitique::config::{self, Config, Role};
+use iapolitique::{db, healthcheck, telemetry};
 
 #[derive(Debug, Parser)]
 #[command(name = "iapolitique", version, about = "iapolitique backend")]
@@ -16,6 +18,8 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Apply pending database migrations, then exit.
+    Migrate,
     /// HTTP GET on a local health URL; exit code 0 when it answers 2xx (Docker healthcheck).
     Healthcheck {
         /// URL to check (plain http).
@@ -27,9 +31,57 @@ enum Command {
     },
 }
 
+impl Command {
+    fn role(&self) -> Option<Role> {
+        match self {
+            Self::Migrate => Some(Role::Migrate),
+            Self::Healthcheck { .. } => None,
+        }
+    }
+}
+
 fn main() -> ExitCode {
     let cli = Cli::parse();
-    match cli.command {
+    let Some(role) = cli.command.role() else {
+        return run_offline(cli.command);
+    };
+
+    // SAFETY: still single-threaded, the async runtime is not started yet.
+    unsafe { config::load_secrets_into_env(Path::new(config::DEFAULT_SECRETS_DIR)) };
+    let config = match Config::from_env(role) {
+        Ok(config) => config,
+        Err(err) => {
+            eprintln!("{err}");
+            return ExitCode::from(2);
+        }
+    };
+    if let Err(err) = telemetry::init(&config.log) {
+        eprintln!("{err:#}");
+        return ExitCode::from(2);
+    }
+
+    let runtime = match tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()
+    {
+        Ok(runtime) => runtime,
+        Err(err) => {
+            tracing::error!(error = %err, "cannot start the async runtime");
+            return ExitCode::FAILURE;
+        }
+    };
+    match runtime.block_on(run(cli.command, config)) {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(err) => {
+            tracing::error!(error = format!("{err:#}"), "fatal error");
+            ExitCode::FAILURE
+        }
+    }
+}
+
+/// Commands that need neither configuration nor database.
+fn run_offline(command: Command) -> ExitCode {
+    match command {
         Command::Healthcheck { url, timeout_secs } => {
             match healthcheck::check(&url, Duration::from_secs(timeout_secs)) {
                 Ok(_) => ExitCode::SUCCESS,
@@ -39,6 +91,20 @@ fn main() -> ExitCode {
                 }
             }
         }
+        Command::Migrate => unreachable!("migrate needs the configuration"),
+    }
+}
+
+async fn run(command: Command, config: Config) -> anyhow::Result<()> {
+    match command {
+        Command::Migrate => {
+            let pool = db::connect(&config.database, "iapolitique-migrate").await?;
+            db::migrate(&pool).await?;
+            tracing::info!("migrations applied");
+            pool.close().await;
+            Ok(())
+        }
+        Command::Healthcheck { .. } => unreachable!("handled offline"),
     }
 }
 
@@ -50,5 +116,14 @@ mod tests {
     #[test]
     fn cli_is_well_formed() {
         Cli::command().debug_assert();
+    }
+
+    #[test]
+    fn offline_commands_need_no_role() {
+        let cli =
+            Cli::try_parse_from(["iapolitique", "healthcheck", "--url", "http://x/"]).unwrap();
+        assert_eq!(cli.command.role(), None);
+        let cli = Cli::try_parse_from(["iapolitique", "migrate"]).unwrap();
+        assert_eq!(cli.command.role(), Some(Role::Migrate));
     }
 }

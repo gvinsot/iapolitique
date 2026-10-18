@@ -3534,13 +3534,13 @@
         "type": "string",
         "description": "Administrative level targeted by an idea (§6.2 `admin_level`).",
         "enum": [
-          "Etat",
-          "SecuriteSociale",
-          "Region",
-          "Departement",
-          "Intercommunalite",
-          "Commune",
-          "Multi"
+          "etat",
+          "securite_sociale",
+          "region",
+          "departement",
+          "intercommunalite",
+          "commune",
+          "multi"
         ]
       },
       "AdminLevelItem": {
@@ -4701,8 +4701,8 @@
         "type": "string",
         "description": "File of the calibration bench to produce.",
         "enum": [
-          "Results",
-          "Samples"
+          "results",
+          "samples"
         ]
       },
       "CategoryItem": {
@@ -4762,9 +4762,9 @@
         "type": "string",
         "description": "Quality of the available data behind an estimate (§6.2 `confidence`).",
         "enum": [
-          "Low",
-          "Medium",
-          "High"
+          "low",
+          "medium",
+          "high"
         ]
       },
       "ConfidenceFactor": {
@@ -4788,9 +4788,9 @@
         "type": "string",
         "description": "Kind of contribution attached to a published idea (§5.4, §5.5). Keys of\n`contribution_kinds` in `prompts/taxonomy.yaml`, plus `doublon` for merged duplicates.",
         "enum": [
-          "Improvement",
-          "Objection",
-          "Duplicate"
+          "amelioration",
+          "objection",
+          "doublon"
         ]
       },
       "ContributionSubmission": {
@@ -4830,8 +4830,8 @@
         "type": "string",
         "description": "Kind of contribution a visitor may send (§5.5); duplicates are created by the pipeline.",
         "enum": [
-          "Improvement",
-          "Objection"
+          "amelioration",
+          "objection"
         ]
       },
       "ContributionSummary": {
@@ -4872,17 +4872,17 @@
         "type": "string",
         "description": "Verdict of a single screening criterion given its thresholds (§5.3).",
         "enum": [
-          "Pass",
-          "Fail",
-          "Gray"
+          "pass",
+          "fail",
+          "gray"
         ]
       },
       "Decision": {
         "type": "string",
         "description": "Binary decision: second opinion result, final screening decision or admin label.",
         "enum": [
-          "Accept",
-          "Reject"
+          "accept",
+          "reject"
         ]
       },
       "DeletionResponse": {
@@ -4934,8 +4934,8 @@
         "type": "string",
         "description": "How the administrator closed an escalation of serious content (§7.5).",
         "enum": [
-          "Transmitted",
-          "Dismissed"
+          "transmitted",
+          "dismissed"
         ]
       },
       "EuroRange": {
@@ -5199,9 +5199,9 @@
         "type": "string",
         "description": "Nature of the budget effect (§6.2 `kind`).",
         "enum": [
-          "Savings",
-          "Revenue",
-          "Mixed"
+          "savings",
+          "revenue",
+          "mixed"
         ]
       },
       "IdeaList": {
@@ -5365,30 +5365,30 @@
         "type": "string",
         "description": "Order of the ranking (§6.3): composite score by default.",
         "enum": [
-          "Score",
-          "Gain",
-          "Feasibility",
-          "Delay",
-          "Recent"
+          "score",
+          "gain",
+          "feasibility",
+          "delay",
+          "recent"
         ]
       },
       "IdeaStatus": {
         "type": "string",
         "description": "Lifecycle of an idea.\n\n```text\nsubmitted ─▶ screening ─┬─▶ rejected ─▶ purged (or accepted: overturned by the admin)\n                        ├─▶ second_opinion ─▶ rejected | accepted\n                        ├─▶ accepted ─▶ dedup ─┬─▶ merged\n                        │                      └─▶ queued_analysis ─▶ analyzing ─┬─▶ published ⇄ hidden ─▶ purged\n                        │                                                        └─▶ analysis_failed ─▶ queued_analysis\n                        └─▶ submitted (decision service unavailable, retried by a job)\n```\n\nRe-analyses of a published (or hidden) idea do not change its status: the idea stays\nvisible with its current analysis until the new one replaces it.",
         "enum": [
-          "Submitted",
-          "Screening",
-          "SecondOpinion",
-          "Rejected",
-          "Purged",
-          "Accepted",
-          "Dedup",
-          "Merged",
-          "QueuedAnalysis",
-          "Analyzing",
-          "AnalysisFailed",
-          "Published",
-          "Hidden"
+          "submitted",
+          "screening",
+          "second_opinion",
+          "rejected",
+          "purged",
+          "accepted",
+          "dedup",
+          "merged",
+          "queued_analysis",
+          "analyzing",
+          "analysis_failed",
+          "published",
+          "hidden"
         ]
       },
       "IdeaSubmission": {
@@ -5469,35 +5469,35 @@
         "type": "string",
         "description": "Direction of the impact of an idea on a public (§6.2 `impacts`).",
         "enum": [
-          "Positive",
-          "Neutral",
-          "Negative",
-          "Uncertain"
+          "positive",
+          "neutral",
+          "negative",
+          "uncertain"
         ]
       },
       "JobKind": {
         "type": "string",
         "description": "Every kind of job. Handlers are registered per kind in [`worker::Registry`].",
         "enum": [
-          "ScreenIdea",
-          "SecondOpinion",
-          "DedupIdea",
-          "AnalyzeIdea",
-          "ScreenContribution",
-          "ScreenReport",
-          "ReviewReports",
-          "GenerateExports",
-          "Purge"
+          "screen_idea",
+          "second_opinion",
+          "dedup_idea",
+          "analyze_idea",
+          "screen_contribution",
+          "screen_report",
+          "review_reports",
+          "generate_exports",
+          "purge"
         ]
       },
       "JobStatus": {
         "type": "string",
         "description": "Job status (`jobs.status`).",
         "enum": [
-          "Queued",
-          "Running",
-          "Succeeded",
-          "Dead"
+          "queued",
+          "running",
+          "succeeded",
+          "dead"
         ]
       },
       "KeyCount": {
@@ -5521,8 +5521,8 @@
         "type": "string",
         "description": "Administrator's judgement of a screening decision, for the calibration (§5.3, §8).",
         "enum": [
-          "Correct",
-          "Incorrect"
+          "correct",
+          "incorrect"
         ]
       },
       "LegalInfo": {
@@ -5622,22 +5622,22 @@
         "type": "string",
         "description": "Legal instrument needed to implement an idea (§6.2 `legal_vehicle`).",
         "enum": [
-          "Loi",
-          "LoiDeFinances",
-          "Decret",
-          "Arrete",
-          "Deliberation",
-          "Circulaire",
-          "OrganisationInterne",
-          "Autre"
+          "loi",
+          "loi_de_finances",
+          "decret",
+          "arrete",
+          "deliberation",
+          "circulaire",
+          "organisation_interne",
+          "autre"
         ]
       },
       "Measure": {
         "type": "string",
         "description": "Measure taken against the text.",
         "enum": [
-          "Rejected",
-          "Hidden"
+          "rejected",
+          "hidden"
         ]
       },
       "MethodologyFile": {
@@ -5673,10 +5673,10 @@
         "type": "string",
         "description": "Role of a file of `prompts/` on the methodology page.",
         "enum": [
-          "Screening",
-          "Taxonomy",
-          "Prompt",
-          "Schema"
+          "screening",
+          "taxonomy",
+          "prompt",
+          "schema"
         ]
       },
       "MethodologyResponse": {
@@ -5868,24 +5868,24 @@
         "type": "string",
         "description": "Reason selected by the author of a report (§5.6): keys of `report_reasons` in\n`prompts/taxonomy.yaml`.",
         "enum": [
-          "CalculationError",
-          "WrongSource",
-          "ProblematicContent",
-          "Duplicate",
-          "Other"
+          "erreur_chiffrage",
+          "source_erronee",
+          "contenu_problematique",
+          "doublon",
+          "autre"
         ]
       },
       "ReportStatus": {
         "type": "string",
         "description": "Lifecycle of a report (§5.6).",
         "enum": [
-          "Submitted",
-          "Screening",
-          "SecondOpinion",
-          "Accepted",
-          "Rejected",
-          "Reviewed",
-          "Purged"
+          "submitted",
+          "screening",
+          "second_opinion",
+          "accepted",
+          "rejected",
+          "reviewed",
+          "purged"
         ]
       },
       "ReportSubmission": {
@@ -5936,9 +5936,9 @@
         "type": "string",
         "description": "Conclusion of the AI review of the reports of an idea (§5.6).",
         "enum": [
-          "Maintain",
-          "Update",
-          "Hide"
+          "maintain",
+          "update",
+          "hide"
         ]
       },
       "ReviewRequestBody": {
@@ -5965,16 +5965,16 @@
         "type": "string",
         "description": "State of a human review requested by an author (§7.1).",
         "enum": [
-          "Pending",
-          "Done"
+          "pending",
+          "done"
         ]
       },
       "ReviewResolution": {
         "type": "string",
         "description": "Outcome of a human review requested by an author (§7.1).",
         "enum": [
-          "Confirmed",
-          "Overturned"
+          "confirmed",
+          "overturned"
         ]
       },
       "RightOfReply": {
@@ -6235,9 +6235,9 @@
         "type": "string",
         "description": "Result of the decision model stage of a screening.",
         "enum": [
-          "Accepted",
-          "Rejected",
-          "GrayZone"
+          "accepted",
+          "rejected",
+          "gray_zone"
         ]
       },
       "ScreeningSection": {
@@ -6268,8 +6268,8 @@
         "type": "string",
         "description": "How the search text matched.",
         "enum": [
-          "Exact",
-          "Approximate"
+          "exact",
+          "approximate"
         ]
       },
       "SourceReference": {
@@ -6403,9 +6403,9 @@
         "type": "string",
         "description": "Kind of entity screened by the decision model or reachable through a tracking link.",
         "enum": [
-          "Idea",
-          "Contribution",
-          "Report"
+          "idea",
+          "contribution",
+          "report"
         ]
       },
       "TaxonomyItem": {

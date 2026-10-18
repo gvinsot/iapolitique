@@ -1033,7 +1033,7 @@ export interface components {
          * @description Administrative level targeted by an idea (§6.2 `admin_level`).
          * @enum {string}
          */
-        AdminLevel: "Etat" | "SecuriteSociale" | "Region" | "Departement" | "Intercommunalite" | "Commune" | "Multi";
+        AdminLevel: "etat" | "securite_sociale" | "region" | "departement" | "intercommunalite" | "commune" | "multi";
         /** @description An administrative level and the category groups it accepts. */
         AdminLevelItem: {
             key: string;
@@ -1423,7 +1423,7 @@ export interface components {
          * @description File of the calibration bench to produce.
          * @enum {string}
          */
-        CalibrationPart: "Results" | "Samples";
+        CalibrationPart: "results" | "samples";
         /** @description A category, its group and the administrative levels that accept it. */
         CategoryItem: {
             key: string;
@@ -1444,7 +1444,7 @@ export interface components {
          * @description Quality of the available data behind an estimate (§6.2 `confidence`).
          * @enum {string}
          */
-        Confidence: "Low" | "Medium" | "High";
+        Confidence: "low" | "medium" | "high";
         /** @description A confidence level and its factor in the score. */
         ConfidenceFactor: {
             level: components["schemas"]["Confidence"];
@@ -1456,7 +1456,7 @@ export interface components {
          *     `contribution_kinds` in `prompts/taxonomy.yaml`, plus `doublon` for merged duplicates.
          * @enum {string}
          */
-        ContributionKind: "Improvement" | "Objection" | "Duplicate";
+        ContributionKind: "amelioration" | "objection" | "doublon";
         /** @description An improvement or an objection to a published idea (§5.5). */
         ContributionSubmission: {
             kind: components["schemas"]["ContributionSubmissionKind"];
@@ -1476,7 +1476,7 @@ export interface components {
          * @description Kind of contribution a visitor may send (§5.5); duplicates are created by the pipeline.
          * @enum {string}
          */
-        ContributionSubmissionKind: "Improvement" | "Objection";
+        ContributionSubmissionKind: "amelioration" | "objection";
         /** @description A contribution taken into account by an analysis: neutral summary, never the raw text. */
         ContributionSummary: {
             kind: components["schemas"]["ContributionKind"];
@@ -1492,12 +1492,12 @@ export interface components {
          * @description Verdict of a single screening criterion given its thresholds (§5.3).
          * @enum {string}
          */
-        CriterionVerdict: "Pass" | "Fail" | "Gray";
+        CriterionVerdict: "pass" | "fail" | "gray";
         /**
          * @description Binary decision: second opinion result, final screening decision or admin label.
          * @enum {string}
          */
-        Decision: "Accept" | "Reject";
+        Decision: "accept" | "reject";
         /** @description Confirmation of a deletion. */
         DeletionResponse: {
             /**
@@ -1526,7 +1526,7 @@ export interface components {
          * @description How the administrator closed an escalation of serious content (§7.5).
          * @enum {string}
          */
-        EscalationOutcome: "Transmitted" | "Dismissed";
+        EscalationOutcome: "transmitted" | "dismissed";
         /** @description Low, median and high estimate, in whole euros. */
         EuroRange: {
             /** Format: int64 */
@@ -1610,7 +1610,7 @@ export interface components {
          * @description Nature of the budget effect (§6.2 `kind`).
          * @enum {string}
          */
-        IdeaKind: "Savings" | "Revenue" | "Mixed";
+        IdeaKind: "savings" | "revenue" | "mixed";
         /** @description A page of the ranking. */
         IdeaList: {
             items: components["schemas"]["IdeaListItem"][];
@@ -1677,7 +1677,7 @@ export interface components {
          * @description Order of the ranking (§6.3): composite score by default.
          * @enum {string}
          */
-        IdeaSort: "Score" | "Gain" | "Feasibility" | "Delay" | "Recent";
+        IdeaSort: "score" | "gain" | "feasibility" | "delay" | "recent";
         /**
          * @description Lifecycle of an idea.
          *
@@ -1694,7 +1694,7 @@ export interface components {
          *     visible with its current analysis until the new one replaces it.
          * @enum {string}
          */
-        IdeaStatus: "Submitted" | "Screening" | "SecondOpinion" | "Rejected" | "Purged" | "Accepted" | "Dedup" | "Merged" | "QueuedAnalysis" | "Analyzing" | "AnalysisFailed" | "Published" | "Hidden";
+        IdeaStatus: "submitted" | "screening" | "second_opinion" | "rejected" | "purged" | "accepted" | "dedup" | "merged" | "queued_analysis" | "analyzing" | "analysis_failed" | "published" | "hidden";
         /** @description A new idea (§5.1). */
         IdeaSubmission: {
             /**
@@ -1728,17 +1728,17 @@ export interface components {
          * @description Direction of the impact of an idea on a public (§6.2 `impacts`).
          * @enum {string}
          */
-        ImpactDirection: "Positive" | "Neutral" | "Negative" | "Uncertain";
+        ImpactDirection: "positive" | "neutral" | "negative" | "uncertain";
         /**
          * @description Every kind of job. Handlers are registered per kind in [`worker::Registry`].
          * @enum {string}
          */
-        JobKind: "ScreenIdea" | "SecondOpinion" | "DedupIdea" | "AnalyzeIdea" | "ScreenContribution" | "ScreenReport" | "ReviewReports" | "GenerateExports" | "Purge";
+        JobKind: "screen_idea" | "second_opinion" | "dedup_idea" | "analyze_idea" | "screen_contribution" | "screen_report" | "review_reports" | "generate_exports" | "purge";
         /**
          * @description Job status (`jobs.status`).
          * @enum {string}
          */
-        JobStatus: "Queued" | "Running" | "Succeeded" | "Dead";
+        JobStatus: "queued" | "running" | "succeeded" | "dead";
         /** @description Number of published ideas of one key (administrative level or kind). */
         KeyCount: {
             key: string;
@@ -1749,7 +1749,7 @@ export interface components {
          * @description Administrator's judgement of a screening decision, for the calibration (§5.3, §8).
          * @enum {string}
          */
-        LabelVerdict: "Correct" | "Incorrect";
+        LabelVerdict: "correct" | "incorrect";
         LegalInfo: {
             publisher: components["schemas"]["LegalPublisher"];
             contact_email: string | null;
@@ -1783,12 +1783,12 @@ export interface components {
          * @description Legal instrument needed to implement an idea (§6.2 `legal_vehicle`).
          * @enum {string}
          */
-        LegalVehicle: "Loi" | "LoiDeFinances" | "Decret" | "Arrete" | "Deliberation" | "Circulaire" | "OrganisationInterne" | "Autre";
+        LegalVehicle: "loi" | "loi_de_finances" | "decret" | "arrete" | "deliberation" | "circulaire" | "organisation_interne" | "autre";
         /**
          * @description Measure taken against the text.
          * @enum {string}
          */
-        Measure: "Rejected" | "Hidden";
+        Measure: "rejected" | "hidden";
         /** @description A file of `prompts/` as used in production. */
         MethodologyFile: {
             /** @description File name in `prompts/`, e.g. `screening.yaml`. */
@@ -1803,7 +1803,7 @@ export interface components {
          * @description Role of a file of `prompts/` on the methodology page.
          * @enum {string}
          */
-        MethodologyFileKind: "Screening" | "Taxonomy" | "Prompt" | "Schema";
+        MethodologyFileKind: "screening" | "taxonomy" | "prompt" | "schema";
         /** @description Prompts, grid, taxonomy and formula as used in production (§6.5). */
         MethodologyResponse: {
             screening_version: string;
@@ -1890,12 +1890,12 @@ export interface components {
          *     `prompts/taxonomy.yaml`.
          * @enum {string}
          */
-        ReportReason: "CalculationError" | "WrongSource" | "ProblematicContent" | "Duplicate" | "Other";
+        ReportReason: "erreur_chiffrage" | "source_erronee" | "contenu_problematique" | "doublon" | "autre";
         /**
          * @description Lifecycle of a report (§5.6).
          * @enum {string}
          */
-        ReportStatus: "Submitted" | "Screening" | "SecondOpinion" | "Accepted" | "Rejected" | "Reviewed" | "Purged";
+        ReportStatus: "submitted" | "screening" | "second_opinion" | "accepted" | "rejected" | "reviewed" | "purged";
         /** @description A report about a published idea (§5.6, §7.5). */
         ReportSubmission: {
             reason: components["schemas"]["ReportReason"];
@@ -1917,7 +1917,7 @@ export interface components {
          * @description Conclusion of the AI review of the reports of an idea (§5.6).
          * @enum {string}
          */
-        ReviewOutcome: "Maintain" | "Update" | "Hide";
+        ReviewOutcome: "maintain" | "update" | "hide";
         /** @description Body of a human review request. */
         ReviewRequestBody: {
             token: string;
@@ -1931,12 +1931,12 @@ export interface components {
          * @description State of a human review requested by an author (§7.1).
          * @enum {string}
          */
-        ReviewRequestStatus: "Pending" | "Done";
+        ReviewRequestStatus: "pending" | "done";
         /**
          * @description Outcome of a human review requested by an author (§7.1).
          * @enum {string}
          */
-        ReviewResolution: "Confirmed" | "Overturned";
+        ReviewResolution: "confirmed" | "overturned";
         /** @description Right of reply published by the editor under the idea (LCEN art. 1-1 III). Plain text. */
         RightOfReply: {
             /** @description How the person replying is designated, as they asked. */
@@ -2042,7 +2042,7 @@ export interface components {
          * @description Result of the decision model stage of a screening.
          * @enum {string}
          */
-        ScreeningOutcome: "Accepted" | "Rejected" | "GrayZone";
+        ScreeningOutcome: "accepted" | "rejected" | "gray_zone";
         /** @description The criteria applied to one kind of text, in the order of evaluation. */
         ScreeningSection: {
             kind: components["schemas"]["TargetKind"];
@@ -2054,7 +2054,7 @@ export interface components {
          * @description How the search text matched.
          * @enum {string}
          */
-        SearchMatch: "Exact" | "Approximate";
+        SearchMatch: "exact" | "approximate";
         /**
          * @description A source cited by the analysis. Its URL comes from the AI: render it as a link only when
          *     its scheme is `https:` or `http:` (§14.1).
@@ -2125,7 +2125,7 @@ export interface components {
          * @description Kind of entity screened by the decision model or reachable through a tracking link.
          * @enum {string}
          */
-        TargetKind: "Idea" | "Contribution" | "Report";
+        TargetKind: "idea" | "contribution" | "report";
         /** @description An entry of a taxonomy list. */
         TaxonomyItem: {
             key: string;

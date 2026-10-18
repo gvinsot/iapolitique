@@ -16,7 +16,7 @@ macro_rules! text_enum {
     (
         $(#[$meta:meta])*
         $vis:vis enum $name:ident {
-            $( $(#[$vmeta:meta])* $variant:ident => $text:literal ),+ $(,)?
+            $( $(#[$vmeta:meta])* $variant:ident => $text:tt ),+ $(,)?
         }
     ) => {
         $(#[$meta])*
@@ -92,6 +92,16 @@ mod tests {
             assert_eq!(serde_json::from_str::<Color>(&json).unwrap(), *color);
         }
         assert_eq!(Color::try_from("dark_blue".to_owned()), Ok(Color::DarkBlue));
+    }
+
+    /// The OpenAPI schema must list the serialized texts, not the Rust variant names: the
+    /// frontend types are generated from it (AGENTS.md §13.3).
+    #[test]
+    fn openapi_schema_lists_the_serialized_texts() {
+        use utoipa::PartialSchema;
+
+        let schema = serde_json::to_value(Color::schema()).unwrap();
+        assert_eq!(schema["enum"], serde_json::json!(["red", "dark_blue"]));
     }
 
     #[test]

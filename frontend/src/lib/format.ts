@@ -22,6 +22,15 @@ const compactNumber = new Intl.NumberFormat("fr-FR", {
 
 const decimal = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 });
 
+const preciseEuros = new Intl.NumberFormat("fr-FR", {
+  style: "currency",
+  currency: "EUR",
+  minimumFractionDigits: 2,
+  maximumFractionDigits: 2,
+});
+
+const percent = new Intl.NumberFormat("fr-FR", { style: "percent", maximumFractionDigits: 0 });
+
 const integer = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 0 });
 
 /** "1,2 Md €", "350 M €", "12 k €" — for headlines and cards. */
@@ -32,6 +41,16 @@ export function formatEurosCompact(amount: number): string {
 /** "12 345 678 €" — for tables and details. */
 export function formatEuros(amount: number): string {
   return fullEuros.format(amount);
+}
+
+/** "1,23 €" — estimated AI costs, which have cents. */
+export function formatEurosPrecise(amount: number): string {
+  return preciseEuros.format(amount);
+}
+
+/** "42 %" from a ratio between 0 and 1. */
+export function formatPercent(ratio: number): string {
+  return percent.format(ratio);
 }
 
 export function formatInteger(value: number): string {

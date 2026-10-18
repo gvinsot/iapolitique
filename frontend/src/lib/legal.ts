@@ -1,33 +1,18 @@
+import type { LegalInfo, LegalPages } from "@/api/types";
+
+import { formatDate } from "./format";
+
 /**
  * Publisher details and legal page metadata served by GET /api/legal (AGENTS.md §7.5, §13.2).
  *
  * The publisher's identity is never committed (public repository): it lives in the LEGAL_*
- * environment variables of the api and reaches the browser only through this endpoint. The
- * response is validated at runtime so a partial or malformed answer degrades to the
- * "unavailable" notice instead of rendering `undefined`.
+ * environment variables of the api and reaches the browser only through this endpoint. Each
+ * detail is `null` while it is not configured: pages show a visible placeholder instead.
  */
 
-import { formatDate } from "./format";
-
-/** Keys of the legal pages in `pages` (dates of their last update). */
-export const legalPageKeys = ["mentions_legales", "confidentialite", "regles", "licence"] as const;
-export type LegalPageKey = (typeof legalPageKeys)[number];
-
-export interface LegalPublisher {
-  name: string;
-  address: string;
-  phone: string;
-}
-
-export interface LegalInfo {
-  publisher: LegalPublisher;
-  contact_email: string;
-  privacy_email: string;
-  /** Version of the rules (CGU) accepted with each contribution. */
-  cgu_version: string;
-  /** Last update of each legal page, ISO date (`YYYY-MM-DD`) or date-time. */
-  pages: Partial<Record<LegalPageKey, string>>;
-}
+/** Keys of the legal pages in `pages` of GET /api/legal (dates of their last update). */
+export type LegalPageKey = keyof LegalPages;
+export type { LegalInfo };
 
 /** Shown wherever a detail coming from the API is missing. */
 export const LEGAL_DETAILS_UNAVAILABLE = "coordonnées momentanément indisponibles";
@@ -62,42 +47,6 @@ export const AI_REUSE_REQUEST =
 export function attributionText(updatedOn?: string | null): string {
   const date = updatedOn && /^\d{4}-\d{2}-\d{2}/.test(updatedOn) ? updatedOn.slice(0, 10) : null;
   return `Source : ${SITE_DOMAIN} – Propositions citoyennes et analyses générées par IA (Mistral AI), mise à jour du ${date ?? ATTRIBUTION_DATE_PLACEHOLDER} – Licence Ouverte 2.0`;
-}
-
-function isRecord(value: unknown): value is Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value);
-}
-
-function nonEmptyString(value: unknown): string | null {
-  return typeof value === "string" && value.trim() !== "" ? value.trim() : null;
-}
-
-/** Validates the API answer; returns null when a mandatory field is missing. */
-export function parseLegalInfo(value: unknown): LegalInfo | null {
-  if (!isRecord(value) || !isRecord(value.publisher)) return null;
-  const name = nonEmptyString(value.publisher.name);
-  const address = nonEmptyString(value.publisher.address);
-  const phone = nonEmptyString(value.publisher.phone);
-  const contactEmail = nonEmptyString(value.contact_email);
-  const privacyEmail = nonEmptyString(value.privacy_email);
-  const cguVersion = nonEmptyString(value.cgu_version);
-  if (!name || !address || !phone || !contactEmail || !privacyEmail || !cguVersion) return null;
-
-  const pages: Partial<Record<LegalPageKey, string>> = {};
-  if (isRecord(value.pages)) {
-    for (const key of legalPageKeys) {
-      const date = nonEmptyString(value.pages[key]);
-      if (date && !Number.isNaN(Date.parse(date))) pages[key] = date;
-    }
-  }
-
-  return {
-    publisher: { name, address, phone },
-    contact_email: contactEmail,
-    privacy_email: privacyEmail,
-    cgu_version: cguVersion,
-    pages,
-  };
 }
 
 /** "18 octobre 2026" (see formatDate). */

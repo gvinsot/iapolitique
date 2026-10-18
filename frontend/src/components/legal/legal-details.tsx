@@ -4,8 +4,14 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { LEGAL_DETAILS_UNAVAILABLE } from "@/lib/legal";
 
-/** One detail coming from the API, or a visible placeholder while it is unavailable. */
-export function LegalValue({ value, pending }: { value: string | undefined; pending: boolean }) {
+/** One detail coming from the API, or a visible placeholder while it is missing or loading. */
+export function LegalValue({
+  value,
+  pending,
+}: {
+  value: string | null | undefined;
+  pending: boolean;
+}) {
   if (value) return <>{value}</>;
   return (
     <span className="text-muted-foreground italic">
@@ -15,7 +21,13 @@ export function LegalValue({ value, pending }: { value: string | undefined; pend
 }
 
 /** An e-mail address from the API as a mailto link, or the placeholder. */
-export function LegalEmail({ email, pending }: { email: string | undefined; pending: boolean }) {
+export function LegalEmail({
+  email,
+  pending,
+}: {
+  email: string | null | undefined;
+  pending: boolean;
+}) {
   if (!email) return <LegalValue value={undefined} pending={pending} />;
   return <a href={`mailto:${email}`}>{email}</a>;
 }

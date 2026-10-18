@@ -1,6 +1,7 @@
 import { CheckIcon, MinusIcon } from "lucide-react";
 
 import { Badge } from "@/components/ui/badge";
+import { formatDate } from "@/lib/format";
 import type { ContributionConsidered } from "@/lib/idea-model";
 import { contributionKindLabels } from "@/lib/labels";
 
@@ -28,11 +29,9 @@ export function ContributionsList({ contributions, totalCount }: ContributionsLi
       </p>
       {contributions.length > 0 ? (
         <ul className="space-y-3">
-          {contributions.map((contribution) => (
-            <li
-              key={contribution.contribution_id}
-              className="space-y-2 rounded-lg border bg-card p-4"
-            >
+          {contributions.map((contribution, index) => (
+            // The API sends no identifier (AGENTS.md §13.2): the order is stable for a page.
+            <li key={index} className="space-y-2 rounded-lg border bg-card p-4">
               <div className="flex flex-wrap items-center gap-2">
                 <Badge variant="secondary">{contributionKindLabels[contribution.kind]}</Badge>
                 <Badge variant="outline">
@@ -43,6 +42,11 @@ export function ContributionsList({ contributions, totalCount }: ContributionsLi
                   )}
                   {contribution.taken_into_account ? "Prise en compte" : "Non retenue"}
                 </Badge>
+                {contribution.integrated_on ? (
+                  <span className="text-xs text-muted-foreground">
+                    Examinée le {formatDate(contribution.integrated_on)}
+                  </span>
+                ) : null}
               </div>
               <p className="text-pretty">{contribution.summary}</p>
               {contribution.response ? (

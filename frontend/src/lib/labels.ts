@@ -1,7 +1,30 @@
+import type {
+  AdminLevel,
+  Confidence,
+  ContributionKind,
+  IdeaKind,
+  IdeaSort,
+  ImpactDirection,
+  LegalVehicle,
+  ReportReason,
+} from "@/api/types";
+
+export type {
+  AdminLevel,
+  Confidence,
+  ContributionKind,
+  IdeaKind,
+  IdeaSort,
+  LegalVehicle,
+  ReportReason,
+} from "@/api/types";
+export type ImpactEffect = ImpactDirection;
+
 /**
- * French labels for the enumerations fixed by the analysis contract (AGENTS.md §6.2 and §13.2).
- * Categories and impact publics come from the taxonomy served by the API, not from here; the
- * other lists mirror the fixed backend enums (backend/src/domain/types.rs).
+ * French labels for the closed enumerations of the API (AGENTS.md §6.2 and §13.2), typed against
+ * the generated types so a new backend value fails the build. They are the fallback of the
+ * labels served by GET /api/taxonomy (hooks/use-taxonomy.ts), which take precedence: these
+ * only show while the taxonomy loads or when it cannot be reached.
  */
 
 export const adminLevelLabels = {
@@ -12,15 +35,13 @@ export const adminLevelLabels = {
   intercommunalite: "Intercommunalité",
   commune: "Commune",
   multi: "Plusieurs niveaux",
-} as const;
-export type AdminLevel = keyof typeof adminLevelLabels;
+} as const satisfies Record<AdminLevel, string>;
 
 export const ideaKindLabels = {
   savings: "Baisse de dépense",
   revenue: "Hausse de recette",
   mixed: "Mixte",
-} as const;
-export type IdeaKind = keyof typeof ideaKindLabels;
+} as const satisfies Record<IdeaKind, string>;
 
 export const ideaSortLabels = {
   score: "Rentabilité (score)",
@@ -28,15 +49,13 @@ export const ideaSortLabels = {
   feasibility: "Faisabilité",
   delay: "Délai avant effet",
   recent: "Plus récentes",
-} as const;
-export type IdeaSort = keyof typeof ideaSortLabels;
+} as const satisfies Record<IdeaSort, string>;
 
 export const confidenceLabels = {
   low: "Faible",
   medium: "Moyenne",
   high: "Élevée",
-} as const;
-export type Confidence = keyof typeof confidenceLabels;
+} as const satisfies Record<Confidence, string>;
 
 /** Legal vehicle of a measure (taxonomy.yaml `legal_vehicles`, backend enum LegalVehicle). */
 export const legalVehicleLabels = {
@@ -48,8 +67,7 @@ export const legalVehicleLabels = {
   circulaire: "Circulaire ou instruction",
   organisation_interne: "Décision d’organisation interne",
   autre: "Autre",
-} as const;
-export type LegalVehicle = keyof typeof legalVehicleLabels;
+} as const satisfies Record<LegalVehicle, string>;
 
 /** Expected effect of a measure on a public (taxonomy.yaml `impact_effects`). */
 export const impactEffectLabels = {
@@ -57,16 +75,14 @@ export const impactEffectLabels = {
   neutral: "Neutre",
   negative: "Négatif",
   uncertain: "Incertain",
-} as const;
-export type ImpactEffect = keyof typeof impactEffectLabels;
+} as const satisfies Record<ImpactDirection, string>;
 
 /** Kinds of contributions (taxonomy.yaml `contribution_kinds`, plus merged duplicates). */
 export const contributionKindLabels = {
   amelioration: "Amélioration",
   objection: "Objection",
   doublon: "Proposition similaire",
-} as const;
-export type ContributionKind = keyof typeof contributionKindLabels;
+} as const satisfies Record<ContributionKind, string>;
 
 /** Reasons of a report (taxonomy.yaml `report_reasons`). */
 export const reportReasonLabels = {
@@ -75,8 +91,7 @@ export const reportReasonLabels = {
   contenu_problematique: "Contenu problématique",
   doublon: "Doublon d’une autre idée",
   autre: "Autre",
-} as const;
-export type ReportReason = keyof typeof reportReasonLabels;
+} as const satisfies Record<ReportReason, string>;
 
 /** Feasibility score of the analysis (1 to 5). */
 export const feasibilityLabels: Record<number, string> = {

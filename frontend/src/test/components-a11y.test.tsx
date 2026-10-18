@@ -40,6 +40,7 @@ import {
 } from "./fixtures/admin";
 import {
   analysisFixture,
+  contributionsFixture,
   ideaSummaryFixture,
   rightOfReplyFixture,
   scoreBreakdownFixture,
@@ -80,7 +81,7 @@ describe("components accessibility audit", () => {
           <ImpactGrid impacts={analysisFixture.impacts} sourceIds={sourceIds} />
           <AssumptionsList assumptions={analysisFixture.assumptions} sourceIds={sourceIds} />
           <SourcesList sources={analysisFixture.sources} />
-          <ContributionsList contributions={analysisFixture.contributions_considered} />
+          <ContributionsList contributions={contributionsFixture} />
         </AiGenerated>
         <RightOfReply reply={rightOfReplyFixture} />
       </Page>,

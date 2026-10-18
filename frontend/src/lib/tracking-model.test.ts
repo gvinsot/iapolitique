@@ -1,12 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import {
-  canDelete,
-  canRequestReview,
-  parseTrackedItem,
-  type TrackedItem,
-  trackingPhase,
-} from "./tracking-model";
+import { canDelete, canRequestReview, type TrackedItem, trackingPhase } from "./tracking-model";
 
 const base: TrackedItem = {
   kind: "idea",
@@ -14,8 +8,11 @@ const base: TrackedItem = {
   submitted_on: "2026-10-18",
   idea: null,
   decision: {
+    measure: "rejected",
     reason_code: "off_topic",
     reason_message: "Votre texte ne propose pas de mesure…",
+    rule: { article: "4.5", title: "Une mesure pour les finances publiques", url: "/regles" },
+    automated: true,
     decided_on: "2026-10-18",
     purge_on: "2026-11-17",
     second_opinion: false,
@@ -66,25 +63,15 @@ describe("available actions", () => {
       }),
     ).toBe(false);
   });
-});
 
-describe("parseTrackedItem", () => {
-  it("accepts a complete answer", () => {
-    expect(parseTrackedItem(base)).toEqual(base);
-  });
-
-  it("drops unusable optional parts and rejects unusable answers", () => {
+  it("refuses a human review of a masking decided by the administrator", () => {
+    const decision = base.decision ?? null;
     expect(
-      parseTrackedItem({
+      canRequestReview({
         ...base,
-        idea: { slug: "" },
-        decision: { reason_code: "x" },
-        report_outcome: "delete",
-        review_request: { status: "done" },
+        status: "hidden",
+        decision: decision && { ...decision, measure: "hidden", automated: false },
       }),
-    ).toEqual({ ...base, decision: null, review_request: null });
-    expect(parseTrackedItem({ ...base, kind: "vote" })).toBeNull();
-    expect(parseTrackedItem({ ...base, status: "" })).toBeNull();
-    expect(parseTrackedItem(null)).toBeNull();
+    ).toBe(false);
   });
 });

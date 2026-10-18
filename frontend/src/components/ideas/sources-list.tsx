@@ -1,7 +1,6 @@
 import { ExternalLinkIcon } from "lucide-react";
 
 import { safeExternalUrl, sourceAnchor } from "@/lib/citations";
-import { formatDate } from "@/lib/format";
 import type { Source } from "@/lib/idea-model";
 import { cn } from "@/lib/utils";
 
@@ -28,10 +27,13 @@ export function SourcesList({ sources, className }: { sources: Source[]; classNa
                 {url ? (
                   <a
                     href={url}
-                    rel="noreferrer nofollow"
+                    // AGENTS.md §14.1: links coming from the AI never pass the page address.
+                    target="_blank"
+                    rel="noopener noreferrer nofollow ugc"
                     className="inline-flex items-baseline gap-1 text-primary underline underline-offset-4 hover:no-underline"
                   >
                     {source.title}
+                    <span className="sr-only"> (nouvelle fenêtre)</span>
                     <ExternalLinkIcon
                       className="size-3.5 shrink-0 self-center"
                       aria-hidden="true"
@@ -41,10 +43,9 @@ export function SourcesList({ sources, className }: { sources: Source[]; classNa
                   source.title
                 )}
               </p>
-              <p className="text-sm text-muted-foreground">
-                {source.publisher}
-                {source.date ? <> · {formatDate(source.date)}</> : null}
-              </p>
+              {source.publisher ? (
+                <p className="text-sm text-muted-foreground">{source.publisher}</p>
+              ) : null}
               {source.used_for ? (
                 <p className="text-sm">
                   <span className="text-muted-foreground">Utilisée pour : </span>

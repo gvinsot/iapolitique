@@ -15,6 +15,7 @@ import { Link } from "react-router";
 import { paths } from "@/app/paths";
 import { formatDate } from "@/lib/format";
 import {
+  canRequestReview,
   type ReviewOutcome,
   type TrackedItem,
   type TrackedKind,
@@ -212,9 +213,9 @@ export function TrackingStatus({ item }: { item: TrackedItem }) {
       {(phase === "rejected" || phase === "hidden") && item.decision ? (
         <StatementOfReasons
           kind={item.kind}
-          measure={phase}
           decision={item.decision}
           purged={item.status === "purged"}
+          reviewAvailable={canRequestReview(item)}
         />
       ) : null}
 

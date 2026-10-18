@@ -1,26 +1,13 @@
-import { useQuery } from "@tanstack/react-query";
+import { $api } from "@/api/client";
+import type { LegalInfo } from "@/api/types";
 
-import { requestJson } from "@/api/json-fetch";
-import { type LegalInfo, parseLegalInfo } from "@/lib/legal";
-
-export const LEGAL_INFO_QUERY_KEY = ["get", "/api/legal"] as const;
-
-/** Reads GET /api/legal, validated at runtime (failures are ApiError, see api/errors.ts). */
-export function fetchLegalInfo(signal?: AbortSignal): Promise<LegalInfo> {
-  return requestJson("GET", "/api/legal", parseLegalInfo, { signal });
-}
-
-/** Publisher details and legal page dates; `data` stays undefined while unavailable. */
+/** Publisher details and legal page dates (GET /api/legal); they change only with a deployment. */
 export function useLegalInfo() {
-  return useQuery({
-    queryKey: LEGAL_INFO_QUERY_KEY,
-    queryFn: ({ signal }) => fetchLegalInfo(signal),
-    // Changes only with a redeployment of the api.
-    staleTime: 60 * 60_000,
-  });
+  return $api.useQuery("get", "/api/legal", {}, { staleTime: 60 * 60_000 });
 }
 
 export interface LegalDetails {
+  /** Undefined while loading or unavailable; each publisher field is null when not configured. */
   info: LegalInfo | undefined;
   pending: boolean;
   failed: boolean;

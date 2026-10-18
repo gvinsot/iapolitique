@@ -1,13 +1,10 @@
 import { CheckCircle2Icon, HourglassIcon, type LucideIcon, XCircleIcon } from "lucide-react";
 import { useEffect, useId, useRef } from "react";
-import { Link } from "react-router";
-
-import { paths } from "@/app/paths";
-import { ruleForReasonCode } from "@/lib/rules";
 import type { SubmissionResult } from "@/lib/submission-model";
 import { type TrackedKind, trackingPhase } from "@/lib/tracking-model";
 import { cn } from "@/lib/utils";
 
+import { StatementOfReasons } from "./statement-of-reasons";
 import { TrackingLinkReveal } from "./tracking-link-reveal";
 
 interface Outcome {
@@ -36,9 +33,11 @@ function outcomeOf(kind: TrackedKind, result: SubmissionResult): Outcome {
   if (phase === "rejected") {
     return {
       title: REJECTED_TITLES[kind],
-      description:
-        result.reason_message ??
-        "Le filtrage automatique n’a pas retenu ce texte. Le motif est indiqué sur votre lien de suivi.",
+      // The statement of reasons below gives the reason; without one, say it here.
+      description: result.statement
+        ? "Le filtrage automatique n’a pas retenu ce texte. Le motif et la règle en cause sont détaillés ci-dessous."
+        : (result.reason_message ??
+          "Le filtrage automatique n’a pas retenu ce texte. Le motif est indiqué sur votre lien de suivi."),
       icon: XCircleIcon,
       tone: "warning",
     };
@@ -85,7 +84,6 @@ export function SubmissionOutcome({ kind, result, linkLabel }: SubmissionOutcome
   const headingRef = useRef<HTMLHeadingElement>(null);
   const outcome = outcomeOf(kind, result);
   const rejected = trackingPhase({ kind, status: result.status }) === "rejected";
-  const rule = rejected ? ruleForReasonCode(result.reason_code) : null;
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -109,21 +107,15 @@ export function SubmissionOutcome({ kind, result, linkLabel }: SubmissionOutcome
         <p className="text-pretty">{outcome.description}</p>
         {rejected ? (
           <p className="text-sm">
-            Décision prise automatiquement par une IA.{" "}
-            {rule ? (
-              <Link
-                to={`${paths.terms}#${rule.anchor}`}
-                className="font-medium underline underline-offset-4 hover:no-underline"
-              >
-                Règle {rule.number} : {rule.title}
-              </Link>
-            ) : null}
             {kind === "idea"
-              ? " Vous pouvez reformuler votre idée et l’envoyer à nouveau, ou demander un réexamen humain depuis votre lien de suivi."
-              : " Vous pouvez demander un réexamen humain depuis votre lien de suivi."}
+              ? "Vous pouvez reformuler votre idée et l’envoyer à nouveau, ou demander un réexamen humain depuis votre lien de suivi."
+              : "Vous pouvez demander un réexamen humain depuis votre lien de suivi."}
           </p>
         ) : null}
       </section>
+      {rejected && result.statement ? (
+        <StatementOfReasons kind={kind} decision={result.statement} />
+      ) : null}
       <TrackingLinkReveal token={result.tracking_token} label={linkLabel} />
     </div>
   );

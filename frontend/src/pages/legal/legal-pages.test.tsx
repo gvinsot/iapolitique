@@ -38,11 +38,20 @@ describe("legal pages", () => {
     expect(screen.getByRole("button", { name: "Réessayer" })).toBeInTheDocument();
   });
 
-  it("treats an incomplete answer as unavailable", async () => {
-    const { publisher: _publisher, ...incomplete } = legalInfoFixture;
-    stubFetch(legalApi(incomplete));
+  it("shows a placeholder for each detail not configured yet", async () => {
+    stubFetch(
+      legalApi({
+        ...legalInfoFixture,
+        publisher: { name: null, address: null, phone: null },
+        privacy_email: null,
+      }),
+    );
     renderRoute("/confidentialite");
-    expect(await screen.findByText("Coordonnées momentanément indisponibles")).toBeInTheDocument();
+    await screen.findByRole("heading", { level: 1, name: "Politique de confidentialité" });
+    expect(await screen.findAllByText("coordonnées momentanément indisponibles")).not.toHaveLength(
+      0,
+    );
+    expect(screen.queryByText("Camille Exemple")).not.toBeInTheDocument();
   });
 
   it("describes processings, retention periods, local storage and rights", async () => {

@@ -1,5 +1,7 @@
 import type {
+  ContributionConsidered,
   IdeaAnalysis,
+  IdeaDetail,
   IdeaSummary,
   Impact,
   RightOfReplyData,
@@ -27,10 +29,11 @@ export const ideaSummaryFixture: IdeaSummary = {
   score: 1_920_000,
   proposal_count: 3,
   contribution_count: 2,
-  updated_at: "2026-10-12",
+  updated_at: "2026-10-12T08:30:00Z",
 };
 
 export const scoreBreakdownFixture: ScoreBreakdownData = {
+  label: "score calculé par algorithme",
   scoring_version: "1",
   net_annual_eur: 4_800_000,
   feasibility_factor: 0.8,
@@ -61,13 +64,10 @@ export const impactsFixture: Impact[] = impactPublics.map(([key, label], index) 
 }));
 
 export const analysisFixture: IdeaAnalysis = {
-  title: ideaSummaryFixture.title,
-  summary: ideaSummaryFixture.summary,
   improved_proposal:
     "Créer une centrale d’achat départementale facultative pour les fournitures courantes, ouverte aux communes volontaires, avec un catalogue commun [S1].",
   existing_situation:
     "Des groupements de commandes existent déjà dans certains départements [S2] ; le gain chiffré est supplémentaire.",
-  kind: "savings",
   legal_vehicle: "deliberation",
   annual_gain_eur: {
     low: 2_000_000,
@@ -97,7 +97,6 @@ export const analysisFixture: IdeaAnalysis = {
       publisher: "Cour des comptes",
       url: "https://www.ccomptes.fr/fr/publications/exemple",
       used_for: "Montant des dépenses de fournitures",
-      date: "2025-06-01",
     },
     {
       id: "S2",
@@ -105,33 +104,72 @@ export const analysisFixture: IdeaAnalysis = {
       publisher: "Direction des affaires juridiques",
       url: "javascript:alert(1)",
       used_for: "Situation existante",
-      date: null,
-    },
-  ],
-  contributions_considered: [
-    {
-      contribution_id: "c-1",
-      kind: "amelioration",
-      summary: "Ouvrir la centrale aux établissements publics locaux.",
-      taken_into_account: true,
-      response: "Intégré dans la proposition améliorée.",
-    },
-    {
-      contribution_id: "c-2",
-      kind: "objection",
-      summary: "Risque pour les commerces de proximité.",
-      taken_into_account: false,
-      response: "",
     },
   ],
   changes_since_previous: "",
-  ai_model: "mistral-large-latest",
-  generated_at: "2026-10-12T08:30:00Z",
-  analysis_version: "3",
 };
+
+export const contributionsFixture: ContributionConsidered[] = [
+  {
+    kind: "amelioration",
+    summary: "Ouvrir la centrale aux établissements publics locaux.",
+    taken_into_account: true,
+    response: "Intégré dans la proposition améliorée.",
+    integrated_on: "2026-10-12",
+  },
+  {
+    kind: "objection",
+    summary: "Risque pour les commerces de proximité.",
+    taken_into_account: false,
+    response: "",
+    integrated_on: "2026-10-12",
+  },
+];
 
 export const rightOfReplyFixture: RightOfReplyData = {
   author_label: "l’association des maires du département",
   body: "Nous rappelons que des groupements de commandes existent déjà.\nIls couvrent 40 % des communes.",
-  published_at: "2026-10-15",
+  published_at: "2026-10-15T09:00:00Z",
+  updated_at: "2026-10-15T09:00:00Z",
+};
+
+/** Answer of GET /api/ideas/{slug} for the card above. */
+export const ideaDetailFixture: IdeaDetail = {
+  slug: ideaSummaryFixture.slug,
+  title: ideaSummaryFixture.title,
+  summary: ideaSummaryFixture.summary,
+  admin_level: ideaSummaryFixture.admin_level,
+  territory: ideaSummaryFixture.territory,
+  category: ideaSummaryFixture.category,
+  kind: ideaSummaryFixture.kind,
+  original: {
+    text: "Les communes devraient acheter ensemble leurs fournitures. Contact : [donnée masquée]",
+    personal_data_masked: true,
+    attribution: "Contribution anonyme – iapolitique.fr",
+    notice: "Contribution d’un internaute (texte original, données personnelles masquées)",
+  },
+  analysis: analysisFixture,
+  score: scoreBreakdownFixture,
+  contributions: contributionsFixture,
+  rights_of_reply: [rightOfReplyFixture],
+  ai: {
+    ai_generated: true,
+    provider: "Mistral AI",
+    model: "mistral-large-latest",
+    generated_at: "2026-10-12T08:30:00Z",
+    analysis_version: 3,
+    prompt_version: "1.1.0",
+    research_prompt_version: "1.1.0",
+    schema_version: "sha256:0123456789ab",
+    scoring_version: "1",
+    web_search_count: 4,
+    human_reviewed: false,
+    notice:
+      "Analyse générée automatiquement par intelligence artificielle (Mistral AI), sans relecture humaine. Elle peut contenir des erreurs ; vérifiez les sources citées. Ce n’est pas une position officielle.",
+  },
+  proposal_count: ideaSummaryFixture.proposal_count,
+  contribution_count: ideaSummaryFixture.contribution_count,
+  published_on: "2026-10-01",
+  updated_at: "2026-10-12T08:30:00Z",
+  canonical_url: `https://iapolitique.fr/idees/${ideaSummaryFixture.slug}`,
 };

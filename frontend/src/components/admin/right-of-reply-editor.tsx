@@ -196,7 +196,8 @@ export function RightOfReplyEditor({
             reply={{
               author_label: draft.author_label.trim(),
               body: draft.body.trim(),
-              published_at: today.toISOString().slice(0, 10),
+              published_at: today.toISOString(),
+              updated_at: today.toISOString(),
             }}
           />
         </div>

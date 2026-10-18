@@ -4,6 +4,7 @@ import { describe, expect, it } from "vitest";
 import { aiAnalysisJsonLd } from "@/lib/ai-marking";
 import {
   analysisFixture,
+  contributionsFixture,
   ideaSummaryFixture,
   impactsFixture,
   rightOfReplyFixture,
@@ -192,9 +193,10 @@ describe("analysis lists", () => {
 
   it("never renders a non-http source URL as a link", () => {
     renderComponent(<SourcesList sources={analysisFixture.sources} />);
-    expect(
-      screen.getByRole("link", { name: "Rapport sur la commande publique locale" }),
-    ).toHaveAttribute("href", "https://www.ccomptes.fr/fr/publications/exemple");
+    const link = screen.getByRole("link", { name: /Rapport sur la commande publique locale/ });
+    expect(link).toHaveAttribute("href", "https://www.ccomptes.fr/fr/publications/exemple");
+    expect(link).toHaveAttribute("target", "_blank");
+    expect(link).toHaveAttribute("rel", "noopener noreferrer nofollow ugc");
     expect(screen.queryByRole("link", { name: "Les groupements de commandes" })).toBeNull();
     expect(screen.getByText("Les groupements de commandes")).toBeInTheDocument();
   });
@@ -208,9 +210,7 @@ describe("analysis lists", () => {
   });
 
   it("shows neutral contribution summaries only", () => {
-    renderComponent(
-      <ContributionsList contributions={analysisFixture.contributions_considered} totalCount={5} />,
-    );
+    renderComponent(<ContributionsList contributions={contributionsFixture} totalCount={5} />);
     expect(screen.getByText(/5 contributions reçues/)).toBeInTheDocument();
     expect(screen.getByText("Prise en compte")).toBeInTheDocument();
     expect(screen.getByText("Non retenue")).toBeInTheDocument();

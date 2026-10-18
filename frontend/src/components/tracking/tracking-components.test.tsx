@@ -61,7 +61,7 @@ describe("TrackingStatus", () => {
   it("explains a masking with the rules article on measures", () => {
     renderComponent(<TrackingStatus item={hiddenIdeaFixture} />);
     expect(screen.getByRole("heading", { level: 2, name: "Idée masquée" })).toBeInTheDocument();
-    expect(screen.getByRole("link", { name: /Article 7 des règles/ })).toHaveAttribute(
+    expect(screen.getByRole("link", { name: "Règle 7 : Mesures et durées" })).toHaveAttribute(
       "href",
       "/regles#mesures",
     );

@@ -141,6 +141,20 @@ export function isAbortError(error: unknown): boolean {
   );
 }
 
+const EMPTY_ANSWER = {
+  code: "unexpected_answer",
+  message: "Le serveur a envoyé une réponse inattendue. Réessayez dans quelques instants.",
+};
+
+/**
+ * The body of a successful call. Errors already threw (client middleware); an empty body where
+ * one is documented (proxy page, truncated answer) becomes an ApiError too.
+ */
+export function requireData<T>(data: T | undefined): T {
+  if (data === undefined) throw new ApiError({ status: -1, ...EMPTY_ANSWER });
+  return data;
+}
+
 /** Any thrown value as an ApiError (unknown errors keep their cause for debugging). */
 export function toApiError(error: unknown): ApiError {
   if (error instanceof ApiError) return error;

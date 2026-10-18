@@ -169,6 +169,45 @@ async fn analyses_store_both_analysis_prompt_versions(pool: PgPool) {
 }
 
 #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn report_reviews_keep_corrections_only_for_updates(pool: PgPool) {
+    let idea = insert_idea(&pool, "Mutualiser les achats de fournitures.").await;
+    let analysis = publish(&pool, idea, "mutualiser-achats", "Mutualiser", "Résumé").await;
+    let insert = "INSERT INTO report_reviews
+            (idea_id, analysis_id, outcome, explanation, corrections, model, prompt_version)
+         VALUES ($1, $2, $3, 'Explication.', $4, 'mistral-large-latest', '1.0.0')";
+    for (outcome, corrections) in [("update", "Corriger la source [S2]."), ("maintain", "")] {
+        sqlx::query(insert)
+            .bind(idea)
+            .bind(analysis)
+            .bind(outcome)
+            .bind(corrections)
+            .execute(&pool)
+            .await
+            .unwrap();
+    }
+    let rejected = sqlx::query(insert)
+        .bind(idea)
+        .bind(analysis)
+        .bind("hide")
+        .bind("Corriger quand même.")
+        .execute(&pool)
+        .await;
+    assert!(
+        rejected.is_err(),
+        "corrections are only allowed with outcome = update"
+    );
+    // Rows written without the column (previous image after a rollback) default to empty.
+    sqlx::query(
+        "INSERT INTO report_reviews (idea_id, outcome, explanation, model, prompt_version)
+         VALUES ($1, 'maintain', 'Explication.', 'mistral-large-latest', '1.0.0')",
+    )
+    .bind(idea)
+    .execute(&pool)
+    .await
+    .unwrap();
+}
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
 async fn idea_defaults_and_integrity_constraints(pool: PgPool) {
     let id = insert_idea(&pool, "Mutualiser les achats.").await;
     let (status, proposals, created_v7): (String, i32, bool) = sqlx::query_as(

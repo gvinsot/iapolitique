@@ -1,7 +1,8 @@
 //! HTTP layers shared by the public and admin servers.
 //!
-//! From the outside in: `X-Content-Type-Options`, sensitive headers marking, request id,
-//! tracing, panic catching, compression, JSON error bodies, timeout and body size limit.
+//! From the outside in: security headers (`security.rs`, §14.2), sensitive headers marking,
+//! request id, tracing, panic catching, compression, JSON error bodies, timeout and body size
+//! limit.
 //!
 //! Tracing records the method, the **route template** (never the concrete URI, which may hold
 //! a tracking token or a search text), the status and the latency. No header, IP or body is
@@ -21,12 +22,12 @@ use tower_http::classify::ServerErrorsFailureClass;
 use tower_http::compression::CompressionLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::sensitive_headers::SetSensitiveRequestHeadersLayer;
-use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::{Level, Span};
 
 use super::error::ApiError;
+use super::security::{self, Surface};
 use crate::config::HttpConfig;
 
 pub const REQUEST_ID_HEADER: HeaderName = HeaderName::from_static("x-request-id");
@@ -119,8 +120,9 @@ fn log_failure(class: ServerErrorsFailureClass, latency: std::time::Duration, _s
     }
 }
 
-/// Wraps a router with the shared layers.
-pub fn with_common_layers(router: Router, config: &HttpConfig) -> Router {
+/// Wraps a router with the shared layers; `surface` selects the `Cache-Control` policy of the
+/// security headers.
+pub fn with_common_layers(router: Router, config: &HttpConfig, surface: Surface) -> Router {
     router
         .layer(RequestBodyLimitLayer::new(config.body_limit_bytes))
         .layer(DefaultBodyLimit::max(config.body_limit_bytes))
@@ -148,9 +150,9 @@ pub fn with_common_layers(router: Router, config: &HttpConfig) -> Router {
             header::COOKIE,
             HeaderName::from_static("x-forwarded-for"),
         ]))
-        .layer(SetResponseHeaderLayer::overriding(
-            header::X_CONTENT_TYPE_OPTIONS,
-            HeaderValue::from_static("nosniff"),
+        .layer(middleware::from_fn_with_state(
+            surface,
+            security::security_headers,
         ))
 }
 
@@ -215,7 +217,7 @@ mod tests {
             .route("/panic", get(panicking))
             .route("/echo", post(|body: String| async move { body }))
             .route("/big", get(|| async { "x".repeat(10_000) }));
-        with_common_layers(router, &http_config())
+        with_common_layers(router, &http_config(), Surface::Public)
     }
 
     async fn send(request: axum::http::Request<Body>) -> (Response, serde_json::Value) {
@@ -256,6 +258,7 @@ mod tests {
         let (response, json) = send(get_req("/missing")).await;
         assert_eq!(response.status(), StatusCode::NOT_FOUND);
         assert_eq!(json["error"]["code"], "not_found");
+        security::assert_security_headers(response.headers(), "404");
 
         let (response, json) = send(
             axum::http::Request::delete("/ok")
@@ -266,6 +269,7 @@ mod tests {
         assert_eq!(response.status(), StatusCode::METHOD_NOT_ALLOWED);
         assert_eq!(json["error"]["code"], "method_not_allowed");
         assert!(response.headers().contains_key(header::ALLOW));
+        security::assert_security_headers(response.headers(), "405");
     }
 
     #[tokio::test]
@@ -273,6 +277,7 @@ mod tests {
         let (response, json) = send(get_req("/slow")).await;
         assert_eq!(response.status(), StatusCode::GATEWAY_TIMEOUT);
         assert_eq!(json["error"]["code"], "timeout");
+        security::assert_security_headers(response.headers(), "504");
     }
 
     #[tokio::test]
@@ -280,6 +285,7 @@ mod tests {
         let (response, json) = send(get_req("/panic")).await;
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(json["error"]["code"], "internal_error");
+        security::assert_security_headers(response.headers(), "500");
     }
 
     #[tokio::test]
@@ -290,6 +296,8 @@ mod tests {
         let (response, json) = send(request).await;
         assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
         assert_eq!(json["error"]["code"], "payload_too_large");
+        security::assert_security_headers(response.headers(), "413");
+        assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
 
         let request = axum::http::Request::post("/echo")
             .body(Body::from("small"))
@@ -306,5 +314,6 @@ mod tests {
             .unwrap();
         let response = app().oneshot(request).await.unwrap();
         assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
+        security::assert_security_headers(response.headers(), "compressed");
     }
 }

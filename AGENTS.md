@@ -991,7 +991,10 @@ dispensent d'aucune des mesures ci-dessous.
 
 ### 14.2 En-têtes HTTP
 
-Posés par nginx (frontend) **et** par l'api (réponses JSON), testés automatiquement :
+Posés par nginx (frontend) **et** par le backend, testés automatiquement. Côté backend, une couche
+unique (`http/security.rs`) les pose sur **toute** réponse des ports public, admin et santé du
+worker (erreurs 404, 405, 413, 415, 504 et 500 comprises), retire `Server`, `X-Powered-By` et tout
+`Access-Control-*` ; une réponse sans `Cache-Control` explicite reçoit `no-store` :
 
 | En-tête | Valeur |
 |---|---|

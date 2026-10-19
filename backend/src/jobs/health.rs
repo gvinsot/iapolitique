@@ -13,6 +13,10 @@ use axum::response::{IntoResponse, Json};
 use axum::routing::get;
 use serde_json::json;
 
+use crate::http::error::ApiError;
+use crate::http::middleware::json_errors;
+use crate::http::security::{Surface, security_headers};
+
 /// Timestamp of the last loop iteration, shared with the health endpoint.
 #[derive(Debug, Clone)]
 pub struct Liveness {
@@ -61,6 +65,13 @@ pub fn router(liveness: Liveness) -> Router {
     Router::new()
         .route("/health", get(handler.clone()))
         .route("/api/health", get(handler))
+        .fallback(|| async { ApiError::not_found() })
+        .layer(axum::middleware::from_fn(json_errors))
+        // Same security headers as the api, never stored (§14.2).
+        .layer(axum::middleware::from_fn_with_state(
+            Surface::Worker,
+            security_headers,
+        ))
 }
 
 #[cfg(test)]
@@ -101,5 +112,40 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn every_answer_carries_the_security_headers() {
+        let liveness = Liveness::new(Duration::from_secs(60));
+        let app = router(liveness.clone());
+        let cases = [
+            (Request::get("/health"), StatusCode::OK),
+            (Request::get("/missing"), StatusCode::NOT_FOUND),
+            (Request::post("/health"), StatusCode::METHOD_NOT_ALLOWED),
+        ];
+        for (request, status) in cases {
+            let response = app
+                .clone()
+                .oneshot(request.body(Body::empty()).unwrap())
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status);
+            crate::http::security::assert_security_headers(response.headers(), "worker");
+            assert_eq!(
+                response.headers()[axum::http::header::CACHE_CONTROL],
+                "no-store"
+            );
+            assert_eq!(
+                response.headers()[axum::http::header::CONTENT_TYPE],
+                "application/json"
+            );
+        }
+        liveness.last_tick_ms.store(0, Ordering::Relaxed);
+        let response = app
+            .oneshot(Request::get("/health").body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::SERVICE_UNAVAILABLE);
+        crate::http::security::assert_security_headers(response.headers(), "worker 503");
     }
 }

@@ -8,10 +8,8 @@ use std::sync::Arc;
 
 use axum::Router;
 use axum::extract::FromRef;
-use axum::http::{HeaderName, HeaderValue, header};
 use axum::routing::{get, post};
 use sqlx::PgPool;
-use tower_http::set_header::SetResponseHeaderLayer;
 
 use crate::ai::decision::Screener;
 use crate::ai::mistral::MistralClient;
@@ -34,11 +32,14 @@ pub mod middleware;
 pub mod openapi;
 pub mod pagination;
 pub mod reference;
+pub mod security;
 pub mod submissions;
 pub mod tracking;
 
 #[cfg(test)]
 mod ideas_tests;
+#[cfg(test)]
+mod security_tests;
 #[cfg(test)]
 mod submission_tests;
 #[cfg(test)]
@@ -114,33 +115,26 @@ pub fn public_router(state: AppState) -> Router {
         .route("/api/track/review-request", post(tracking::request_review))
         .fallback(not_found)
         .with_state(state.clone());
-    middleware::with_common_layers(router, &state.config.http)
+    middleware::with_common_layers(router, &state.config.http, security::Surface::Public)
 }
 
 /// Admin API (port 8081): health probes and the OpenAPI spec are open (healthchecks), every
-/// `/api/admin/…` route requires the bearer token.
+/// `/api/admin/…` route requires the bearer token. Every answer, refusals included, is
+/// `no-store` and `noindex` (`security::Surface::Admin`, §14.2).
 pub fn admin_router(state: AppState, token: Secret) -> Router {
-    let protected = admin::routes()
-        .fallback(not_found)
-        .layer(axum::middleware::from_fn_with_state(
-            AdminToken::new(token),
-            admin::require_admin,
-        ))
-        // Never cached nor indexed, refusals included (§14.2).
-        .layer(SetResponseHeaderLayer::overriding(
-            header::CACHE_CONTROL,
-            cache::NO_STORE,
-        ))
-        .layer(SetResponseHeaderLayer::overriding(
-            HeaderName::from_static("x-robots-tag"),
-            HeaderValue::from_static("noindex, nofollow"),
-        ));
+    let protected =
+        admin::routes()
+            .fallback(not_found)
+            .layer(axum::middleware::from_fn_with_state(
+                AdminToken::new(token),
+                admin::require_admin,
+            ));
     let router = system_routes()
         .route("/api/openapi.json", get(openapi::openapi_json_full))
         .nest(openapi::ADMIN_PREFIX, protected)
         .fallback(not_found)
         .with_state(state.clone());
-    middleware::with_common_layers(router, &state.config.http)
+    middleware::with_common_layers(router, &state.config.http, security::Surface::Admin)
 }
 
 #[cfg(test)]
@@ -148,7 +142,7 @@ mod tests {
     use super::*;
     use crate::config::Role;
     use axum::body::Body;
-    use axum::http::{Request, StatusCode};
+    use axum::http::{Request, StatusCode, header};
     use http_body_util::BodyExt;
     use tower::ServiceExt;
 

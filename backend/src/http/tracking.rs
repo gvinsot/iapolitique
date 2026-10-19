@@ -18,6 +18,7 @@ use super::AppState;
 use super::client_ip::ClientIp;
 use super::error::{ApiError, ErrorBody};
 use super::extract::ApiJson;
+use super::security::security_event;
 use super::submissions::{masked, no_store};
 use crate::antispam::rate_limit::RateAction;
 use crate::db::tracked;
@@ -113,7 +114,7 @@ async fn resolve(
     state
         .rate_limiter
         .check(ip.ip(), RateAction::Tracking)
-        .inspect_err(|_| tracing::warn!("security: tracking rate limit reached"))?;
+        .inspect_err(|_| security_event("rate_limited", RateAction::Tracking.as_str()))?;
     let hash = tracking::token_hash(token).ok_or_else(not_found)?;
     let target = tracking::find(&state.pool, &hash)
         .await?

@@ -29,6 +29,7 @@ use super::AppState;
 use super::client_ip::ClientIp;
 use super::error::{ApiError, ErrorBody};
 use super::extract::{ApiJson, ApiPath};
+use super::security::security_event;
 use crate::antispam::rate_limit::RateAction;
 use crate::db::submissions::{self, NewContribution, NewIdea, NewReport};
 use crate::db::tracking::TrackingToken;
@@ -231,12 +232,14 @@ pub(crate) fn check_abuse(
     action: RateAction,
     altcha: &str,
 ) -> Result<(), ApiError> {
-    state.rate_limiter.check(ip.ip(), action).inspect_err(|_| {
-        tracing::warn!(action = ?action, "security: rate limit reached");
-    })?;
-    state.altcha.verify(altcha).inspect_err(|err| {
-        tracing::warn!(code = err.code(), "security: ALTCHA verification refused");
-    })?;
+    state
+        .rate_limiter
+        .check(ip.ip(), action)
+        .inspect_err(|_| security_event("rate_limited", action.as_str()))?;
+    state
+        .altcha
+        .verify(altcha)
+        .inspect_err(|err| security_event("altcha_refused", err.code()))?;
     Ok(())
 }
 

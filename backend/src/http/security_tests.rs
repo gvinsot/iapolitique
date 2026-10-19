@@ -603,3 +603,43 @@ async fn the_public_port_knows_no_admin_route(pool: PgPool) {
         );
     }
 }
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn abuse_refusals_are_security_events_without_ip_nor_text(pool: PgPool) {
+    let app = TestApp::new(
+        pool,
+        false,
+        &[
+            ("RATE_LIMIT_IDEAS_PER_HOUR", "1"),
+            ("RATE_LIMIT_IDEAS_PER_DAY", "1"),
+        ],
+    )
+    .await;
+    let text = "Texte-secret : mutualiser les achats de fournitures entre les communes voisines.";
+    let body = json!({
+        "text": text,
+        "accept_licence": true,
+        "accept_publication": true,
+        "altcha": "bm90LWEtc29sdXRpb24",
+    });
+    let ((first, second), logs) = capture_logs(async {
+        let first = app.post("/api/ideas", &body).await;
+        let second = app.post("/api/ideas", &body).await;
+        (first, second)
+    })
+    .await;
+    assert_eq!(first.0, StatusCode::BAD_REQUEST, "{}", first.1);
+    assert!(
+        first.1["error"]["code"]
+            .as_str()
+            .unwrap()
+            .starts_with("altcha_")
+    );
+    assert_eq!(second.0, StatusCode::TOO_MANY_REQUESTS, "{}", second.1);
+    for expected in ["altcha_refused", "rate_limited", "\"reason\":\"idea\""] {
+        assert!(logs.contains(expected), "{expected} not logged: {logs}");
+    }
+    for secret in [CLIENT_IP, "Texte-secret", "bm90LWEtc29sdXRpb24"] {
+        assert!(!logs.contains(secret), "{secret} logged: {logs}");
+    }
+}

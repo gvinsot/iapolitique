@@ -1068,7 +1068,10 @@ Secrets uniquement via `/run/secrets` / environnement, type `Secret` à `Debug` 
 dans une erreur, un log, une réponse ou un `ARG` Docker. Les erreurs 500 renvoient un message
 générique (détail seulement dans les logs, sans donnée sensible). Journaliser les événements de
 sécurité (échec d'auth admin, CSRF refusé, rate limit atteint, ALTCHA invalide) **sans** IP, jeton
-ni texte.
+ni texte. Format : `http::security::security_event`, niveau `WARN`, cible `security`, message
+`security event`, champs `event` (`admin_auth_failure`, `admin_auth_lockout`, `admin_auth_refused`,
+`csrf_refused`, `rate_limited`, `altcha_refused`) et `reason`, deux libellés fixes (`&'static str`) :
+aucune valeur de la requête ne peut y figurer.
 
 ### 14.7 Conteneurs et chaîne d'approvisionnement
 

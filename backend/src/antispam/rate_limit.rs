@@ -45,6 +45,18 @@ pub enum RateAction {
     Tracking,
 }
 
+impl RateAction {
+    /// Fixed label (logs, security events).
+    pub const fn as_str(self) -> &'static str {
+        match self {
+            Self::Idea => "idea",
+            Self::Contribution => "contribution",
+            Self::Report => "report",
+            Self::Tracking => "tracking",
+        }
+    }
+}
+
 /// Limits per fingerprint (`RATE_LIMIT_*`).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RateLimits {

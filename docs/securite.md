@@ -166,18 +166,18 @@ scellée » que la page exige (lecture journalisée).
 
 Résultats :
 
-- 33 contrôles passent. Les charges sont stockées et servies **comme données** (titre, résumé,
-  listes, sources) ; les deux URL `https://evil.example/…` porteuses de charges sont acceptées
+- 42 contrôles passent (campagne rejouée sur le commit `7d9a6a7`). Les charges sont stockées et
+  servies **comme données** (titre, résumé, listes, sources) ; les deux URL `https://evil.example/…` porteuses de charges sont acceptées
   parce que la recherche les a consultées, et une première version du faux Mistral qui citait des
   URL **non** consultées a vu l'analyse échouer (`URL not consulted by the web research`) :
   INJ-3 tient.
 - Aller-retour CSV : aucune cellule de l'export ne commence par `=`, `+`, `-`, `@`, tabulation
   ou retour chariot ; `=HYPERLINK(…)` et `+SUM(…)` produits par l'IA sortent en `'=HYPERLINK(…)` et
   `'+SUM(…)`, le JSON les garde tels quels (données, sans interprétation possible).
-- XSS stocké (`xss_check.mjs`) : 34 pages dans Chromium et Firefox (page de l'idée hostile, page
+- XSS stocké (`xss_check.mjs`) : 40 pages dans Chromium et Firefox (page de l'idée hostile, page
   de l'idée au texte HTML, classement, recherche et slug piégés, suivi, méthodologie, toutes les
-  pages admin dont signalements et droits de réponse) : aucune charge exécutée (piège
-  `window.__xss`, dialogues), aucun élément injecté, aucune violation de CSP, JSON-LD valide sans
+  pages admin dont signalements, droits de réponse, liste des copies scellées et copie scellée
+  avant puis après le clic) : aucune charge exécutée (piège `window.__xss`, dialogues), aucun élément injecté, aucune violation de CSP, JSON-LD valide sans
   `</script` littéral, liens de sources en `https:` avec `target=_blank` et
   `rel="noopener noreferrer nofollow ugc"`, et chaque charge visible **en texte**.
 

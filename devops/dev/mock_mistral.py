@@ -13,6 +13,13 @@ Python standard library only. Implements the three endpoints the backend calls
   POST /v1/embeddings        deterministic 1024-dimension vectors (normalised bag of words), so
                              that two near-identical texts get a cosine similarity close to 1.
 
+Reasoning (`reasoning_effort`, AGENTS.md §6.1): top level in chat completions, inside
+`completion_args` in conversations. With `high`, the answer content becomes a list of chunks
+like Mistral's: a `thinking` chunk first (its text carries THINKING_MARKER, which must never
+reach a page, an export or a log; in conversations it also holds a `tool_reference`), then the
+`text` chunks; the thinking tokens are counted in `completion_tokens`. With `none` or without
+the parameter, answers keep their plain shape. A value outside Mistral's enum is refused (400).
+
 Answers are deterministic and driven by the prompt text:
   - second opinion: `reject` (reason `disrespectful`) when the text contains an insult marker,
     `accept` otherwise;
@@ -57,6 +64,11 @@ STOP_WORDS = frozenset(
 )
 
 STATS: dict[str, int] = {}
+
+# Text of the mock's thinking chunks: checked absent from the API, the exports and the logs.
+THINKING_MARKER = "PENSEE-PRIVEE-MOCK"
+REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh")
+THINKING_TOKENS = 1_500
 STATS_LOCK = threading.Lock()
 
 SOURCES = [
@@ -280,6 +292,20 @@ def report_review(user: str) -> dict:
             "corrections": ""}
 
 
+def reasoning_effort(body: dict) -> str | None:
+    """`reasoning_effort` of a request: top level (chat) or in `completion_args` (conversations)."""
+    args = body.get("completion_args")
+    nested = args.get("reasoning_effort") if isinstance(args, dict) else None
+    return body.get("reasoning_effort", nested)
+
+
+def thinking_chunk(extra: list[dict] | None = None) -> dict:
+    """A closed `thinking` chunk (Mistral's ThinkChunk) that must never be shown."""
+    text = {"type": "text",
+            "text": f"{THINKING_MARKER} Je relis la demande et les sources avant de répondre."}
+    return {"type": "thinking", "thinking": [text, *(extra or [])], "closed": True}
+
+
 def chat_completion(body: dict) -> tuple[int, dict]:
     messages = body.get("messages") or []
     system = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
@@ -300,15 +326,24 @@ def chat_completion(body: dict) -> tuple[int, dict]:
         return 400, {"object": "error", "message": f"unknown schema {name!r}"}
     text = json.dumps(content, ensure_ascii=False)
     prompt_tokens = tokens(system) + tokens(user)
+    completion_tokens = tokens(text)
+    message_content: str | list[dict] = text
+    if reasoning_effort(body) == "high":
+        # The JSON answer split over two text chunks after the thinking, as Mistral may do.
+        half = len(text) // 2
+        message_content = [thinking_chunk(), {"type": "text", "text": text[:half]},
+                           {"type": "text", "text": text[half:]}]
+        completion_tokens += THINKING_TOKENS
     return 200, {
         "id": "cmpl-mock",
         "object": "chat.completion",
         "model": body.get("model", "mock"),
         "created": 0,
         "choices": [{"index": 0, "finish_reason": "stop",
-                     "message": {"role": "assistant", "content": text, "tool_calls": None}}],
-        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": tokens(text),
-                  "total_tokens": prompt_tokens + tokens(text)},
+                     "message": {"role": "assistant", "content": message_content,
+                                 "tool_calls": None}}],
+        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+                  "total_tokens": prompt_tokens + completion_tokens},
     }
 
 
@@ -334,6 +369,14 @@ def conversation(body: dict) -> tuple[int, dict]:
                                  + "\n[S2] " + sources[1]["title"] + " — "
                                  + sources[1]["publisher"] + " — " + sources[1]["url"]},
     ]
+    completion_tokens = 300
+    if reasoning_effort(body) == "high":
+        # Pages met while thinking are pages the search returned: the backend keeps them.
+        memo_chunks.insert(0, thinking_chunk([
+            {"type": "tool_reference", "tool": "web_search", "title": sources[0]["title"],
+             "url": sources[0]["url"], "source": "mock"},
+        ]))
+        completion_tokens += THINKING_TOKENS
     prompt_tokens = tokens(body.get("instructions") or "") + tokens(inputs)
     return 200, {
         "object": "conversation.response",
@@ -346,9 +389,9 @@ def conversation(body: dict) -> tuple[int, dict]:
             {"object": "entry", "type": "message.output", "role": "assistant", "id": "m1",
              "model": body.get("model", "mock"), "content": memo_chunks},
         ],
-        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": 300,
-                  "total_tokens": prompt_tokens + 300 + 2_000, "connector_tokens": 2_000,
-                  "connectors": {"web_search": 2}},
+        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": completion_tokens,
+                  "total_tokens": prompt_tokens + completion_tokens + 2_000,
+                  "connector_tokens": 2_000, "connectors": {"web_search": 2}},
     }
 
 
@@ -412,9 +455,19 @@ class Handler(BaseHTTPRequestHandler):
         except (ValueError, json.JSONDecodeError):
             self.send_json(400, {"object": "error", "message": "invalid JSON"})
             return
+        if not isinstance(body, dict):
+            self.send_json(400, {"object": "error", "message": "JSON object expected"})
+            return
+        effort = reasoning_effort(body)
+        if effort is not None and effort not in REASONING_EFFORTS:
+            self.send_json(400, {"object": "error", "message": "invalid reasoning_effort"})
+            return
         status, payload = route(body)
+        # Calls per endpoint, and per endpoint and reasoning effort sent (`omitted` without).
+        key = f"{self.path} reasoning_effort={effort or 'omitted'}"
         with STATS_LOCK:
             STATS[self.path] = STATS.get(self.path, 0) + 1
+            STATS[key] = STATS.get(key, 0) + 1
         self.send_json(status, payload)
 
 

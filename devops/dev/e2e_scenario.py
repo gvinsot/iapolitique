@@ -34,6 +34,9 @@ from typing import Any
 
 SECRETS: list[str] = []
 CHECKS: list[str] = []
+# Text of the mock's `thinking` chunks (devops/dev/mock_mistral.py, reasoning_effort high, the
+# analysis default): never in the API answers nor in the logs (AGENTS.md §6.1).
+THINKING_MARKER = "PENSEE-PRIVEE-MOCK"
 
 LEGIT_IDEA = (
     "Mutualiser les achats de fournitures médicales courantes entre les hôpitaux publics "
@@ -234,6 +237,7 @@ def submit_published(api: Api, text: str) -> tuple[str, str]:
 
 
 def main_phase(api: Api) -> None:
+    SECRETS.append(THINKING_MARKER)
     status, body = api.get("/api/health")
     expect(status == 200, "api health")
     status, body = api.admin_call("GET", "/session")
@@ -254,6 +258,12 @@ def main_phase(api: Api) -> None:
            and len(detail["analysis"]["sources"]) == 2, "idea detail with AI marking and sources")
     expect(detail["original"]["personal_data_masked"] in (True, False)
            and detail["score"]["label"] == "score calculé par algorithme", "detail score label")
+    expect(THINKING_MARKER not in json.dumps(detail, ensure_ascii=False),
+           "analysis read from the text chunks only, never from the thinking")
+    status, methodology = api.get("/api/methodology")
+    expect(status == 200 and methodology["models"]["analysis"]["reasoning_effort"] == "high"
+           and methodology["models"]["review"]["reasoning_effort"] == "none",
+           "methodology publishes the reasoning efforts in use")
 
     # 1b. A long idea is settled (by the synchronous call or by the screening job), never stuck.
     expect(3_500 <= len(LONG_IDEA) <= 4_000, f"long idea of {len(LONG_IDEA)} characters")

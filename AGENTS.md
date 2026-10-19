@@ -1154,10 +1154,12 @@ aucune valeur de la requête ne peut y figurer.
 - `devops/check_compose_security.py` (CI, stage `devops-check`) vérifie ces réglages, les
   réseaux (worker hors `proxy`, liste fermée de réseaux pour api, worker et frontend, services de
   CI sur leur réseau interne), et les routeurs Traefik :
-  chacun nomme son service, son point d'entrée et un seul `Host()` connu ; `global@file` sur tout
+  chacun nomme son service, son point d'entrée et une règle de la forme `Host(…)`, éventuellement
+  `&& PathPrefix(…)` ou `&& PathRegexp(…)`, sur un host connu (ni `||`, ni `!`, ni parenthèses, ni
+  autre matcher : la structure est vérifiée, pas une sous-chaîne) ; `global@file` sur tout
   routeur HTTPS public, `dashboard-allowlist@file` sur `ADMIN_HOST` ; les routeurs HTTP ne font que
-  rediriger ; le port admin 8081 n'est servi que sur `ADMIN_HOST`, pour `/api/admin`, derrière
-  `dashboard-allowlist@file` (§14.4).
+  rediriger ; le port admin 8081 n'est servi que par `Host(ADMIN_HOST) && PathPrefix(/api/admin)`,
+  derrière `dashboard-allowlist@file` (§14.4).
 - CI (`devops/Dockerfile.test`) : `cargo deny check advisories bans` (ou `cargo audit`) et
   `npm audit --omit=dev --audit-level=high` bloquants ; `Cargo.lock` et `package-lock.json`
   committés ; `npm ci` uniquement. Réalisation : `npm audit` en tête du stage `frontend-check` ;

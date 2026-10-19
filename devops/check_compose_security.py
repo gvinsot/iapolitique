@@ -11,10 +11,12 @@ broken invariant:
 - networks: only api and frontend on `proxy`; the worker on no routed network; each deployed
   service on a closed list of networks (a shared overlay exposes its ports outside Traefik); the
   CI services on their internal network only;
-- Traefik: every router names its service, its entry point and a Host() rule on TRAEFIK_HOST or
-  ADMIN_HOST only; HTTPS routers on TRAEFIK_HOST carry `global@file`, those on ADMIN_HOST
+- Traefik: every router names its service, its entry point and a rule made of exactly one Host()
+  on TRAEFIK_HOST or ADMIN_HOST, optionally AND one PathPrefix/PathRegexp (no OR, negation, group
+  or other matcher); HTTPS routers on TRAEFIK_HOST carry `global@file`, those on ADMIN_HOST
   `dashboard-allowlist@file`; HTTP routers only redirect; the admin port 8081 is reachable only
-  through routers on ADMIN_HOST behind `dashboard-allowlist@file`, and the worker has no label.
+  through `Host(ADMIN_HOST) && PathPrefix(/api/admin)` behind `dashboard-allowlist@file`, and the
+  worker has no label.
 """
 
 from __future__ import annotations
@@ -45,6 +47,12 @@ ADMIN_HOST = "${ADMIN_HOST}"
 WWW_HOST = "www.${TRAEFIK_HOST}"
 ADMIN_PORT = "8081"
 HOST_RULE = re.compile(r"Host\(`([^`]+)`\)")
+# Rule grammar accepted on a router (finding DEVOPS-7): one Host(), optionally AND one path
+# matcher. No OR, no negation, no group, no other matcher: a substring check would let
+# "Host(`a`) || PathPrefix(`/api/admin`)" through, which matches every host.
+FORBIDDEN_RULE = re.compile(r"\|\||!|HostRegexp|HostSNI|ClientIP|Header|Query|Method|\(\s*(Host|Path)")
+RULE_SHAPE = re.compile(r"Host\(`[^`]+`\)(\s*&&\s*(PathPrefix|PathRegexp)\(`[^`]+`\))?")
+ADMIN_API_RULE = f"Host(`{ADMIN_HOST}`) && PathPrefix(`/api/admin`)"
 
 
 def service_networks(service: dict) -> set[str]:
@@ -134,6 +142,12 @@ def check_traefik(services: dict, errors: list[str]) -> None:
         for router, settings in routers.items():
             where = f"{name}: router {router}"
             rule = settings.get("rule", "")
+            if FORBIDDEN_RULE.search(rule) or not RULE_SHAPE.fullmatch(rule.strip()):
+                errors.append(
+                    f"{where}: rule must be Host(`...`) optionally && one PathPrefix/PathRegexp, "
+                    f"with no OR, negation, group or other matcher, got {rule!r}"
+                )
+                continue
             hosts = set(HOST_RULE.findall(rule))
             middlewares = [m.strip() for m in settings.get("middlewares", "").split(",") if m.strip()]
             entrypoint = settings.get("entrypoints")
@@ -163,7 +177,7 @@ def check_traefik(services: dict, errors: list[str]) -> None:
             if target in admin_services:
                 if host != ADMIN_HOST or "dashboard-allowlist@file" not in middlewares:
                     errors.append(f"{where}: admin port {ADMIN_PORT} routed outside ADMIN_HOST")
-                if entrypoint != "websecure" or "PathPrefix(`/api/admin`)" not in rule:
+                if entrypoint != "websecure" or rule.strip() != ADMIN_API_RULE:
                     errors.append(f"{where}: admin port must only serve /api/admin over HTTPS")
 
     if not admin_services:

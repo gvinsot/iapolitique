@@ -131,6 +131,32 @@ class ComposeSecurityTest(unittest.TestCase):
             "admin port must only serve /api/admin",
         )
 
+    def test_router_rules_are_one_host_and_one_path_matcher(self) -> None:
+        # DEVOPS-7: a substring check accepted these; each would widen the admin router.
+        admin_rule = "traefik.http.routers.iapolitique-admin-api.rule"
+        for rule in (
+            "Host(`${ADMIN_HOST}`) || PathPrefix(`/api/admin`)",
+            "(Host(`${ADMIN_HOST}`) || Host(`${TRAEFIK_HOST}`)) && PathPrefix(`/api/admin`)",
+            "Host(`${ADMIN_HOST}`) && (PathPrefix(`/api/admin`) || PathPrefix(`/`))",
+            "HostRegexp(`.+`) && PathPrefix(`/api/admin`)",
+            "Host(`${ADMIN_HOST}`) && !PathPrefix(`/api/public`)",
+            "Host(`${ADMIN_HOST}`) && PathPrefix(`/api/admin`) && Header(`X-A`, `b`)",
+            "Host(`${ADMIN_HOST}`) && ClientIP(`0.0.0.0/0`)",
+        ):
+            with self.subTest(rule=rule):
+                self.assert_reported(lambda c, r=rule: set_label(c, "api", admin_rule, r), "rule must be Host(")
+
+    def test_admin_port_serves_exactly_the_admin_prefix(self) -> None:
+        self.assert_reported(
+            lambda c: set_label(
+                c,
+                "api",
+                "traefik.http.routers.iapolitique-admin-api.rule",
+                "Host(`${ADMIN_HOST}`) && PathPrefix(`/api/admin-and-more`)",
+            ),
+            "admin port must only serve /api/admin",
+        )
+
     def test_public_routers_keep_global_middleware(self) -> None:
         self.assert_reported(
             lambda c: set_label(
@@ -150,7 +176,7 @@ class ComposeSecurityTest(unittest.TestCase):
     def test_router_rules_name_one_known_host(self) -> None:
         self.assert_reported(
             lambda c: set_label(c, "frontend", "traefik.http.routers.iapolitique-front.rule", "PathPrefix(`/`)"),
-            "rule must match exactly one known Host()",
+            "rule must be Host(",
         )
         self.assert_reported(
             lambda c: set_label(c, "frontend", "traefik.http.routers.extra.rule", "Host(`evil.example`)"),

@@ -32,23 +32,37 @@ impl DailySchedule {
     }
 }
 
-/// SQL expression of the next occurrence (strictly after now) of `$hour:$minute` Paris time.
-const NEXT_RUN_SQL: &str =
-    "(SELECT CASE WHEN today_run > now() THEN today_run ELSE tomorrow_run END
+/// SQL expression of the next occurrence (strictly after now) of `$hour:$minute` Paris time
+/// (a macro so that the queries using it stay compile-time constants, §14.1).
+macro_rules! next_run_sql {
+    () => {
+        "(SELECT CASE WHEN today_run > now() THEN today_run ELSE tomorrow_run END
     FROM (SELECT
         (((now() AT TIME ZONE 'Europe/Paris')::date + make_time($2, $3, 0))
             AT TIME ZONE 'Europe/Paris') AS today_run,
         ((((now() AT TIME ZONE 'Europe/Paris')::date + 1) + make_time($2, $3, 0))
-            AT TIME ZONE 'Europe/Paris') AS tomorrow_run) AS occurrences)";
+            AT TIME ZONE 'Europe/Paris') AS tomorrow_run) AS occurrences)"
+    };
+}
+
+/// Inserts a missing schedule row: `$1` name, `$2` hour, `$3` minute.
+const ENSURE_SQL: &str = concat!(
+    "INSERT INTO job_schedules (name, next_run_at) VALUES ($1, ",
+    next_run_sql!(),
+    ") ON CONFLICT (name) DO NOTHING"
+);
+
+/// Moves a schedule to its next occurrence: `$1` name, `$2` hour, `$3` minute, `$4` job id.
+const ADVANCE_SQL: &str = concat!(
+    "UPDATE job_schedules SET next_run_at = ",
+    next_run_sql!(),
+    ", last_enqueued_at = now(), last_job_id = coalesce($4, last_job_id) WHERE name = $1"
+);
 
 /// Creates the missing schedule rows (existing ones keep their `next_run_at`).
 pub async fn ensure(pool: &PgPool, schedules: &[DailySchedule]) -> Result<(), sqlx::Error> {
-    let sql = format!(
-        "INSERT INTO job_schedules (name, next_run_at) VALUES ($1, {NEXT_RUN_SQL})
-         ON CONFLICT (name) DO NOTHING"
-    );
     for schedule in schedules {
-        sqlx::query(sqlx::AssertSqlSafe(sql.clone()))
+        sqlx::query(ENSURE_SQL)
             .bind(schedule.name)
             .bind(i32::from(schedule.hour))
             .bind(i32::from(schedule.minute))
@@ -63,11 +77,6 @@ pub async fn enqueue_due(
     pool: &PgPool,
     schedules: &[DailySchedule],
 ) -> Result<Vec<i64>, sqlx::Error> {
-    let update = format!(
-        "UPDATE job_schedules SET next_run_at = {NEXT_RUN_SQL}, last_enqueued_at = now(),
-                last_job_id = coalesce($4, last_job_id)
-         WHERE name = $1"
-    );
     let mut enqueued = Vec::new();
     for schedule in schedules {
         let mut tx = pool.begin().await?;
@@ -87,7 +96,7 @@ pub async fn enqueue_due(
             &NewJob::new(schedule.kind).dedupe_key(format!("schedule:{}", schedule.name)),
         )
         .await?;
-        sqlx::query(sqlx::AssertSqlSafe(update.clone()))
+        sqlx::query(ADVANCE_SQL)
             .bind(schedule.name)
             .bind(i32::from(schedule.hour))
             .bind(i32::from(schedule.minute))

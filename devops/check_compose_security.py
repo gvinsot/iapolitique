@@ -7,7 +7,7 @@ broken invariant:
 
 - deployed services (api, worker, frontend): read-only root file system, init, every capability
   dropped and only the listed ones added back, writable paths as tmpfs mounts only, no published
-  port, no `DATABASE_URL`;
+  port, no `DATABASE_URL`, CPU, memory and pids limits and a memory reservation;
 - networks: only api and frontend on `proxy`; the worker on no routed network; each deployed
   service on a closed list of networks (a shared overlay exposes its ports outside Traefik); the
   CI services on their internal network only;
@@ -92,6 +92,13 @@ def check_hardening(name: str, service: dict, errors: list[str]) -> None:
         errors.append(f"{name}: privileged is forbidden")
     if service.get("network_mode") or service.get("pid") or service.get("ipc"):
         errors.append(f"{name}: host namespaces are forbidden")
+    limits = ((service.get("deploy") or {}).get("resources") or {}).get("limits") or {}
+    missing = [key for key in ("cpus", "memory", "pids") if not limits.get(key)]
+    if missing:
+        errors.append(f"{name}: deploy.resources.limits must set {missing} (DoS containment, AGENTS.md §14.5)")
+    reservations = ((service.get("deploy") or {}).get("resources") or {}).get("reservations") or {}
+    if not reservations.get("memory"):
+        errors.append(f"{name}: deploy.resources.reservations.memory must be set (no node over-commit)")
     environment = service.get("environment") or {}
     keys = environment.keys() if isinstance(environment, dict) else [e.split("=", 1)[0] for e in environment]
     if "DATABASE_URL" in keys:

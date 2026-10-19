@@ -73,9 +73,12 @@ docker cp "$here/mock_mistral.py" e2e-mock-mistral:/mock_mistral.py >/dev/null
 docker start e2e-mock-mistral >/dev/null
 
 # Same hardening as devops/docker-compose.swarm.yml (AGENTS.md §14.7).
-backend_hardening=(--read-only --tmpfs /tmp:size=16m --cap-drop ALL --init)
+# Resource limits as well (AGENTS.md §14.5): the stack must stay healthy under them.
+backend_hardening=(--read-only --tmpfs /tmp:size=16m --cap-drop ALL --init
+    --cpus 2 --memory 512m --pids-limit 1024)
 front_hardening=(--read-only --tmpfs /run:size=1m --tmpfs /var/cache/nginx:size=16m --cap-drop ALL
-    --cap-add CHOWN --cap-add SETGID --cap-add SETUID --cap-add NET_BIND_SERVICE --init)
+    --cap-add CHOWN --cap-add SETGID --cap-add SETUID --cap-add NET_BIND_SERVICE --init
+    --cpus 0.5 --memory 128m --pids-limit 256)
 contact_email=securite@example.org
 
 backend_env=(

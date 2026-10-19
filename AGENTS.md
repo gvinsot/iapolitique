@@ -1135,7 +1135,12 @@ concurrence du worker bornée, pagination bornée (toute liste servie a une limi
 contributions et droits de réponse d'une idée plafonnés), regex à temps linéaire uniquement (crate
 `regex`), taille maximale des réponses IA acceptées (`ai::read_capped` : 2 Mio pour Mistral, réponse
 refusée comme sortie invalide ; 256 Kio pour le modèle de décision), exports servis depuis la base (pas de
-génération à la demande).
+génération à la demande). Limites de ressources Swarm (`deploy.resources`, vérifiées par
+`devops/check_compose_security.py` et appliquées aussi par `devops/dev/e2e.sh`) : api et worker
+`cpus: 2.0`, `memory: 512M`, `pids: 1024`, réservation `cpus: 0.25`, `memory: 128M` ; frontend
+`cpus: 0.5`, `memory: 128M`, `pids: 256` (workers nginx), réservation `memory: 32M` : une api
+saturée ne prend pas tous les cœurs d'un nœud partagé avec d'autres stacks, et une rafale de
+processus est contenue.
 
 ### 14.6 Secrets, erreurs et journaux
 

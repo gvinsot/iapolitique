@@ -57,6 +57,21 @@ class ComposeSecurityTest(unittest.TestCase):
                     lambda c, s=service: c["services"][s].pop("cap_drop"), f"{service}: cap_drop"
                 )
 
+    def test_resource_limits_are_required_on_every_deployed_service(self) -> None:
+        # DOS-1: a memory limit alone lets a flooded api take every core of a shared node.
+        for service in checker.DEPLOYED:
+            for key in ("cpus", "memory", "pids"):
+                with self.subTest(service=service, key=key):
+                    self.assert_reported(
+                        lambda c, s=service, k=key: c["services"][s]["deploy"]["resources"]["limits"].pop(k),
+                        f"{service}: deploy.resources.limits must set ['{key}']",
+                    )
+            with self.subTest(service=service, key="reservations"):
+                self.assert_reported(
+                    lambda c, s=service: c["services"][s]["deploy"]["resources"].pop("reservations"),
+                    f"{service}: deploy.resources.reservations.memory",
+                )
+
     def test_extra_capabilities_are_refused(self) -> None:
         self.assert_reported(
             lambda c: c["services"]["api"].setdefault("cap_add", []).append("NET_ADMIN"),

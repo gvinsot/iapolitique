@@ -117,9 +117,17 @@ services:
       restart_policy:
         condition: any
         delay: 5s
+      # DoS containment on shared nodes (AGENTS.md §14.5): CPU, memory and process caps, and a
+      # reservation so the scheduler never over-commits a node. Threads count against pids
+      # (tokio workers + up to 512 blocking threads).
       resources:
         limits:
+          cpus: "2.0"
           memory: 512M
+          pids: 1024
+        reservations:
+          cpus: "0.25"
+          memory: 128M
       labels:
         - "traefik.enable=true"
         # Three networks: Traefik reaches the api on proxy only.
@@ -202,7 +210,12 @@ services:
         delay: 5s
       resources:
         limits:
+          cpus: "2.0"
           memory: 512M
+          pids: 1024
+        reservations:
+          cpus: "0.25"
+          memory: 128M
 
   frontend:
     image: registry.methodinfo.fr/iapolitique-frontend:latest
@@ -263,9 +276,14 @@ services:
       restart_policy:
         condition: any
         delay: 5s
+      # nginx workers are processes (worker_processes auto): pids stays well above their number.
       resources:
         limits:
+          cpus: "0.5"
           memory: 128M
+          pids: 256
+        reservations:
+          memory: 32M
       labels:
         - "traefik.enable=true"
         - "traefik.swarm.network=proxy"

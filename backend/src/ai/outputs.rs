@@ -25,6 +25,78 @@ static SOURCE_ID_RE: LazyLock<Regex> =
 static SOURCE_REF_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[(S[0-9]+)\]").expect("valid regex"));
 
+/// Longest accepted source URL.
+pub const MAX_SOURCE_URL_LEN: usize = 2_048;
+
+/// Comparison key of a source URL (INJ-3): host and path (without trailing `/`), and the query
+/// without `utm_*` parameters; scheme, default port and fragment do not count. `Err` when the
+/// URL cannot be published: not http(s), credentials, explicit non-default port, IP address
+/// instead of a host name, or longer than [`MAX_SOURCE_URL_LEN`].
+pub fn source_url_key(raw: &str) -> Result<String, &'static str> {
+    if raw.len() > MAX_SOURCE_URL_LEN {
+        return Err("URL too long");
+    }
+    let url = url::Url::parse(raw.trim()).map_err(|_| "invalid URL")?;
+    if !matches!(url.scheme(), "http" | "https") {
+        return Err("not an http(s) URL");
+    }
+    if !url.username().is_empty() || url.password().is_some() {
+        return Err("URL with credentials");
+    }
+    if url.port().is_some() {
+        return Err("URL with an explicit port");
+    }
+    let host = match url.host() {
+        Some(url::Host::Domain(host)) => host.trim_end_matches('.').to_ascii_lowercase(),
+        Some(_) => return Err("IP address instead of a host name"),
+        None => return Err("URL without host"),
+    };
+    let query: Vec<(String, String)> = url
+        .query_pairs()
+        .filter(|(key, _)| !key.to_ascii_lowercase().starts_with("utm_"))
+        .map(|(k, v)| (k.into_owned(), v.into_owned()))
+        .collect();
+    let mut key = format!("{host}{}", url.path().trim_end_matches('/'));
+    if !query.is_empty() {
+        key.push('?');
+        key.push_str(
+            &url::form_urlencoded::Serializer::new(String::new())
+                .extend_pairs(query)
+                .finish(),
+        );
+    }
+    Ok(key)
+}
+
+/// URLs that an analysis may cite (INJ-3): the pages consulted by its web research and the
+/// sources of the analysis it replaces. Any other URL (planted by a visitor text, a
+/// contribution or a web page) is refused.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct AllowedSources(BTreeSet<String>);
+
+impl AllowedSources {
+    pub fn new<'a>(urls: impl IntoIterator<Item = &'a str>) -> Self {
+        Self(
+            urls.into_iter()
+                .filter_map(|url| source_url_key(url).ok())
+                .collect(),
+        )
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.0.is_empty()
+    }
+
+    fn check(&self, url: &str) -> Result<(), &'static str> {
+        let key = source_url_key(url)?;
+        if self.0.contains(&key) {
+            Ok(())
+        } else {
+            Err("URL not consulted by the web research")
+        }
+    }
+}
+
 /// `territory`: two empty strings when no specific local authority is targeted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Territory {
@@ -140,8 +212,13 @@ impl AnalysisOutput {
     }
 
     /// Checks of §13.4 beyond the schema. `contribution_ids` are the contributions given to the
-    /// prompt: the analysis may only report on those.
-    pub fn check(&self, taxonomy: &Taxonomy, contribution_ids: &[String]) -> Result<(), String> {
+    /// prompt: the analysis may only report on those. `allowed` are the URLs it may cite.
+    pub fn check(
+        &self,
+        taxonomy: &Taxonomy,
+        contribution_ids: &[String],
+        allowed: &AllowedSources,
+    ) -> Result<(), String> {
         let mut problems = Vec::new();
         if self.title.trim().is_empty() || self.summary.trim().is_empty() {
             problems.push("empty title or summary".to_owned());
@@ -200,6 +277,8 @@ impl AnalysisOutput {
             }
             if !(source.url.starts_with("https://") || source.url.starts_with("http://")) {
                 problems.push(format!("source {} needs an http(s) URL", source.id));
+            } else if let Err(err) = allowed.check(&source.url) {
+                problems.push(format!("source {}: {err}", source.id));
             }
         }
         let cited: BTreeSet<&str> = self
@@ -320,8 +399,65 @@ mod tests {
         serde_json::from_value(analysis_json()).unwrap()
     }
 
+    /// The URLs of the fixture, as the research would have returned them.
+    fn allowed() -> AllowedSources {
+        AllowedSources::new(
+            analysis()
+                .sources
+                .iter()
+                .map(|s| s.url.as_str())
+                .collect::<Vec<_>>(),
+        )
+    }
+
     fn check(output: &AnalysisOutput) -> Result<(), String> {
-        output.check(&test_prompts().taxonomy, &["c1".to_owned()])
+        output.check(&test_prompts().taxonomy, &["c1".to_owned()], &allowed())
+    }
+
+    /// INJ-3: a source must be a page consulted by the web research.
+    #[test]
+    fn sources_must_come_from_the_research() {
+        let mut output = analysis();
+        output.sources[0].url = "https://ccomptes-rapports.example/2025/achats".into();
+        let err = check(&output).unwrap_err();
+        assert!(err.contains("not consulted by the web research"), "{err}");
+        assert!(
+            output
+                .check(
+                    &test_prompts().taxonomy,
+                    &["c1".to_owned()],
+                    &AllowedSources::default()
+                )
+                .is_err()
+        );
+
+        // Scheme, default port, fragment, trailing slash and utm_* parameters do not count.
+        let mut output = analysis();
+        let original = output.sources[0].url.clone();
+        output.sources[0].url = format!("{original}/?utm_source=x#section");
+        assert_eq!(check(&output), Ok(()));
+        output.sources[0].url = original.replacen("https://", "http://", 1);
+        assert_eq!(check(&output), Ok(()));
+    }
+
+    #[test]
+    fn source_url_keys() {
+        assert_eq!(
+            source_url_key("https://WWW.Ccomptes.fr:443/fr/rapport/?utm_campaign=a&p=2#x"),
+            Ok("www.ccomptes.fr/fr/rapport?p=2".to_owned())
+        );
+        for bad in [
+            "https://user:pw@ccomptes.fr/x",
+            "https://ccomptes.fr:8443/x",
+            "https://192.168.1.1/x",
+            "https://[::1]/x",
+            "javascript:alert(1)",
+            "ftp://ccomptes.fr/x",
+        ] {
+            assert!(source_url_key(bad).is_err(), "{bad}");
+        }
+        let long = format!("https://ccomptes.fr/{}", "a".repeat(MAX_SOURCE_URL_LEN));
+        assert!(source_url_key(&long).is_err());
     }
 
     #[test]

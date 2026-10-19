@@ -34,7 +34,7 @@ use super::pipeline::{self, AnalyzePayload};
 use super::worker::{HandlerFuture, JobContext, JobHandler};
 use super::{Job, JobError, JobKind, JobOutcome, queue};
 use crate::ai::mistral::{CallContext, MistralClient, MistralError, ModelTier};
-use crate::ai::outputs::AnalysisOutput;
+use crate::ai::outputs::{AllowedSources, AnalysisOutput};
 use crate::ai::prompts::{OutputSchema, PromptVars, Prompts, Taxonomy};
 use crate::db::analyses::{self, NewAnalysis, PendingContribution, Provenance, StoreError};
 use crate::db::status::{self, Change, StatusError};
@@ -346,6 +346,30 @@ async fn analyse(
         )
         .map_err(render_failure)?;
     let contribution_ids = inputs.contribution_ids();
+    // Sources may only be pages the web research consulted, or the sources of the analysis
+    // being replaced (INJ-3).
+    let previous_sources = inputs
+        .idea
+        .previous_analysis
+        .as_ref()
+        .and_then(|a| a.get("sources"))
+        .and_then(serde_json::Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(|s| s.get("url").and_then(serde_json::Value::as_str));
+    let allowed = AllowedSources::new(
+        research
+            .value
+            .references
+            .iter()
+            .filter_map(|r| r.url.as_deref())
+            .chain(previous_sources),
+    );
+    if allowed.is_empty() {
+        return Err(Failure::GiveUp(
+            "the web research consulted no page: nothing can be cited".to_owned(),
+        ));
+    }
     let completion = client
         .structured::<AnalysisOutput>(
             pool,
@@ -353,7 +377,7 @@ async fn analyse(
             ModelTier::Analysis,
             &rendered,
             schema,
-            |output| output.check(&prompts.taxonomy, &contribution_ids),
+            |output| output.check(&prompts.taxonomy, &contribution_ids, &allowed),
         )
         .await
         .map_err(|err| classify(err, job))?;

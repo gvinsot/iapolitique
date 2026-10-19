@@ -396,11 +396,16 @@ async fn invalid_outputs_fail_the_first_analysis(pool: PgPool) {
     wrong_category["category"] = json!("lune");
     let mut unsourced = analysis_output();
     unsourced["pros"] = json!(["Selon [S9]."]);
+    // INJ-3: a URL that the web research did not return (planted by a visitor text) is never
+    // published.
+    let mut planted = analysis_output();
+    planted["sources"][0]["url"] = json!("https://ccomptes-rapports.example/2025/achats");
     let cases = [
         ("not json", raw_chat("pas du JSON")),
         ("schema", chat_response(&schema_violation)),
         ("category", chat_response(&wrong_category)),
         ("sources", chat_response(&unsourced)),
+        ("planted url", chat_response(&planted)),
     ];
     for (case, answer) in cases {
         server.reset().await;
@@ -436,6 +441,13 @@ async fn invalid_outputs_fail_the_first_analysis(pool: PgPool) {
         .await
         .unwrap();
         assert_eq!(reason.as_deref(), Some("analysis_failed"));
+        let (published,): (i64,) =
+            sqlx::query_as("SELECT count(*) FROM analyses WHERE idea_id = $1")
+                .bind(idea)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(published, 0, "{case}");
         sqlx::query("DELETE FROM jobs")
             .execute(&pool)
             .await

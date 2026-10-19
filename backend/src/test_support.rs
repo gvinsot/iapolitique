@@ -118,8 +118,11 @@ pub fn research_response(memo: &str, prompt_tokens: u64) -> Value {
                 "model": "mistral-large-test", "id": "m1",
                 "content": [
                     { "type": "text", "text": memo },
+                    // The pages cited by `analysis_output()`.
                     { "type": "tool_reference", "tool": "web_search", "title": "Source",
-                      "url": "https://www.ccomptes.fr/fr/publications/achats-hopitaux" }
+                      "url": "https://www.ccomptes.fr/fr/publications/la-fonction-achats-des-hopitaux" },
+                    { "type": "tool_reference", "tool": "web_search", "title": "Source 2",
+                      "url": "https://sante.gouv.fr/groupements-hospitaliers-de-territoire" }
                 ]
             }
         ],

@@ -33,6 +33,8 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["json", "env-filter", "fmt"] }
 # NFKC folding of visitor text (prompt frame neutralization); already in the tree via sqlx.
 unicode-normalization = "0.1"
+# Normalization of the source URLs of analyses; already in the tree via reqwest.
+url = "2"
 utoipa = { version = "6", features = ["axum_extras", "chrono", "uuid", "preserve_order"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 

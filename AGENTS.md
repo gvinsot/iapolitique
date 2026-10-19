@@ -533,6 +533,9 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
 - Contribution supprimée par son auteur : effacement immédiat (§7.1).
 - Demandes de réexamen humain : supprimées avec leur texte, et un an après leur traitement.
 - Job de purge quotidien dans le worker, testé.
+- Sauvegardes de la base : **30 jours** au plus (mémo juridique) ; aucune n'est automatisée à ce
+  jour, procédure et script dans `docs/ops.md` §5.3. Journaux d'accès de Traefik : IP tronquée,
+  retirée ou 7 jours au plus (§7.5, `docs/ops.md` §5.1).
 
 ### 7.4 Export
 

@@ -184,3 +184,151 @@ ne le démarre jamais, alors que `docker compose run` le lance comme dépendance
 Avant une mise en QA d'un changement du pipeline, le parcours de bout en bout des images
 runtime (api, worker, frontend, base neuve, modèle de décision réel, faux Mistral) se lance avec
 `devops/dev/e2e.sh` : voir [`devops/dev/README.md`](../devops/dev/README.md).
+
+## 5. Infrastructure partagée : exigences de sécurité et de conformité
+
+Traefik, ses middlewares (`global@file`, `security-headers@file`, `dashboard-allowlist@file`) et
+le cluster PostgreSQL sont gérés hors de ce dépôt (stacks `privatenetwork` et
+`postgresqlcluster`). Constat du 2026-10-19 (Traefik v3.7.6, lecture seule de
+`privatenetwork_traefik_config` et `privatenetwork_dynamic_config`) et réglages attendus.
+
+### 5.1 Journaux d'accès de Traefik (AGENTS.md §7.5)
+
+Aujourd'hui, `accessLog` est en JSON sur la sortie standard, **avec l'IP complète du client**
+(`ClientAddr`, `ClientHost`) et le `User-Agent` (`headers.names.User-Agent: keep`), pour tous les
+hôtes ; ces lignes sont collectées par PulsarCD (vue Sécurité : requêtes par IP, bannissements).
+Or le site s'engage à ne conserver aucune IP en clair au-delà de 7 jours. Traefik ne sait pas
+tronquer une IP : il faut choisir l'une des options suivantes (décision de l'éditeur, à
+reporter dans `/confidentialite` si elle change ce qui y est écrit).
+
+**Option A — rétention de 7 jours au plus** (garde la vue Sécurité de PulsarCD) : configurer
+l'index des journaux de Traefik dans PulsarCD/OpenSearch pour supprimer les entrées de plus de
+7 jours (politique de cycle de vie), et borner les journaux Docker du conteneur Traefik, par
+exemple dans le service `traefik` de la stack `privatenetwork` :
+
+```yaml
+    logging:
+      driver: json-file
+      options:
+        max-size: "50m"
+        max-file: "3"
+```
+
+(La rotation de `json-file` est fondée sur la taille : vérifier qu'elle couvre moins de 7 jours
+de trafic, sinon la durée de rétention d'OpenSearch fait foi.)
+
+**Option B — journaux sans IP ni User-Agent** (configuration statique `traefik.yml`, pour tous
+les hôtes du cluster ; la vue Sécurité de PulsarCD ne voit plus les IP) :
+
+```yaml
+accessLog:
+  format: json
+  fields:
+    defaultMode: keep
+    names:
+      ClientAddr: drop
+      ClientHost: drop
+      ClientPort: drop
+      ClientUsername: drop
+    headers:
+      defaultMode: drop
+      names:
+        User-Agent: drop
+```
+
+(`redact` à la place de `drop` remplace la valeur par `REDACTED` au lieu de retirer le champ.)
+
+**Option C — aucun journal d'accès Traefik pour iapolitique seulement** : depuis Traefik v3.1,
+l'étiquette de routeur `traefik.http.routers.<routeur>.observability.accessLogs=false` coupe le
+journal d'accès d'un routeur. Ajoutée aux routeurs `iapolitique-*` de
+`devops/docker-compose.swarm.yml`, elle laisse les autres sites inchangés ; le WAF et le rate
+limit de `global@file` s'appliquent toujours, mais PulsarCD ne voit plus les requêtes du site.
+Non activée : à décider.
+
+Le journal d'accès de nginx (frontend) ne contient ni IP, ni User-Agent, ni chaîne de requête,
+ni jeton (`frontend/nginx.conf`) ; le backend ne journalise jamais d'IP (AGENTS.md §7.1).
+
+### 5.2 En-têtes posés par Traefik
+
+Le middleware `security-headers` (dans `global@file` et sur les routeurs admin) remplace les
+en-têtes du même nom envoyés par nginx et par l'api :
+
+| En-tête | Envoyé par Traefik | Attendu (AGENTS.md §14.2) |
+|---|---|---|
+| `Strict-Transport-Security` | `max-age=31536000; includeSubDomains; preload` (`stsSeconds`, `stsIncludeSubdomains`, `stsPreload`) | `max-age=63072000; includeSubDomains` |
+| `X-Robots-Tag` | `none` (= `noindex, nofollow`) sur **toutes** les réponses | seulement l'admin, `/suivi` et l'API |
+| `X-XSS-Protection` | `1; mode=block` (`browserXssFilter`) | absent ou `0` (filtre retiré des navigateurs, la CSP le remplace) |
+
+Conséquences et recommandations :
+
+- **`preload`** : la directive n'a d'effet que si le domaine est soumis à hstspreload.org ; une
+  fois inscrit dans les navigateurs, `iapolitique.fr` **et tous ses sous-domaines** (dont
+  `qa.` et `admin.`) ne seront plus jamais joignables en HTTP, et un retrait prend des mois.
+  Recommandation : ne pas soumettre le domaine et retirer `stsPreload` tant que l'éditeur n'a pas
+  décidé explicitement du préchargement. Pour aligner la durée : `stsSeconds: 63072000`.
+- **`X-Robots-Tag: none` sur tout le site** : en production, les moteurs de recherche
+  n'indexeraient aucune page publique (classement, idées). Si ce n'est pas voulu, retirer
+  `X-Robots-Tag` de `customResponseHeaders` (nginx et l'api posent déjà `noindex, nofollow` là où
+  il le faut), ou créer pour iapolitique une chaîne sans cet en-tête, par exemple dans
+  `dynamic.yml` :
+
+  ```yaml
+  http:
+    middlewares:
+      security-headers-indexable:
+        headers:
+          frameDeny: true
+          contentTypeNosniff: true
+          referrerPolicy: "no-referrer"
+          stsSeconds: 63072000
+          stsIncludeSubdomains: true
+          customResponseHeaders:
+            Server: ""
+      global-indexable:
+        chain:
+          middlewares:
+            - waf
+            - security-headers-indexable
+            - rate-limit
+  ```
+
+  puis remplacer `global@file` par `global-indexable@file` dans le compose (et dans
+  `devops/check_compose_security.py`, qui exige aujourd'hui `global@file`).
+- `X-XSS-Protection` : retirer `browserXssFilter` (ou poser `X-XSS-Protection: 0`).
+
+Vérification (lecture seule) : `curl -sSI https://qa.iapolitique.fr/suivi`.
+
+### 5.3 Sauvegardes de la base (rétention 30 jours)
+
+Le cluster PostgreSQL a deux réplicas (`pg-standby1`, `pg-standby2`), qui **ne sont pas** des
+sauvegardes (une suppression est répliquée), et aucune sauvegarde automatique n'est en place
+(`PostgreSqlCluster/MANAGE.md` ne décrit que des commandes manuelles). Le mémo juridique fixe la
+rétention des sauvegardes à **30 jours** : passé ce délai, une sauvegarde contiendrait encore des
+textes refusés, supprimés par leur auteur ou purgés.
+
+Mise en place attendue, une sauvegarde par jour et par base, conservée 30 jours au plus, sur un
+manager (cron) :
+
+```bash
+#!/bin/sh
+# /usr/local/bin/backup-iapolitique.sh (cron : 30 3 * * *), PG_ADMIN_PASSWORD dans l'environnement
+set -eu
+dir=/srv/backups/iapolitique
+mkdir -p "$dir" && chmod 700 "$dir"
+for db in iapolitique_prod iapolitique_qa; do
+  docker run --rm --network postgresqlcluster_internal -e PGPASSWORD="$PG_ADMIN_PASSWORD" \
+    timescale/timescaledb:2.25.2-pg18 \
+    pg_dump -h pg-primary -U postgres -Fc "$db" >"$dir/$db-$(date +%Y%m%d).dump"
+done
+find "$dir" -name 'iapolitique_*.dump' -mtime +29 -delete
+```
+
+- Les sauvegardes ne contiennent ni sel de limitation de débit ni compteurs (en mémoire
+  seulement, AGENTS.md §7.2) ni IP ; elles contiennent les textes et les coordonnées des
+  signalants : stockage chiffré ou sur un disque réservé, accès root seulement, jamais hors de
+  l'infrastructure de l'éditeur.
+- Après une restauration, laisser le worker repasser les purges (refus à 30 jours, pierres
+  tombales, contenus masqués) avant de rouvrir le site : la base restaurée peut contenir des
+  données dont l'échéance est passée.
+- Restauration : `pg_restore -h pg-primary -U postgres -d <base> --clean <fichier>.dump`
+  (voir `PostgreSqlCluster/MANAGE.md`).

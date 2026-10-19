@@ -1,0 +1,37 @@
+#!/bin/sh
+# Sourced by the nginx image's /docker-entrypoint.sh before 20-envsubst-on-templates.sh, which
+# renders /etc/nginx/templates/.well-known/security.txt.template into $NGINX_ENVSUBST_OUTPUT_DIR
+# (AGENTS.md §14.2, RFC 9116).
+#
+# - Expires: one value per container start, 180 days ahead (RFC 9116 asks for less than a year;
+#   every deployment restarts the container and renews it).
+# - The file is only rendered when LEGAL_CONTACT_EMAIL looks like an address and TRAEFIK_HOST
+#   like a host name: otherwise no template is rendered and nginx answers 404, never a file with
+#   an empty or broken Contact/Canonical field.
+# Sourced with `set -e` by the entrypoint: no command here may fail.
+
+security_txt_email="${LEGAL_CONTACT_EMAIL:-}"
+security_txt_host="${TRAEFIK_HOST:-}"
+security_txt_valid=1
+case "$security_txt_email" in
+    "" | *[[:space:]]* | *@*@* | @* | *@ | *[\<\>\"\'\]*) security_txt_valid=0 ;;
+    *@*.*) ;;
+    *) security_txt_valid=0 ;;
+esac
+case "$security_txt_host" in
+    "" | *[!A-Za-z0-9.-]*) security_txt_valid=0 ;;
+esac
+
+if [ "$security_txt_valid" = 1 ]; then
+    SECURITY_TXT_EXPIRES="$(date -u -d "@$(($(date +%s) + 180 * 86400))" '+%Y-%m-%dT%H:%M:%SZ')"
+    export SECURITY_TXT_EXPIRES
+    # Only these three variables are substituted in the templates.
+    export NGINX_ENVSUBST_FILTER='^(LEGAL_CONTACT_EMAIL|SECURITY_TXT_EXPIRES|TRAEFIK_HOST)$'
+    mkdir -p "${NGINX_ENVSUBST_OUTPUT_DIR:-/run/nginx-generated}"
+    entrypoint_log "16-security-txt.envsh: security.txt expires on $SECURITY_TXT_EXPIRES"
+else
+    # 20-envsubst-on-templates.sh skips a missing template directory.
+    export NGINX_ENVSUBST_TEMPLATE_DIR=/nonexistent
+    entrypoint_log "16-security-txt.envsh: LEGAL_CONTACT_EMAIL or TRAEFIK_HOST missing or invalid: /.well-known/security.txt answers 404"
+fi
+unset security_txt_email security_txt_host security_txt_valid

@@ -11,6 +11,8 @@
 # Keep RUST_VERSION aligned with backend/Dockerfile: clippy lints change between releases.
 ARG RUST_VERSION=1.99
 ARG NODE_VERSION=22
+# Keep NGINX_VERSION aligned with frontend/Dockerfile.
+ARG NGINX_VERSION=1.31
 
 # ---------------------------------------------------------------------------------------------
 # 1. Frontend: ESLint + Prettier, tsc, Vitest, production build.
@@ -31,7 +33,35 @@ RUN npm run lint \
     && touch /frontend-ok
 
 # ---------------------------------------------------------------------------------------------
-# 2. Backend: rustfmt, clippy, test compilation. The test binaries run later, at `docker compose
+# 2. Frontend nginx: the HTTP contract of frontend/nginx.conf (security headers, CSP nonce,
+#    caching, methods, dotfiles, security.txt with and without a contact address), checked by
+#    devops/check_frontend_headers.sh against the build above. Same nginx image and same files
+#    as the runtime stage of frontend/Dockerfile: keep them aligned.
+# ---------------------------------------------------------------------------------------------
+FROM nginx:${NGINX_VERSION}-alpine AS frontend-headers
+RUN rm -f /etc/nginx/conf.d/default.conf
+ENV NGINX_ENVSUBST_OUTPUT_DIR=/run/nginx-generated
+COPY frontend/nginx.conf /etc/nginx/nginx.conf
+COPY frontend/nginx/.well-known/security.txt.template /etc/nginx/templates/.well-known/
+COPY --chmod=0755 frontend/nginx/16-security-txt.envsh /docker-entrypoint.d/
+COPY --from=frontend-check /app/dist /usr/share/nginx/html
+COPY --chmod=0755 devops/check_frontend_headers.sh /usr/local/bin/check-frontend-headers
+# The entrypoint renders security.txt, then nginx daemonizes (no "daemon off" in nginx.conf).
+RUN set -eu; \
+    stop_nginx() { nginx -s stop; while [ -f /run/nginx.pid ]; do sleep 0.1; done; }; \
+    LEGAL_CONTACT_EMAIL=securite@example.org TRAEFIK_HOST=iapolitique.fr \
+        NGINX_ENTRYPOINT_QUIET_LOGS=1 /docker-entrypoint.sh nginx; \
+    check-frontend-headers http://127.0.0.1 securite@example.org; \
+    stop_nginx; \
+    rm -rf /run/nginx-generated; \
+    LEGAL_CONTACT_EMAIL= TRAEFIK_HOST=iapolitique.fr \
+        NGINX_ENTRYPOINT_QUIET_LOGS=1 /docker-entrypoint.sh nginx; \
+    check-frontend-headers http://127.0.0.1; \
+    stop_nginx; \
+    touch /frontend-headers-ok
+
+# ---------------------------------------------------------------------------------------------
+# 3. Backend: rustfmt, clippy, test compilation. The test binaries run later, at `docker compose
 #    run`, because the integration tests need the test-db service.
 # ---------------------------------------------------------------------------------------------
 FROM rust:${RUST_VERSION}-trixie AS backend-test
@@ -43,8 +73,9 @@ ENV CARGO_TERM_COLOR=always \
     CARGO_PROFILE_TEST_DEBUG=line-tables-only \
     RUST_BACKTRACE=1
 WORKDIR /src
-# Witness file: without a dependency on frontend-check, BuildKit would skip that stage entirely.
+# Witness files: without a dependency on the other stages, BuildKit would skip them entirely.
 COPY --from=frontend-check /frontend-ok /tmp/frontend-ok
+COPY --from=frontend-headers /frontend-headers-ok /tmp/frontend-headers-ok
 # Same layout as the repository: tests resolve ../prompts and ../frontend/src/api/openapi.json
 # from CARGO_MANIFEST_DIR.
 COPY --from=frontend-check /frontend-out/api/ frontend/src/api/

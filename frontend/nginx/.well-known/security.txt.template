@@ -1,0 +1,6 @@
+# Politique de signalement des vulnérabilités de https://${TRAEFIK_HOST} (RFC 9116).
+# Fichier généré au démarrage du conteneur (frontend/nginx/16-security-txt.envsh).
+Contact: mailto:${LEGAL_CONTACT_EMAIL}
+Expires: ${SECURITY_TXT_EXPIRES}
+Preferred-Languages: fr
+Canonical: https://${TRAEFIK_HOST}/.well-known/security.txt

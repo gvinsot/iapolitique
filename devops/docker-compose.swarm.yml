@@ -191,6 +191,11 @@ services:
       context: ..
       dockerfile: frontend/Dockerfile
       target: runtime
+    environment:
+      # /.well-known/security.txt (AGENTS.md §14.2), rendered at container start: Contact from
+      # LEGAL_CONTACT_EMAIL, Canonical from TRAEFIK_HOST. Without an address it answers 404.
+      LEGAL_CONTACT_EMAIL: ${LEGAL_CONTACT_EMAIL:-}
+      TRAEFIK_HOST: ${TRAEFIK_HOST:?TRAEFIK_HOST must be set in devops/.env}
     networks:
       - proxy
     healthcheck:

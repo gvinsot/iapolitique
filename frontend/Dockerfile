@@ -30,6 +30,13 @@ FROM nginx:${NGINX_VERSION}-alpine AS runtime
 # The default site is replaced by our own complete configuration.
 RUN rm -f /etc/nginx/conf.d/default.conf
 COPY frontend/nginx.conf /etc/nginx/nginx.conf
+# /.well-known/security.txt (RFC 9116), rendered at container start by the image's envsubst
+# templates mechanism from LEGAL_CONTACT_EMAIL and TRAEFIK_HOST (16-security-txt.envsh). The
+# output goes to /run, the only writable place besides the nginx cache when the root file
+# system is read-only (devops/docker-compose.swarm.yml).
+ENV NGINX_ENVSUBST_OUTPUT_DIR=/run/nginx-generated
+COPY frontend/nginx/.well-known/security.txt.template /etc/nginx/templates/.well-known/
+COPY --chmod=0755 frontend/nginx/16-security-txt.envsh /docker-entrypoint.d/
 COPY --from=build /app/dist /usr/share/nginx/html
 RUN nginx -t
 EXPOSE 80

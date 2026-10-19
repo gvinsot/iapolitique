@@ -6,9 +6,11 @@
 #     AGENTS.md §13.5, reached from the containers through host.docker.internal),
 #   - the real decision service (E2E_DECISION_SERVICE_URL),
 #   - devops/dev/mock_mistral.py in a python container, with a dummy MISTRAL_API_KEY.
-# Then devops/dev/e2e_scenario.py drives the pipeline, a second phase restarts the api and the
-# worker with a tiny daily budget, and the container logs are checked for client IPs, tracking
-# tokens and visitor texts (AGENTS.md §7.1).
+# devops/check_frontend_headers.sh checks the nginx headers, then devops/dev/e2e_scenario.py
+# drives the pipeline, devops/dev/browser_check.sh browses every route in Chromium and Firefox
+# (CSP violations, ALTCHA, admin; E2E_BROWSER=0 skips it), a second phase restarts the api and
+# the worker with a tiny daily budget, and the container logs are checked for client IPs,
+# tracking tokens and visitor texts (AGENTS.md §7.1).
 #
 # Build the images first (from devops/, with a copy of .env.example):
 #   docker compose -f docker-compose.swarm.yml --env-file <copy> build api frontend
@@ -69,6 +71,8 @@ docker create --name e2e-mock-mistral --network "$net" python:3.13-alpine \
 docker cp "$here/mock_mistral.py" e2e-mock-mistral:/mock_mistral.py >/dev/null
 docker start e2e-mock-mistral >/dev/null
 
+contact_email=securite@example.org
+
 backend_env=(
     -e "DATABASE_CONNECTION_STRING=$pg_url/$db?application_name=iapolitique-e2e"
     -e "MISTRAL_API_KEY=e2e-dummy-key-not-a-real-one"
@@ -111,24 +115,32 @@ start_backend() {
 
 echo "== api, worker and frontend"
 start_backend 5
-docker run -d --name e2e-front -p "127.0.0.1:$front_port:80" "$front_image" >/dev/null
+docker run -d --name e2e-front --network "$net" -p "127.0.0.1:$front_port:80" \
+    -e "LEGAL_CONTACT_EMAIL=$contact_email" -e "TRAEFIK_HOST=localhost" "$front_image" >/dev/null
 
 echo "== frontend"
 for _ in $(seq 1 30); do
     curl -fsS "http://127.0.0.1:$front_port/health" >/dev/null 2>&1 && break
     sleep 1
 done
-headers="$(curl -fsSI "http://127.0.0.1:$front_port/")"
-grep -qi '^content-security-policy:' <<<"$headers" || { echo "frontend: no CSP" >&2; exit 1; }
+# Its temporary files are host paths: Git Bash must convert them.
+env -u MSYS_NO_PATHCONV "$here/../check_frontend_headers.sh" "http://127.0.0.1:$front_port" "$contact_email"
 page="$(curl -fsS "http://127.0.0.1:$front_port/suivi")"
 grep -q '<div id="root">' <<<"$page" || { echo "frontend: SPA fallback missing" >&2; exit 1; }
 curl -fsS -H "X-Forwarded-For: 203.0.113.250" "http://127.0.0.1:$front_port/idees/x" >/dev/null
 echo 203.0.113.250 >>"$secrets_file"
-echo "ok    frontend serves the SPA with its CSP"
+echo "ok    frontend serves the SPA"
 
 echo "== scenario: main"
 "$python" "$here/e2e_scenario.py" --public "http://127.0.0.1:$public_port" \
     --admin "http://127.0.0.1:$admin_port" --admin-token "$token" --secrets-out "$secrets_file"
+
+if [[ "${E2E_BROWSER:-1}" != 0 ]]; then
+    echo "== browser check"
+    "$here/browser_check.sh" "$token"
+    # The idea typed in the browsers must not reach any log either.
+    echo "regrouper les achats de papier des écoles" >>"$secrets_file"
+fi
 
 echo "== scenario: budget exhausted"
 docker logs e2e-api >"$work/api-1.log" 2>&1

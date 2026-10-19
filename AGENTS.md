@@ -131,7 +131,8 @@ iapolitique/
 │       └── antispam/       # ALTCHA, rate limit
 ├── frontend/
 │   ├── Dockerfile          # build Vite puis nginx
-│   ├── nginx.conf
+│   ├── nginx.conf          # en-têtes de sécurité, CSP, cache (§14.2)
+│   ├── nginx/              # gabarit et script de démarrage de /.well-known/security.txt
 │   └── src/
 │       ├── api/            # client généré depuis l'OpenAPI + hooks TanStack Query
 │       ├── components/     # dont components/ui (shadcn)
@@ -150,6 +151,7 @@ iapolitique/
     ├── docker-compose.swarm.yml
     ├── Dockerfile.test     # image CI (§13.5)
     ├── run-tests.sh        # point d'entrée de l'image CI
+    ├── check_frontend_headers.sh # contrat HTTP de nginx (CI et bout en bout)
     ├── dev/                # bout en bout local des images runtime, faux Mistral (dev/README.md)
     └── .env.example
 ```
@@ -725,6 +727,8 @@ décidée par l'humain.
   `ADMIN_API_TOKEN`. Ne jamais utiliser `DATABASE_URL` (serait déployé en clair).
 - Coordonnées légales (non secrètes mais hors git) : `LEGAL_PUBLISHER_NAME`,
   `LEGAL_PUBLISHER_ADDRESS`, `LEGAL_PUBLISHER_PHONE`, `LEGAL_CONTACT_EMAIL`, `LEGAL_PRIVACY_EMAIL`.
+  `LEGAL_CONTACT_EMAIL` et `TRAEFIK_HOST` sont aussi transmises au frontend, qui en tire
+  `/.well-known/security.txt` (§14.2).
 - Variables non sensibles : `TRAEFIK_HOST`, `ADMIN_HOST`, `ALLOWED_DEV_ORIGINS` (dev uniquement), `LLM_NETWORK`, `DECISION_SERVICE_URL`,
   `DECISION_SERVICE_TIMEOUT_SECS`, `DECISION_SERVICE_JOB_TIMEOUT_SECS`, `MISTRAL_API_BASE_URL`,
   `MISTRAL_ANALYSIS_MODEL`, `MISTRAL_REVIEW_MODEL`, `MISTRAL_EMBED_MODEL`,
@@ -776,7 +780,7 @@ commit.
 | migrations | `iapolitique migrate` (aussi exécutées au démarrage de l'api) | — |
 | openapi | `iapolitique openapi [--output FICHIER] [--public]` : écrit la spec OpenAPI (complète, ou publique seule avec `--public`) sur stdout ou dans `FICHIER` | — |
 | healthcheck | `iapolitique healthcheck [--url URL] [--timeout-secs N]` : GET HTTP, code de sortie 0 si 2xx (URL par défaut `http://127.0.0.1:8080/api/health` ; worker : `--url http://127.0.0.1:8082/health`). L'image runtime n'a ni curl ni wget. | — |
-| frontend | nginx (image `nginx:alpine`, workers non root) | 80 (`/health` : sonde de vivacité) |
+| frontend | nginx (image `nginx:alpine`, workers non root) ; variables `LEGAL_CONTACT_EMAIL`, `TRAEFIK_HOST` lues au démarrage pour `/.well-known/security.txt` | 80 (`/health` : sonde de vivacité) |
 
 Variables de test : `DATABASE_URL` (utilisée **uniquement** par `#[sqlx::test]` en test). En
 déploiement, la base est lue depuis `DATABASE_CONNECTION_STRING`.
@@ -920,10 +924,13 @@ au démarrage (un fichier invalide empêche le démarrage).
 
 Le service `test` du compose construit `devops/Dockerfile.test` (contexte `..`) :
 1. stage `frontend-check` (node 22) : `npm ci`, lint, typecheck, Vitest, build ;
-2. stage `backend-test` (rust) : `cargo fmt --check`, `cargo clippy -D warnings`, compilation des
-   tests ; il copie un fichier témoin produit par `frontend-check` (sinon BuildKit saute ce
-   stage) ;
-3. à l'exécution (`devops/run-tests.sh`) : attente du port de `test-db`, puis
+2. stage `frontend-headers` (même image nginx que le runtime) : le `dist/` de `frontend-check`
+   servi par `frontend/nginx.conf`, contrôlé par `devops/check_frontend_headers.sh` (en-têtes,
+   nonce CSP, cache, méthodes, fichiers cachés, `security.txt` avec et sans adresse, §14.2) ;
+3. stage `backend-test` (rust) : `cargo fmt --check`, `cargo clippy -D warnings`, compilation des
+   tests ; il copie un fichier témoin produit par chacun des stages précédents (sinon BuildKit
+   les saute) ;
+4. à l'exécution (`devops/run-tests.sh`) : attente du port de `test-db`, puis
    `cargo test --locked --offline` (rien n'est recompilé) avec `DATABASE_URL` vers le service
    `test-db` (`pgvector/pgvector:pg18` en mémoire, sans mot de passe, réseau interne au compose).
    `test-db` n'est **pas** en `replicas: 0` (compose ne démarrerait pas la dépendance) mais en
@@ -1000,22 +1007,34 @@ worker (erreurs 404, 405, 413, 415, 504 et 500 comprises), retire `Server`, `X-P
 
 | En-tête | Valeur |
 |---|---|
-| `Content-Security-Policy` (frontend) | `default-src 'none'; script-src 'self'; style-src 'self'; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self' blob:; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests` (ajuster `worker-src` au strict besoin d'ALTCHA, vérifié dans un navigateur ; aucun `'unsafe-inline'` ni `'unsafe-eval'` pour les scripts) |
+| `Content-Security-Policy` (frontend) | `default-src 'none'; script-src 'self'; style-src 'self' 'nonce-<par réponse>' <3 empreintes sha256>; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests` (valeur exacte : `frontend/nginx.conf`). Aucun `'unsafe-inline'` ni `'unsafe-eval'` pour les scripts ni pour les éléments `<style>`. `worker-src 'self'` suffit : le worker ALTCHA est un fichier de même origine (`altcha/worker`), sans `blob:`. Les `<style>` injectés par des bibliothèques sont autorisés un par un : par **empreinte** pour les contenus fixes (feuille de sonner, insérée vide puis remplie, d'où l'empreinte de la chaîne vide ; style du viewport de Radix Select), vérifiées contre `node_modules` par `src/test/csp.test.tsx` (à mettre à jour avec la bibliothèque) ; par **nonce** (`$request_id`, 128 bits, nouveau à chaque réponse) pour le style de compensation de barre de défilement de react-remove-scroll (dialogues et listes Radix), dont le contenu varie : nginx pose le nonce sur la balise de `theme-init.js` (`sub_filter`) et ce script le copie dans `window.__webpack_nonce__`, lu par react-style-singleton. `style-src-attr 'unsafe-inline'` : attributs `style` seulement (positionnement Radix, widget ALTCHA). |
 | `Content-Security-Policy` (api) | `default-src 'none'; frame-ancestors 'none'; base-uri 'none'` |
-| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains` |
+| `Strict-Transport-Security` | `max-age=63072000; includeSubDomains`, sans `preload` (difficile à annuler : décision de l'éditeur). Derrière Traefik, le middleware `security-headers` de `global@file` (infrastructure partagée) remplace cette valeur par la sienne, aujourd'hui `max-age=31536000; includeSubDomains; preload` : voir `docs/ops.md` |
 | `X-Content-Type-Options` | `nosniff` |
 | `X-Frame-Options` | `DENY` |
 | `Referrer-Policy` | `no-referrer` |
-| `Permissions-Policy` | tout désactivé (`camera=(), microphone=(), geolocation=(), payment=(), usb=(), interest-cohort=(), browsing-topics=()`, etc.) |
+| `Permissions-Policy` | tout désactivé (`camera=(), microphone=(), geolocation=(), payment=(), usb=(), browsing-topics=()`, etc. : liste dans `frontend/nginx.conf`) ; seulement des fonctionnalités reconnues par les navigateurs (Chromium signale en console `bluetooth` ; `interest-cohort`, FLoC abandonné, est remplacé par `browsing-topics`) |
 | `Cross-Origin-Opener-Policy` | `same-origin` |
 | `Cross-Origin-Resource-Policy` | `same-origin` |
-| `Cross-Origin-Embedder-Policy` | `require-corp` si compatible (vérifié dans un navigateur), sinon `credentialless` |
+| `Cross-Origin-Embedder-Policy` | `require-corp` (frontend) : compatible, toutes les ressources étant de même origine ; Chromium et Firefox voient les pages isolées (`crossOriginIsolated`), vérifié par `devops/dev/browser_check.sh` |
 | `Cache-Control` | `no-store` sur toute réponse contenant un jeton, sur `/api/track*` et sur l'API admin ; `max-age` court sur les GET publics (`public, max-age=60` : classement, idée, statistiques ; `public, max-age=300` : méthodologie, taxonomie, mentions légales, exports ; `http/cache.rs`) |
-| `X-Robots-Tag` | `noindex, nofollow` sur l'admin, `/suivi` et l'API |
+| `X-Robots-Tag` | `noindex, nofollow` sur l'admin, `/suivi` et l'API (nginx : chemins `/suivi*` et `/admin*` sans tenir compte de la casse, et tout chemin encodé en `%`) |
 | `Server` / `X-Powered-By` | absents ou neutres |
 
-`/.well-known/security.txt` (RFC 9116) publié avec `LEGAL_CONTACT_EMAIL` (généré à partir d'un
-gabarit et de la configuration, sans donnée personnelle dans le dépôt) et une date d'expiration.
+Autres règles de nginx (`frontend/nginx.conf`) : `Cache-Control: no-store` sur `/suivi*` et
+`/admin*` (mêmes chemins que `X-Robots-Tag`), `no-cache` sur le reste sauf `/assets/` (immuable) ;
+`index.html` porte un nonce nouveau à chaque réponse, donc sans `ETag` ; `server_tokens off` ;
+seules les méthodes `GET` et `HEAD` existent (`405` avec `Allow: GET, HEAD` sinon) ; aucun fichier
+ou dossier commençant par un point n'est servi (`404`), sauf `/.well-known/security.txt`. Contrôlé
+en CI par `devops/check_frontend_headers.sh` (§13.5) et dans un vrai navigateur par
+`devops/dev/browser_check.sh`.
+
+`/.well-known/security.txt` (RFC 9116) : généré au démarrage du conteneur frontend par le
+mécanisme de gabarits `envsubst` de l'image nginx (`frontend/nginx/.well-known/security.txt.template`,
+`frontend/nginx/16-security-txt.envsh`) à partir de `LEGAL_CONTACT_EMAIL` (`Contact: mailto:`) et de
+`TRAEFIK_HOST` (`Canonical: https://<hôte>/.well-known/security.txt`), avec `Preferred-Languages: fr`
+et `Expires` à 180 jours (renouvelé à chaque démarrage). Sans adresse valide : `404`, jamais un
+fichier incomplet.
 
 ### 14.3 CORS et CSRF
 

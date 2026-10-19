@@ -1110,6 +1110,9 @@ aucune valeur de la requête ne peut y figurer.
 - Images non root, système de fichiers en lecture seule là où Swarm le permet (sinon
   documenter), capacités minimales, aucun outil inutile dans l'image runtime, images de base
   épinglées.
+- Épinglage : `frontend/Dockerfile` et `devops/Dockerfile.test` fixent chaque image de base par
+  version **et** digest de l'index multi-architecture (`ARG *_DIGEST`, procédure de mise à jour en
+  tête de fichier) ; `backend/Dockerfile` (rust, debian) reste à épingler de la même façon.
 - Dans `devops/docker-compose.swarm.yml`, api, worker et frontend ont `read_only: true`,
   `init: true` et `cap_drop: [ALL]` (tous pris en charge par `docker stack deploy`, vérifié sur
   Docker 29) ; les seuls chemins inscriptibles sont des volumes `type: tmpfs` (la clé courte

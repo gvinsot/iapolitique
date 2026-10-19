@@ -7,13 +7,19 @@
 #
 # No ARG/ENV carries a secret: the frontend has none (AGENTS.md §10.3).
 
+# Base images are pinned by digest (AGENTS.md §14.7): a tag can be moved, a digest cannot. The
+# digest is that of the multi-architecture index. To upgrade, change the version and take the new
+# digest from `docker buildx imagetools inspect <image>:<tag>` (first "Digest:" line), in every
+# file that uses the image (frontend/Dockerfile, devops/Dockerfile.test).
 ARG NODE_VERSION=22
+ARG NODE_DIGEST=sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
 ARG NGINX_VERSION=1.31
+ARG NGINX_DIGEST=sha256:892bb2152464f0c5d8972593a5f5afaf8054552580b699d95f8ff4af08c2d33d
 
 # -----------------------------------------------------------------------------------------------
 # build: install exact dependencies (package-lock.json) and produce dist/.
 # -----------------------------------------------------------------------------------------------
-FROM node:${NODE_VERSION}-alpine AS build
+FROM node:${NODE_VERSION}-alpine@${NODE_DIGEST} AS build
 WORKDIR /app
 ENV CI=true
 COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
@@ -27,7 +33,7 @@ RUN npm run build && npm run check:dist
 # runtime: nginx on port 80 (AGENTS.md §13.1). The master process binds the port, workers run
 # as the unprivileged "nginx" user.
 # -----------------------------------------------------------------------------------------------
-FROM nginx:${NGINX_VERSION}-alpine AS runtime
+FROM nginx:${NGINX_VERSION}-alpine@${NGINX_DIGEST} AS runtime
 # The default site is replaced by our own complete configuration.
 RUN rm -f /etc/nginx/conf.d/default.conf
 COPY frontend/nginx.conf /etc/nginx/nginx.conf

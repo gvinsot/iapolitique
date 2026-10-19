@@ -9,18 +9,26 @@
 # node_modules/ and the .env files out of it).
 
 # Keep RUST_VERSION aligned with backend/Dockerfile: clippy lints change between releases.
+# Base images are pinned by digest (AGENTS.md §14.7): a tag can be moved, a digest cannot. The
+# digest is that of the multi-architecture index. To upgrade, change the version and take the new
+# digest from `docker buildx imagetools inspect <image>:<tag>` (first "Digest:" line), in every
+# file that uses the image (frontend/Dockerfile, devops/Dockerfile.test).
 ARG RUST_VERSION=1.99
+ARG RUST_DIGEST=sha256:e259494b14672950a909b4c54527e19d29cae6ebf980672114c8bb85e5594e4a
 ARG NODE_VERSION=22
+ARG NODE_DIGEST=sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2bc2e402
 # Keep NGINX_VERSION aligned with frontend/Dockerfile.
 ARG NGINX_VERSION=1.31
+ARG NGINX_DIGEST=sha256:892bb2152464f0c5d8972593a5f5afaf8054552580b699d95f8ff4af08c2d33d
 ARG ALPINE_VERSION=3.24
+ARG ALPINE_DIGEST=sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 # ---------------------------------------------------------------------------------------------
 # 1. Frontend: known vulnerabilities of the runtime dependencies (npm audit, blocking from
 #    "high", AGENTS.md §14.7), ESLint + Prettier, tsc, Vitest, production build, no third-party
 #    origin in it. The audit asks the npm registry at every frontend change.
 # ---------------------------------------------------------------------------------------------
-FROM node:${NODE_VERSION}-alpine AS frontend-check
+FROM node:${NODE_VERSION}-alpine@${NODE_DIGEST} AS frontend-check
 WORKDIR /app
 ENV CI=true
 COPY frontend/package.json frontend/package-lock.json frontend/.npmrc* ./
@@ -43,7 +51,7 @@ RUN npm audit --omit=dev --audit-level=high \
 #    devops/check_frontend_headers.sh against the build above. Same nginx image and same files
 #    as the runtime stage of frontend/Dockerfile: keep them aligned.
 # ---------------------------------------------------------------------------------------------
-FROM nginx:${NGINX_VERSION}-alpine AS frontend-headers
+FROM nginx:${NGINX_VERSION}-alpine@${NGINX_DIGEST} AS frontend-headers
 RUN rm -f /etc/nginx/conf.d/default.conf
 ENV NGINX_ENVSUBST_OUTPUT_DIR=/run/nginx-generated
 COPY frontend/nginx.conf /etc/nginx/nginx.conf
@@ -69,7 +77,7 @@ RUN set -eu; \
 # 3. devops: security invariants of docker-compose.swarm.yml (container hardening, networks,
 #    Traefik routers and the admin port; AGENTS.md §14.4, §14.7) and the tests of the checker.
 # ---------------------------------------------------------------------------------------------
-FROM alpine:${ALPINE_VERSION} AS devops-check
+FROM alpine:${ALPINE_VERSION}@${ALPINE_DIGEST} AS devops-check
 RUN apk add --no-cache python3 py3-yaml
 WORKDIR /devops
 COPY devops/docker-compose.swarm.yml devops/check_compose_security.py \
@@ -82,7 +90,7 @@ RUN PYTHONDONTWRITEBYTECODE=1 python3 check_compose_security.py \
 # 4. Backend: rustfmt, clippy, test compilation. The test binaries run later, at `docker compose
 #    run`, because the integration tests need the test-db service.
 # ---------------------------------------------------------------------------------------------
-FROM rust:${RUST_VERSION}-trixie AS backend-test
+FROM rust:${RUST_VERSION}-trixie@${RUST_DIGEST} AS backend-test
 RUN rustup component add rustfmt clippy
 # cargo-deny (AGENTS.md §14.7): prebuilt release, checked against the SHA-256 published with it.
 # To upgrade, take both checksums from https://github.com/EmbarkStudios/cargo-deny/releases.

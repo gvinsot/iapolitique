@@ -97,6 +97,11 @@ async fn lists_and_searches_ideas(pool: PgPool) {
     assert_eq!(body["total"], 1);
     let (_, body) = admin_get(&app, "/api/admin/ideas?q=%25").await;
     assert_eq!(body["total"], 0);
+    // INJ-5: full-width wildcards, which unaccent() turns into `%` and `_`, are literal too.
+    for wildcard in ["%EF%BC%85", "%EF%BC%BF%EF%BC%BF%EF%BC%BF"] {
+        let (_, body) = admin_get(&app, &format!("/api/admin/ideas?q={wildcard}")).await;
+        assert_eq!(body["total"], 0, "{wildcard}");
+    }
     let (status, _) = admin_get(&app, "/api/admin/ideas?status=nope").await;
     assert_eq!(status, StatusCode::BAD_REQUEST);
 }

@@ -200,6 +200,16 @@ async fn sorts_filters_and_paginates(pool: PgPool) {
         order(list("/api/ideas?territory=_").await),
         Vec::<String>::new()
     );
+    // INJ-5: unaccent() turns full-width ％ ＿ ＼ and small-form ﹪ into LIKE metacharacters;
+    // they stay literal too.
+    for uri in [
+        "/api/ideas?territory=%EF%BC%85",
+        "/api/ideas?territory=%EF%BC%BF",
+        "/api/ideas?territory=%EF%BC%BC",
+        "/api/ideas?territory=%EF%B9%AA",
+    ] {
+        assert_eq!(order(list(uri).await), Vec::<String>::new(), "{uri}");
+    }
 
     let body = list("/api/ideas?per_page=2&page=2").await;
     assert_eq!(order(body.clone()), ["taxe-sur-les-residences-secondaires"]);

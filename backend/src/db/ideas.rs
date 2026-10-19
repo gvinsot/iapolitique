@@ -148,13 +148,15 @@ macro_rules! admin_idea_select {
     };
 }
 
-/// `$1` status, `$2` escaped `LIKE` fragment of the search, `$3` the search as a UUID.
+/// `$1` status, `$2` the search (matched with `strpos`, no metacharacter, INJ-5), `$3` the
+/// search as a UUID.
 macro_rules! admin_idea_filter {
     () => {
         "WHERE ($1::text IS NULL OR i.status = $1)
            AND ($2::text IS NULL OR i.id = $3
-                OR unaccent(lower(concat_ws(' ', i.slug, i.title, i.summary, i.original_text)))
-                   LIKE '%' || unaccent(lower($2)) || '%' ESCAPE '\\')"
+                OR strpos(unaccent(lower(concat_ws(' ', i.slug, i.title, i.summary,
+                                                   i.original_text))),
+                          unaccent(lower($2))) > 0)"
     };
 }
 
@@ -168,14 +170,13 @@ pub async fn admin_list(
     offset: i64,
 ) -> sqlx::Result<(Vec<AdminIdeaRow>, i64)> {
     let status = status.map(IdeaStatus::as_str);
-    let like = search.map(super::portal::escape_like);
     let id = search.and_then(|s| Uuid::parse_str(s.trim()).ok());
     let total: i64 = sqlx::query_scalar(concat!(
         "SELECT count(*) FROM ideas i ",
         admin_idea_filter!()
     ))
     .bind(status)
-    .bind(like.as_deref())
+    .bind(search)
     .bind(id)
     .fetch_one(pool)
     .await?;
@@ -185,7 +186,7 @@ pub async fn admin_list(
         " ORDER BY i.status_changed_at DESC, i.id DESC LIMIT $4 OFFSET $5"
     ))
     .bind(status)
-    .bind(like.as_deref())
+    .bind(search)
     .bind(id)
     .bind(limit)
     .bind(offset)

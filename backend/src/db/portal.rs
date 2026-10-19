@@ -53,21 +53,10 @@ pub enum SearchMode {
     Trigram,
 }
 
-/// Escapes `%`, `_` and `\` for a `LIKE … ESCAPE '\'` pattern (§14.1).
-pub fn escape_like(value: &str) -> String {
-    let mut escaped = String::with_capacity(value.len());
-    for c in value.chars() {
-        if matches!(c, '%' | '_' | '\\') {
-            escaped.push('\\');
-        }
-        escaped.push(c);
-    }
-    escaped
-}
-
 /// Shared `FROM … WHERE` of the ranking. Parameters: `$1` admin level, `$2` category, `$3`
-/// kind, `$4` territory, `$5` territory as an escaped `LIKE` fragment, `$6` search text, `$7`
-/// trigram mode, `$8` trigram threshold.
+/// kind, `$4` territory, `$5` search text, `$6` trigram mode, `$7` trigram threshold. The
+/// territory name is matched with `strpos`, which has no metacharacter: a `LIKE` pattern would
+/// need escaping after `unaccent()`, which turns `％` or `＿` into `%` or `_` (INJ-5).
 macro_rules! listing_from {
     () => {
         "FROM ideas i JOIN analyses a ON a.id = i.current_analysis_id
@@ -77,12 +66,12 @@ macro_rules! listing_from {
            AND ($3::text IS NULL OR i.kind = $3)
            AND ($4::text IS NULL
                 OR i.territory_code = upper($4)
-                OR unaccent(lower(coalesce(i.territory_name, '')))
-                   LIKE '%' || unaccent(lower($5)) || '%' ESCAPE '\\')
-           AND ($6::text IS NULL
-                OR (NOT $7 AND i.search_vector @@ websearch_to_tsquery('french_unaccent', $6))
-                OR ($7 AND word_similarity(unaccent(lower($6)),
-                                           unaccent(lower(i.title || ' ' || i.summary))) >= $8))"
+                OR strpos(unaccent(lower(coalesce(i.territory_name, ''))),
+                          unaccent(lower($4))) > 0)
+           AND ($5::text IS NULL
+                OR (NOT $6 AND i.search_vector @@ websearch_to_tsquery('french_unaccent', $5))
+                OR ($6 AND word_similarity(unaccent(lower($5)),
+                                           unaccent(lower(i.title || ' ' || i.summary))) >= $7))"
     };
 }
 
@@ -97,7 +86,7 @@ macro_rules! listing_select {
             listing_from!(),
             " ORDER BY ",
             $order,
-            " LIMIT $9 OFFSET $10"
+            " LIMIT $8 OFFSET $9"
         )
     };
 }
@@ -153,7 +142,6 @@ pub struct Listing {
 fn bind_filter<'q, O>(
     query: sqlx::query::QueryAs<'q, sqlx::Postgres, O, sqlx::postgres::PgArguments>,
     filter: &'q IdeaFilter,
-    like: Option<String>,
     mode: SearchMode,
 ) -> sqlx::query::QueryAs<'q, sqlx::Postgres, O, sqlx::postgres::PgArguments> {
     query
@@ -161,15 +149,13 @@ fn bind_filter<'q, O>(
         .bind(filter.category.as_deref())
         .bind(filter.kind.as_deref())
         .bind(filter.territory.as_deref())
-        .bind(like)
         .bind(filter.q.as_deref())
         .bind(mode == SearchMode::Trigram)
         .bind(TRIGRAM_THRESHOLD)
 }
 
 async fn count(pool: &PgPool, filter: &IdeaFilter, mode: SearchMode) -> sqlx::Result<i64> {
-    let like = filter.territory.as_deref().map(escape_like);
-    let (total,): (i64,) = bind_filter(sqlx::query_as(COUNT_SQL), filter, like, mode)
+    let (total,): (i64,) = bind_filter(sqlx::query_as(COUNT_SQL), filter, mode)
         .fetch_one(pool)
         .await?;
     Ok(total)
@@ -193,8 +179,7 @@ pub async fn list(
     let ideas = if total == 0 || offset >= total {
         Vec::new()
     } else {
-        let like = filter.territory.as_deref().map(escape_like);
-        bind_filter(sqlx::query_as(sort.sql()), filter, like, mode)
+        bind_filter(sqlx::query_as(sort.sql()), filter, mode)
             .bind(limit)
             .bind(offset)
             .fetch_all(pool)
@@ -365,17 +350,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn like_patterns_are_escaped() {
-        assert_eq!(escape_like("Lyon"), "Lyon");
-        assert_eq!(escape_like("100%_a\\b"), "100\\%\\_a\\\\b");
-    }
-
-    #[test]
     fn every_sort_has_a_constant_query() {
         for sort in IdeaSort::ALL {
             let sql = sort.sql();
             assert!(sql.contains("ORDER BY"));
-            assert!(sql.contains("LIMIT $9 OFFSET $10"));
+            assert!(sql.contains("LIMIT $8 OFFSET $9"));
+            assert!(!sql.contains("LIKE"));
             assert!(sql.contains("i.status = 'published'"));
         }
         assert!(COUNT_SQL.starts_with("SELECT count(*) FROM ideas"));

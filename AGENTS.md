@@ -1007,7 +1007,9 @@ dispensent d'aucune des mesures ci-dessous.
 - **SQL** : uniquement des requêtes paramétrées (`bind`). Jamais de `format!` ni de concaténation
   pour construire du SQL. Les parties dynamiques (tri, filtres) passent par des `enum` Rust
   convertis en fragments SQL **constants** (liste blanche). `q` (recherche) passe par
-  `websearch_to_tsquery` / paramètres, jamais interpolé ; `LIKE` avec échappement de `%`, `_`, `\`.
+  `websearch_to_tsquery` / paramètres, jamais interpolé ; recherche de sous-chaîne (territoire,
+  recherche admin) par `strpos`, sans métacaractère, jamais par `LIKE` sur une entrée (`unaccent()`
+  transforme `％`, `＿`, `＼` en `%`, `_`, `\`).
 - **Prompt injection** : le texte des visiteurs n'est jamais placé dans la partie système d'un
   prompt ; il est encadré de balises, et tout chevron des valeurs substituées est neutralisé
   après normalisation NFKC (§13.4), le critère `injection` du modèle de décision s'applique à tout texte entrant, la

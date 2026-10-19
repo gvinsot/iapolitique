@@ -15,6 +15,7 @@ pub(crate) const ADMIN_ROUTES: &[(&str, &str)] = &[
     ("GET", "/api/admin/dashboard"),
     ("GET", "/api/admin/jobs"),
     ("POST", "/api/admin/jobs/1/retry"),
+    ("GET", "/api/admin/jobs/1/logs"),
     ("GET", "/api/admin/ideas"),
     (
         "POST",
@@ -268,4 +269,58 @@ async fn lists_and_retries_dead_jobs(pool: PgPool) {
         admin_actions(&pool).await,
         [("job.retry".to_owned(), Some(dead.to_string()))]
     );
+}
+
+/// The log lines of a job, oldest first, then only those after a given line (polling while
+/// the job runs).
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn reads_the_logs_of_a_job(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), false, &[]).await;
+    let job = queue::enqueue(&pool, &NewJob::new(JobKind::Purge))
+        .await
+        .unwrap()
+        .unwrap();
+    let line = |n: u32| crate::jobs::logs::JobLogLine {
+        job_id: job,
+        logged_at: chrono::Utc::now(),
+        level: if n == 1 { "warn" } else { "info" },
+        target: "iapolitique::ai::mistral".into(),
+        message: format!("line {n}"),
+        fields: serde_json::Map::from_iter([("attempt".to_owned(), serde_json::json!(n))]),
+    };
+    crate::jobs::logs::insert(&pool, &[line(0), line(1), line(2)])
+        .await
+        .unwrap();
+
+    let uri = format!("/api/admin/jobs/{job}/logs");
+    let (status, body) = admin_get(&app, &uri).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["job"]["id"], job);
+    assert_eq!(body["job"]["status"], "queued");
+    assert_eq!(body["has_more"], false);
+    let items = body["items"].as_array().unwrap();
+    let messages: Vec<&str> = items
+        .iter()
+        .map(|i| i["message"].as_str().unwrap())
+        .collect();
+    assert_eq!(messages, ["line 0", "line 1", "line 2"]);
+    assert_eq!(items[1]["level"], "warn");
+    assert_eq!(items[1]["target"], "iapolitique::ai::mistral");
+    assert_eq!(items[1]["fields"]["attempt"], 1);
+
+    let first = items[0]["id"].as_i64().unwrap();
+    let (_, body) = admin_get(&app, &format!("{uri}?after={first}")).await;
+    assert_eq!(body["items"].as_array().unwrap().len(), 2);
+    let last = items[2]["id"].as_i64().unwrap();
+    let (_, body) = admin_get(&app, &format!("{uri}?after={last}")).await;
+    assert!(body["items"].as_array().unwrap().is_empty());
+
+    for bad in ["?after=-1", "?after=x", "?other=1"] {
+        let (status, body) = admin_get(&app, &format!("{uri}{bad}")).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{bad}");
+        assert_eq!(body["error"]["code"], "invalid_query");
+    }
+    let (status, body) = admin_get(&app, "/api/admin/jobs/999999/logs").await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    assert_eq!(body["error"]["code"], "job_not_found");
 }

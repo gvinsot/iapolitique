@@ -20,7 +20,7 @@ use super::admin::ideas::{
     self as admin_ideas, AdminBulkReanalysis, AdminIdea, AdminIdeaPage, AdminReanalysis,
     AdminReason,
 };
-use super::admin::jobs::{self as admin_jobs, AdminJob, AdminJobPage};
+use super::admin::jobs::{self as admin_jobs, AdminJob, AdminJobLog, AdminJobLogs, AdminJobPage};
 use super::admin::moderation::{
     self as admin_moderation, AdminEscalation, AdminEscalationHandling, AdminEscalationPage,
     AdminEscalationSeal, AdminEscalationSealPage, AdminEscalationSealSummary, AdminReport,
@@ -112,6 +112,7 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         admin_alerts::check_mistral_key,
         admin_jobs::list,
         admin_jobs::retry,
+        admin_jobs::logs,
         admin_ideas::list,
         admin_ideas::hide,
         admin_ideas::republish,
@@ -224,6 +225,8 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         AdminQueues,
         AdminJob,
         AdminJobPage,
+        AdminJobLog,
+        AdminJobLogs,
         JobKind,
         JobStatus,
         AdminIdeaRef,
@@ -498,6 +501,7 @@ mod tests {
             "AdminDashboard",
             "AdminJob",
             "AdminJobPage",
+            "AdminJobLogs",
             "JobStatus",
         ] {
             assert!(!components.schemas.contains_key(name), "{name}");

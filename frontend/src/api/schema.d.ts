@@ -240,6 +240,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/jobs/{id}/logs": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** Log lines of a job, 500 at most per call: the admin polls with `after` while it runs. */
+        get: operations["listAdminJobLogs"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/jobs/{id}/retry": {
         parameters: {
             query?: never;
@@ -1193,6 +1210,30 @@ export interface components {
             status: string;
             /** Format: int64 */
             count: number;
+        };
+        /**
+         * @description A log line of a job (§8): what the worker logged while it ran, internal identifiers,
+         *     codes and counts only (§14.6). Plain text, never rendered as HTML.
+         */
+        AdminJobLog: {
+            /** Format: int64 */
+            id: number;
+            /** Format: date-time */
+            logged_at: string;
+            /** @description `error`, `warn`, `info`, `debug` or `trace`. */
+            level: string;
+            /** @description Module that logged the line. */
+            target: string;
+            message: string;
+            /** @description Fields of the line (name → value). */
+            fields: unknown;
+        };
+        /** @description The job and its log lines after `after`, oldest first. */
+        AdminJobLogs: {
+            job: components["schemas"]["AdminJob"];
+            items: components["schemas"]["AdminJobLog"][];
+            /** @description More lines follow: ask again with `after` = the last `id`. */
+            has_more: boolean;
         };
         /** @description A page of jobs, most recent first. */
         AdminJobPage: {
@@ -2479,6 +2520,8 @@ export type SchemaAdminIdeaPage = components['schemas']['AdminIdeaPage'];
 export type SchemaAdminIdeaRef = components['schemas']['AdminIdeaRef'];
 export type SchemaAdminJob = components['schemas']['AdminJob'];
 export type SchemaAdminJobCount = components['schemas']['AdminJobCount'];
+export type SchemaAdminJobLog = components['schemas']['AdminJobLog'];
+export type SchemaAdminJobLogs = components['schemas']['AdminJobLogs'];
 export type SchemaAdminJobPage = components['schemas']['AdminJobPage'];
 export type SchemaAdminJobSummary = components['schemas']['AdminJobSummary'];
 export type SchemaAdminLevel = components['schemas']['AdminLevel'];
@@ -3241,6 +3284,59 @@ export interface operations {
             };
             /** @description Jeton absent ou invalide. */
             401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    listAdminJobLogs: {
+        parameters: {
+            query?: {
+                /** @description Identifier of the last line already shown: only the next ones are returned. */
+                after?: number;
+            };
+            header?: never;
+            path: {
+                /** @description Identifiant du job */
+                id: number;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Le job et ses lignes de log. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminJobLogs"];
+                };
+            };
+            /** @description Paramètre invalide. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Job inconnu (`job_not_found`). */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

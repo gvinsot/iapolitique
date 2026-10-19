@@ -1028,6 +1028,85 @@
         ]
       }
     },
+    "/api/admin/jobs/{id}/logs": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Log lines of a job, 500 at most per call: the admin polls with `after` while it runs.",
+        "operationId": "listAdminJobLogs",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant du job",
+            "required": true,
+            "schema": {
+              "type": "integer",
+              "format": "int64"
+            }
+          },
+          {
+            "name": "after",
+            "in": "query",
+            "description": "Identifier of the last line already shown: only the next ones are returned.",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int64",
+              "minimum": 0
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Le job et ses lignes de log.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminJobLogs"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Paramètre invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Job inconnu (`job_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
     "/api/admin/jobs/{id}/retry": {
       "post": {
         "tags": [
@@ -3870,6 +3949,66 @@
           "count": {
             "type": "integer",
             "format": "int64"
+          }
+        }
+      },
+      "AdminJobLog": {
+        "type": "object",
+        "description": "A log line of a job (§8): what the worker logged while it ran, internal identifiers,\ncodes and counts only (§14.6). Plain text, never rendered as HTML.",
+        "required": [
+          "id",
+          "logged_at",
+          "level",
+          "target",
+          "message",
+          "fields"
+        ],
+        "properties": {
+          "id": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "logged_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "level": {
+            "type": "string",
+            "description": "`error`, `warn`, `info`, `debug` or `trace`."
+          },
+          "target": {
+            "type": "string",
+            "description": "Module that logged the line."
+          },
+          "message": {
+            "type": "string"
+          },
+          "fields": {
+            "description": "Fields of the line (name → value)."
+          }
+        }
+      },
+      "AdminJobLogs": {
+        "type": "object",
+        "description": "The job and its log lines after `after`, oldest first.",
+        "required": [
+          "job",
+          "items",
+          "has_more"
+        ],
+        "properties": {
+          "job": {
+            "$ref": "#/components/schemas/AdminJob"
+          },
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminJobLog"
+            }
+          },
+          "has_more": {
+            "type": "boolean",
+            "description": "More lines follow: ask again with `after` = the last `id`."
           }
         }
       },

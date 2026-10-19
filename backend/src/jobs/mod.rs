@@ -12,6 +12,7 @@
 //! - [`pipeline`]: payloads, dedupe keys and constructors of the submission pipeline jobs.
 //! - [`reports`]: grouped AI review of the reports of an idea, escalation of serious content.
 //! - [`purge`]: the daily retention job (AGENTS.md §7.3).
+//! - [`logs`]: the log lines of each job, stored for the admin (§8).
 //!
 //! Payloads and error messages carry **internal identifiers only**, never user text, IPs or
 //! tokens (§7.1): they are stored in clear and visible from the admin.
@@ -27,6 +28,7 @@ pub mod dedup;
 pub mod exports;
 pub mod guard;
 pub mod health;
+pub mod logs;
 pub mod moderation;
 pub mod pipeline;
 pub mod purge;

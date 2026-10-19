@@ -683,6 +683,7 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
 - Copies scellées des contenus escaladés (§7.5, décision D3) : supprimées **un an après
   l'escalade** par la purge quotidienne (`escalation_seals.purge_after`), et jamais avant, même
   si l'idée a été retirée ou supprimée par son auteur ou purgée entre-temps.
+- Logs des jobs (`job_logs`, §8) : supprimés 30 jours après leur écriture, et avec leur job.
 - Job de purge quotidien dans le worker, testé.
 - Sauvegardes de la base : **30 jours** au plus (mémo juridique) ; aucune n'est automatisée à ce
   jour, procédure et script dans `docs/ops.md` §5.3. Journaux d'accès de Traefik : IP tronquée,
@@ -840,7 +841,7 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
   `/admin/…` du host public vers `https://ADMIN_HOST/admin…` (routeur
   `iapolitique-admin-redirect`, priorité 50, `global@file`, `noop@internal`) : les pages admin ne
   s'exécutent pas sur l'origine publique.
-- Fonctions : tableau de bord (file de jobs, taux d'acceptation, coûts IA du jour/mois, alertes
+- Fonctions : tableau de bord (file de jobs, logs de chaque job dans une modale, taux d'acceptation, coûts IA du jour/mois, alertes
   de configuration comme une clé Mistral refusée — avec vérification immédiate de la clé — ou un
   modèle qui refuse `reasoning_effort`), idées masquées et signalements,
   masquer/republier, relancer une analyse ou toutes les analyses échouées, consulter les copies
@@ -1066,6 +1067,7 @@ total_pages }`) et refusent les paramètres inconnus (`400 invalid_query`).
 | POST | `/api/admin/provider-alerts/mistral/check` | sans corps : « Vérifier la clé Mistral maintenant » (§6.4), un `GET /v1/models` de Mistral (rien de facturé, pas de ligne `ai_calls`, délai 15 s) → `200 { result: ok\|refused\|unavailable, http_status (statut de Mistral, `null` sans réponse), alert_cleared, jobs_due, message (français) }` : `ok` (2xx) clôt l'alerte `mistral_auth` et rend dus aussitôt les jobs Mistral en file dont l'échéance tombe dans l'heure (`AUTH_RETRY_MAX`) ; `refused` (401/403) ouvre ou prolonge l'alerte comme un appel refusé ; `unavailable` (délai, réseau, autre statut) ne change rien ; `409 mistral_key_missing` si l'api n'a pas de `MISTRAL_API_KEY` ; action `provider_alert.mistral_check` (`result`, `http_status`, `alert_cleared`, `jobs_due`) |
 | GET | `/api/admin/jobs` | jobs, filtres `status`, `kind` ; plus récents d'abord |
 | POST | `/api/admin/jobs/{id}/retry` | remet en file un job `dead` (tentatives remises à zéro) → `200` job ; pour un job `analyze_idea` dont l'idée est restée `analysis_failed` (que le job ignore), l'idée repasse aussi `queued_analysis` (acteur admin, motif `admin_reanalysis`, comme « Relancer l'analyse » de l'idée ; détails `idea_id`, `idea_requeued`) ; `404 job_not_found`, `409 job_not_dead` / `job_already_queued` (même clé de dédoublonnage en file) ; action `job.retry` |
+| GET | `/api/admin/jobs/{id}/logs` | lignes de log du job (`jobs::logs`, table `job_logs`) : `{ job, items: [{ id, logged_at, level, target, message, fields }], has_more }`, plus anciennes d'abord, 500 au plus ; `after` (identifiant de la dernière ligne déjà affichée) ne renvoie que les suivantes ; `404 job_not_found`. La modale « Logs » de `/admin/jobs` les relit avec `after` sur « Actualiser » et toutes les 3 s tant que le job est en file ou en cours (texte brut, jamais rendu en HTML) |
 | GET | `/api/admin/ideas` | idées de tout statut, filtre `status`, recherche `q` (identifiant, ou partie du slug, du titre, du résumé ou du texte, sans accents ni casse) ; plus récemment changées d'abord ; extrait du texte masqué, motifs, signalements en attente, réexamen et escalade en attente, `withdrawn_at` (idée retirée par son auteur, statut `withdrawn` ; facultatif dans la spec) |
 | POST | `/api/admin/ideas/{id}/hide` | `{ reason }` (1 000 caractères) : `published → hidden` (`hidden_reason = admin`), exports régénérés → `200` idée ; `409 idea_not_published` ; action `idea.hide` |
 | POST | `/api/admin/ideas/{id}/republish` | `{ reason }` : `hidden → published` (champs de masquage effacés), exports régénérés ; `409 idea_not_hidden`, ou `409 idea_withdrawn` pour une idée retirée par son auteur (jamais republiée) ; action `idea.republish` |
@@ -1373,7 +1375,12 @@ sécurité (échec d'auth admin, CSRF refusé, rate limit atteint, ALTCHA invali
 ni texte. Format : `http::security::security_event`, niveau `WARN`, cible `security`, message
 `security event`, champs `event` (`admin_auth_failure`, `admin_auth_lockout`, `admin_auth_refused`,
 `csrf_refused`, `rate_limited`, `altcha_refused`) et `reason`, deux libellés fixes (`&'static str`) :
-aucune valeur de la requête ne peut y figurer. Une panique (api, worker) est journalisée par
+aucune valeur de la requête ne peut y figurer. Le worker copie aussi en base (`job_logs`, `jobs::logs::JobLogLayer`) chaque ligne émise
+pendant un job (span `job`, champs `job_id`, `kind`, `attempt`) : les mêmes lignes que sa sortie
+standard après `RUST_LOG`, donc sans IP, jeton ni texte, chaque valeur tronquée à 2 000
+caractères, 2 000 lignes au plus par job et par processus, sans jamais bloquer le job (canal
+borné, ligne abandonnée s'il est plein) ; un appel Mistral journalise son début (« Mistral call
+started ») pour que l'admin voie l'étape en cours. Une panique (api, worker) est journalisée par
 `telemetry::log_panic` : un événement `error` de cible `panic` avec son seul emplacement, jamais
 son message (qui peut citer un texte de visiteur), à la place du hook par défaut qui écrit sur
 stderr.

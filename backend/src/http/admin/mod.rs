@@ -67,6 +67,7 @@ pub fn routes() -> Router<AppState> {
         )
         .route("/jobs", get(jobs::list))
         .route("/jobs/{id}/retry", post(jobs::retry))
+        .route("/jobs/{id}/logs", get(jobs::logs))
         .route("/ideas", get(ideas::list))
         .route("/ideas/{id}/hide", post(ideas::hide))
         .route("/ideas/{id}/republish", post(ideas::republish))

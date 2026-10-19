@@ -103,6 +103,62 @@ describe("admin pages", () => {
     });
   });
 
+  it("shows the logs of a job as plain text and fetches only the new lines", async () => {
+    const running = { ...jobsFixture[0], status: "running" as const, finished_at: null };
+    const line = (id: number, message: string, level = "info") => ({
+      id,
+      logged_at: "2026-10-19T16:00:00Z",
+      level,
+      target: "iapolitique::ai::mistral",
+      message,
+      fields: { purpose: "analysis_research", attempt: 1 },
+    });
+    const calls = adminRoutes({
+      "GET /api/admin/jobs": adminPage([running]),
+      "GET /api/admin/jobs/42/logs": (_request: Request, url: URL) =>
+        url.searchParams.get("after") === "2"
+          ? { job: running, items: [line(3, "web research answer structure")], has_more: false }
+          : {
+              job: running,
+              items: [
+                line(1, "Mistral call started"),
+                line(2, "<b>Mistral call failed</b>", "warn"),
+              ],
+              has_more: false,
+            },
+    });
+    const { user } = renderRoute("/admin/jobs");
+    await user.click(await screen.findByRole("button", { name: "Voir les logs du job n° 42" }));
+    const dialog = await screen.findByRole("dialog", { name: /Logs du job n° 42/ });
+    expect(await within(dialog).findByText("Mistral call started")).toBeInTheDocument();
+    // Plain text: never rendered as HTML.
+    expect(within(dialog).getByText("<b>Mistral call failed</b>")).toBeInTheDocument();
+    expect(within(dialog).getAllByText(/purpose=analysis_research attempt=1/)).toHaveLength(2);
+    expect(
+      within(dialog).getByText(/Actualisation automatique toutes les 3 secondes/),
+    ).toBeVisible();
+
+    await user.click(within(dialog).getByRole("button", { name: "Actualiser" }));
+    expect(await within(dialog).findByText("web research answer structure")).toBeInTheDocument();
+    expect(within(dialog).getByText(/3 lignes/)).toBeInTheDocument();
+    const reads = calls.filter((call) => call.path === "/api/admin/jobs/42/logs");
+    expect(reads[0]?.query).toEqual({});
+    expect(reads.at(-1)?.query).toEqual({ after: "2" });
+    expect(reads.every((call) => call.authorization === `Bearer ${TOKEN}`)).toBe(true);
+  });
+
+  it("does not refresh the logs of a finished job by itself", async () => {
+    adminRoutes({
+      "GET /api/admin/jobs": adminPage(jobsFixture),
+      "GET /api/admin/jobs/42/logs": { job: jobsFixture[0], items: [], has_more: false },
+    });
+    const { user } = renderRoute("/admin/jobs");
+    await user.click(await screen.findByRole("button", { name: "Voir les logs du job n° 42" }));
+    const dialog = await screen.findByRole("dialog", { name: /Logs du job n° 42/ });
+    expect(await within(dialog).findByText(/Aucune ligne de log pour ce job/)).toBeInTheDocument();
+    expect(within(dialog).getByText(/Le job est terminé/)).toBeInTheDocument();
+  });
+
   it("labels a screening decision and downloads the calibration export", async () => {
     const calls = adminRoutes({
       "GET /api/admin/screenings": adminPage(screeningsFixture),

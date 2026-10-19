@@ -8,7 +8,7 @@ use clap::{Parser, Subcommand};
 
 use iapolitique::config::{self, Config, Role};
 use iapolitique::http::openapi;
-use iapolitique::{app, db, healthcheck, telemetry};
+use iapolitique::{app, db, healthcheck, jobs, telemetry};
 
 #[derive(Debug, Parser)]
 #[command(name = "iapolitique", version, about = "iapolitique backend")]
@@ -73,10 +73,13 @@ fn main() -> ExitCode {
             return ExitCode::from(2);
         }
     };
-    if let Err(err) = telemetry::init(&config.log) {
-        eprintln!("{err:#}");
-        return ExitCode::from(2);
-    }
+    let job_logs = match telemetry::init(&config.log, matches!(cli.command, Command::Worker)) {
+        Ok(receiver) => receiver,
+        Err(err) => {
+            eprintln!("{err:#}");
+            return ExitCode::from(2);
+        }
+    };
     telemetry::install_panic_hook();
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
@@ -89,7 +92,7 @@ fn main() -> ExitCode {
             return ExitCode::FAILURE;
         }
     };
-    match runtime.block_on(run(cli.command, config)) {
+    match runtime.block_on(run(cli.command, config, job_logs)) {
         Ok(()) => ExitCode::SUCCESS,
         Err(err) => {
             tracing::error!(error = format!("{err:#}"), "fatal error");
@@ -137,10 +140,14 @@ fn run_offline(command: Command) -> ExitCode {
     }
 }
 
-async fn run(command: Command, config: Config) -> anyhow::Result<()> {
+async fn run(
+    command: Command,
+    config: Config,
+    job_logs: Option<jobs::logs::JobLogReceiver>,
+) -> anyhow::Result<()> {
     match command {
         Command::Api => app::run_api(config).await,
-        Command::Worker => app::run_worker(config).await,
+        Command::Worker => app::run_worker(config, job_logs).await,
         Command::Migrate => {
             let pool = db::connect(&config.database, "iapolitique-migrate", Duration::ZERO).await?;
             db::migrate(&pool).await?;

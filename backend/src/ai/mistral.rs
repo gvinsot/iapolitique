@@ -761,6 +761,14 @@ impl MistralClient {
         let mut attempt_number = 0;
         loop {
             attempt_number += 1;
+            // A milestone for the job logs of the admin (§8): a call may last 15 minutes.
+            tracing::info!(
+                purpose = ctx.purpose.as_str(),
+                attempt = attempt_number,
+                model = %default_model,
+                reasoning_effort = effort.map_or("omitted", ReasoningEffort::as_str),
+                "Mistral call started"
+            );
             let started = Instant::now();
             let attempt = attempt_fn(effort).await;
             let latency = started.elapsed();

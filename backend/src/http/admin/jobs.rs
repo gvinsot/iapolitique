@@ -17,6 +17,7 @@ use crate::http::AppState;
 use crate::http::error::{ApiError, ErrorBody};
 use crate::http::extract::{ApiPath, ApiQuery};
 use crate::http::pagination::{PageRequest, page_type};
+use crate::jobs::logs;
 use crate::jobs::pipeline::AnalyzePayload;
 use crate::jobs::queue::{self, JobRow, RetryError};
 use crate::jobs::{JobKind, JobStatus};
@@ -116,6 +117,88 @@ pub async fn list(
         pages,
         total,
     )))
+}
+
+/// A log line of a job (§8): what the worker logged while it ran, internal identifiers,
+/// codes and counts only (§14.6). Plain text, never rendered as HTML.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, ToSchema)]
+pub struct AdminJobLog {
+    pub id: i64,
+    pub logged_at: DateTime<Utc>,
+    /// `error`, `warn`, `info`, `debug` or `trace`.
+    pub level: String,
+    /// Module that logged the line.
+    pub target: String,
+    pub message: String,
+    /// Fields of the line (name → value).
+    pub fields: Value,
+}
+
+impl From<logs::JobLogRow> for AdminJobLog {
+    fn from(row: logs::JobLogRow) -> Self {
+        Self {
+            id: row.id,
+            logged_at: row.logged_at,
+            level: row.level,
+            target: row.target,
+            message: row.message,
+            fields: row.fields,
+        }
+    }
+}
+
+/// The job and its log lines after `after`, oldest first.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, ToSchema)]
+pub struct AdminJobLogs {
+    pub job: AdminJob,
+    pub items: Vec<AdminJobLog>,
+    /// More lines follow: ask again with `after` = the last `id`.
+    pub has_more: bool,
+}
+
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+#[into_params(parameter_in = Query)]
+pub struct AdminJobLogQuery {
+    /// Identifier of the last line already shown: only the next ones are returned.
+    #[serde(default)]
+    pub after: Option<u64>,
+}
+
+/// Log lines of a job, 500 at most per call: the admin polls with `after` while it runs.
+#[utoipa::path(
+    get,
+    path = "/api/admin/jobs/{id}/logs",
+    tag = "admin",
+    operation_id = "listAdminJobLogs",
+    security(("admin_token" = [])),
+    params(("id" = i64, Path, description = "Identifiant du job"), AdminJobLogQuery),
+    responses(
+        (status = 200, description = "Le job et ses lignes de log.", body = AdminJobLogs),
+        (status = 400, description = "Paramètre invalide.", body = ErrorBody),
+        (status = 401, description = "Jeton absent ou invalide.", body = ErrorBody),
+        (status = 404, description = "Job inconnu (`job_not_found`).", body = ErrorBody)
+    )
+)]
+pub async fn logs(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<i64>,
+    ApiQuery(query): ApiQuery<AdminJobLogQuery>,
+) -> Result<Json<AdminJobLogs>, ApiError> {
+    let job = queue::get(&state.pool, id)
+        .await?
+        .ok_or_else(|| not_found("job_not_found", "Ce job n'existe pas."))?;
+    let after = query
+        .after
+        .map(|after| i64::try_from(after).unwrap_or(i64::MAX));
+    let mut rows = logs::read(&state.pool, id, after, logs::MAX_READ + 1).await?;
+    let has_more = rows.len() > usize::try_from(logs::MAX_READ).unwrap_or(usize::MAX);
+    rows.truncate(usize::try_from(logs::MAX_READ).unwrap_or(usize::MAX));
+    Ok(Json(AdminJobLogs {
+        job: job.into(),
+        items: rows.into_iter().map(AdminJobLog::from).collect(),
+        has_more,
+    }))
 }
 
 /// Queues a dead job again (attempts reset, due now). A dead screening or second opinion

@@ -23,6 +23,7 @@ import { formatDate, formatDateTime, formatEurosPrecise, formatInteger } from "@
 import { cellClass } from "./admin-styles";
 import { AdminTable, ConfirmDialog } from "./admin-ui";
 import { AsyncActionButton } from "./async-action-button";
+import { JobLogsDialog } from "./job-logs-dialog";
 import { RightOfReplyEditor } from "./right-of-reply-editor";
 
 /** Payloads and details hold internal identifiers only (AGENTS.md §7.1): shown as JSON. */
@@ -39,7 +40,7 @@ function JsonValue({ value }: { value: unknown }) {
 
 // --- Jobs ------------------------------------------------------------------------------------
 
-/** The job queue (AGENTS.md §8); a dead job can be queued again. */
+/** The job queue (AGENTS.md §8): the logs of each job; a dead job can be queued again. */
 export function JobsTable({
   rows,
   onRetry,
@@ -88,14 +89,17 @@ export function JobsTable({
             {job.last_error ?? <span className="text-muted-foreground">—</span>}
           </td>
           <td className={cellClass}>
-            {job.status === "dead" ? (
-              <AsyncActionButton
-                onAction={() => onRetry(job.id)}
-                aria-label={`Relancer le job n° ${job.id}`}
-              >
-                Relancer
-              </AsyncActionButton>
-            ) : null}
+            <div className="flex flex-wrap gap-2">
+              <JobLogsDialog job={job} />
+              {job.status === "dead" ? (
+                <AsyncActionButton
+                  onAction={() => onRetry(job.id)}
+                  aria-label={`Relancer le job n° ${job.id}`}
+                >
+                  Relancer
+                </AsyncActionButton>
+              ) : null}
+            </div>
           </td>
         </tr>
       ))}

@@ -34,8 +34,12 @@ pub async fn wait_for_shutdown(mut shutdown: watch::Receiver<bool>) {
     let _ = shutdown.wait_for(|stop| *stop).await;
 }
 
-/// `iapolitique worker`: job consumer plus its internal health endpoint.
-pub async fn run_worker(config: Config) -> anyhow::Result<()> {
+/// `iapolitique worker`: job consumer plus its internal health endpoint. `job_logs`: the lines
+/// logged while a job runs, stored for the admin ([`crate::jobs::logs`]).
+pub async fn run_worker(
+    config: Config,
+    job_logs: Option<crate::jobs::logs::JobLogReceiver>,
+) -> anyhow::Result<()> {
     let prompts = load_prompts(&config)?;
     let config = Arc::new(config);
     let pool = db::connect(
@@ -47,6 +51,9 @@ pub async fn run_worker(config: Config) -> anyhow::Result<()> {
     // Normally done by the api; harmless here (advisory lock) and avoids a worker running
     // against a schema it does not know when it starts first.
     db::migrate(&pool).await?;
+    if let Some(receiver) = job_logs {
+        tokio::spawn(crate::jobs::logs::run_writer(pool.clone(), receiver));
+    }
 
     let options = WorkerOptions::from_config(&config.worker);
     // A healthy loop ticks at least every poll interval; leave room for a slow maintenance pass.

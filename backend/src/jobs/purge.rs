@@ -23,7 +23,8 @@
 //!   (the status itself is kept: the state machine has no `accepted → purged`).
 //! - Expired tracking tokens are deleted.
 //! - Rate limit salts and counters of previous days are destroyed (§7.2).
-//! - Finished jobs and superseded exports are removed after a while.
+//! - Finished jobs and superseded exports are removed after a while, job logs after
+//!   [`JOB_LOG_RETENTION_DAYS`] (and with their job).
 
 use serde::Serialize;
 use sqlx::{PgConnection, PgPool};
@@ -48,6 +49,8 @@ pub const REVIEW_REQUEST_RETENTION_MONTHS: i32 = 12;
 pub const SUCCEEDED_JOB_RETENTION_DAYS: i32 = 7;
 /// Days a dead job is kept (investigation from the admin).
 pub const DEAD_JOB_RETENTION_DAYS: i32 = 90;
+/// Days a job log line is kept (§8): those of a dead job go before the job itself.
+pub const JOB_LOG_RETENTION_DAYS: i32 = 30;
 /// Days an export is kept once a newer one exists.
 pub const EXPORT_RETENTION_DAYS: i32 = 7;
 
@@ -84,6 +87,7 @@ pub struct PurgeReport {
     pub rate_limit_salts: i64,
     pub rate_limit_counters: i64,
     pub jobs: i64,
+    pub job_logs: i64,
     pub exports: i64,
 }
 
@@ -321,6 +325,13 @@ pub async fn run(pool: &PgPool) -> Result<PurgeReport, sqlx::Error> {
     .await?
     .rows_affected() as i64;
 
+    report.job_logs =
+        sqlx::query("DELETE FROM job_logs WHERE logged_at < now() - make_interval(days => $1)")
+            .bind(JOB_LOG_RETENTION_DAYS)
+            .execute(&mut *tx)
+            .await?
+            .rows_affected() as i64;
+
     report.exports = sqlx::query(
         "DELETE FROM exports
          WHERE generated_at < now() - make_interval(days => $1)
@@ -541,6 +552,7 @@ impl JobHandler for PurgeHandler {
                 rate_limit_salts = report.rate_limit_salts,
                 rate_limit_counters = report.rate_limit_counters,
                 jobs = report.jobs,
+                job_logs = report.job_logs,
                 exports = report.exports,
                 "retention purge done"
             );
@@ -891,6 +903,16 @@ mod tests {
         .execute(&pool)
         .await
         .unwrap();
+        // Logs of the dead job that is kept: the one older than 30 days goes.
+        sqlx::query(
+            "INSERT INTO job_logs (job_id, logged_at, level, target, message)
+             SELECT id, now() - age, 'info', 't', 'm'
+             FROM jobs, (VALUES (interval '31 days'), (interval '1 day')) AS a(age)
+             WHERE status = 'dead' AND finished_at > now() - interval '31 days'",
+        )
+        .execute(&pool)
+        .await
+        .unwrap();
         sqlx::query(
             "INSERT INTO exports (format, content, content_sha256, size_bytes, idea_count,
                                   scoring_version, generated_at) VALUES
@@ -908,6 +930,7 @@ mod tests {
         assert_eq!(report.rate_limit_counters, 2);
         assert_eq!(report.expired_tracking_tokens, 1);
         assert_eq!(report.jobs, 2);
+        assert_eq!(report.job_logs, 1);
         // The only CSV export is kept even if old.
         assert_eq!(report.exports, 2);
 

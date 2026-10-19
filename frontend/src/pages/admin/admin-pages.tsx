@@ -228,7 +228,7 @@ export function AdminJobsPage() {
     <div className="space-y-6">
       <AdminPageHeader
         title="Jobs"
-        description="File de traitement du worker, plus récents d’abord. Un job abandonné peut être relancé."
+        description="File de traitement du worker, plus récents d’abord : les logs de chaque job, et la relance d’un job abandonné."
       />
       <div className="flex flex-wrap gap-4">
         <FilterSelect

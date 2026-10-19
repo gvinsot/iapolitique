@@ -9,28 +9,42 @@
 //! the visitor text sliced by an out-of-bounds index (LOG-6).
 
 use anyhow::anyhow;
-use tracing_subscriber::EnvFilter;
+use tracing_subscriber::layer::SubscriberExt as _;
+use tracing_subscriber::util::SubscriberInitExt as _;
+use tracing_subscriber::{EnvFilter, Layer as _};
 
 use crate::config::{LogConfig, LogFormat};
+use crate::jobs::logs::{JobLogLayer, JobLogReceiver};
 
 /// Installs the global tracing subscriber. Fails if the filter is invalid or if a subscriber
-/// is already installed.
-pub fn init(log: &LogConfig) -> anyhow::Result<()> {
+/// is already installed. With `job_logs` (the worker), the lines logged while a job runs are
+/// also copied for the admin ([`crate::jobs::logs`]): the receiver goes to its writer.
+pub fn init(log: &LogConfig, job_logs: bool) -> anyhow::Result<Option<JobLogReceiver>> {
     let filter = EnvFilter::try_new(&log.filter)
         .map_err(|err| anyhow!("RUST_LOG: invalid filter ({err})"))?;
-    let builder = tracing_subscriber::fmt()
-        .with_env_filter(filter)
-        .with_writer(std::io::stdout);
-    let result = match log.format {
-        LogFormat::Json => builder
+    let stdout = tracing_subscriber::fmt::layer().with_writer(std::io::stdout);
+    let stdout = match log.format {
+        LogFormat::Json => stdout
             .json()
             .flatten_event(true)
             .with_current_span(true)
             .with_span_list(false)
-            .try_init(),
-        LogFormat::Text => builder.try_init(),
+            .boxed(),
+        LogFormat::Text => stdout.boxed(),
     };
-    result.map_err(|err| anyhow!("cannot install the log subscriber: {err}"))
+    let (jobs, receiver) = if job_logs {
+        let (layer, receiver) = JobLogLayer::new();
+        (Some(layer), Some(receiver))
+    } else {
+        (None, None)
+    };
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(stdout)
+        .with(jobs)
+        .try_init()
+        .map_err(|err| anyhow!("cannot install the log subscriber: {err}"))?;
+    Ok(receiver)
 }
 
 /// Panic hook of the api and the worker: one `error` event with the location of the panic,

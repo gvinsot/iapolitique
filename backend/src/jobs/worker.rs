@@ -13,6 +13,7 @@ use std::time::Duration;
 use sqlx::PgPool;
 use tokio::sync::{Semaphore, watch};
 use tokio::time::Instant;
+use tracing::Instrument as _;
 
 use super::analysis::AnalyzeHandler;
 use super::dedup::DedupHandler;
@@ -231,6 +232,8 @@ impl Worker {
             };
             match queue::claim(pool, &self.options.id, &kinds).await {
                 Ok(Some(job)) => {
+                    // Its log lines go to the job logs of the admin (§8).
+                    let span = super::logs::job_span(job.id, job.kind.as_str(), job.attempts);
                     let task = process(
                         Arc::clone(&self.ctx),
                         Arc::clone(&self.registry),
@@ -238,10 +241,13 @@ impl Worker {
                         self.options.id.clone(),
                         self.options.lock_timeout,
                     );
-                    tokio::spawn(async move {
-                        task.await;
-                        drop(permit);
-                    });
+                    tokio::spawn(
+                        async move {
+                            task.await;
+                            drop(permit);
+                        }
+                        .instrument(span),
+                    );
                     continue;
                 }
                 Ok(None) => drop(permit),
@@ -316,6 +322,7 @@ async fn process(
                 }
             }
         }
+        .in_current_span()
     });
 
     // The daily AI budget (§6.4) postpones the jobs that call Mistral to the next Paris
@@ -332,7 +339,7 @@ async fn process(
         (Ok(None), Some(handler)) => {
             let job = job.clone();
             let ctx = Arc::clone(&ctx);
-            tokio::spawn(async move { handler.handle(&ctx, &job).await }).await
+            tokio::spawn(async move { handler.handle(&ctx, &job).await }.in_current_span()).await
         }
     };
     heartbeat.abort();

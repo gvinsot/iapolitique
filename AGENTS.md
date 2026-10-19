@@ -266,8 +266,10 @@ n'appeler que `/v1/systemone`.
 - **Une seule requête** par idée, avec toutes les questions de `prompts/screening.yaml` :
   - `injection` (`noul`) : tentative de manipulation d'une IA ;
   - `respectful` (`noul`) : pas d'insulte, de haine, d'incitation à la violence ;
-  - `targeted` (`noul`) : vise nommément un parti, un élu, une personne ou un groupe
-    (religion, origine, orientation…), ou promeut ou dénigre un candidat ou un parti ;
+  - `targeted` (`noul`) : cite nommément un parti, un élu, un candidat ou une personnalité,
+    **même de façon neutre** (décision du propriétaire D1, 2026-10-19 : refus avec invitation à
+    reformuler en décrivant la mesure), fait campagne (consigne de vote) ou vise un groupe
+    (religion, origine, sexe, orientation) ;
   - `personal_data` (`noul`) : désigne un particulier identifiable (nom, fonction précise dans
     un service nommé…) ou lui impute des faits (§7.5) ;
   - `contact_data` (`noul`, motif `personal_data`) : nom ou prénom d'un particulier, auteur
@@ -687,7 +689,9 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
   désignant un particulier identifiable ou portant un nom ou une coordonnée que le masquage a
   manqués (auteur compris), avec invitation à reformuler. Les élus et ministres
   agissant dans leur fonction ne sont pas des particuliers, mais le critère `targeted` refuse
-  toute attaque ou promotion d'un parti, d'un candidat ou d'un élu. Le texte « original »
+  tout texte qui cite un parti, un candidat ou un élu, même de façon neutre (décision D1), avec
+  invitation à reformuler ; les fonctions et institutions (« le Gouvernement », « les élus
+  locaux ») restent admises. Le texte « original »
   affiché est la version masquée, avec la mention « données personnelles masquées ».
 - **Transparence IA (AI Act art. 50, applicable depuis le 2026-08-02)** : avant chaque bloc
   généré, l'étiquette visible et accessible « Analyse générée automatiquement par intelligence

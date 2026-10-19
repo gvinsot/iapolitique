@@ -40,6 +40,8 @@ pub mod tracking;
 #[cfg(test)]
 mod ideas_tests;
 #[cfg(test)]
+mod input_tests;
+#[cfg(test)]
 mod security_tests;
 #[cfg(test)]
 mod submission_tests;

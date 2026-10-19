@@ -77,6 +77,7 @@ fn main() -> ExitCode {
         eprintln!("{err:#}");
         return ExitCode::from(2);
     }
+    telemetry::install_panic_hook();
 
     let runtime = match tokio::runtime::Builder::new_multi_thread()
         .enable_all()

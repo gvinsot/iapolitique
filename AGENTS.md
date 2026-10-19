@@ -1159,7 +1159,10 @@ sécurité (échec d'auth admin, CSRF refusé, rate limit atteint, ALTCHA invali
 ni texte. Format : `http::security::security_event`, niveau `WARN`, cible `security`, message
 `security event`, champs `event` (`admin_auth_failure`, `admin_auth_lockout`, `admin_auth_refused`,
 `csrf_refused`, `rate_limited`, `altcha_refused`) et `reason`, deux libellés fixes (`&'static str`) :
-aucune valeur de la requête ne peut y figurer.
+aucune valeur de la requête ne peut y figurer. Une panique (api, worker) est journalisée par
+`telemetry::log_panic` : un événement `error` de cible `panic` avec son seul emplacement, jamais
+son message (qui peut citer un texte de visiteur), à la place du hook par défaut qui écrit sur
+stderr.
 
 ### 14.7 Conteneurs et chaîne d'approvisionnement
 

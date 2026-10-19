@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { formatEuroRange, formatEuros, formatEurosCompact, formatMonths } from "./format";
+import {
+  formatEuroRange,
+  formatEuros,
+  formatEurosCompact,
+  formatMonths,
+  formatPoints,
+  formatScore,
+} from "./format";
 
 // Intl uses (narrow) no-break spaces in French: normalise them for readable assertions.
 const plain = (value: string) => value.replace(/\s/g, " ");
@@ -10,6 +17,22 @@ describe("format", () => {
     expect(plain(formatEurosCompact(1_250_000_000))).toBe("1,25 Md €");
     expect(plain(formatEurosCompact(350_000_000))).toBe("350 M €");
     expect(plain(formatEurosCompact(12_000))).toBe("12 k €");
+  });
+
+  it("formats the score with SI prefixes, never like a euro amount", () => {
+    expect(plain(formatScore(1_250_000_000))).toBe("1,25 G");
+    expect(plain(formatScore(12_345_678))).toBe("12,3 M");
+    expect(plain(formatScore(999_950))).toBe("1 M");
+    expect(plain(formatScore(12_000))).toBe("12 k");
+    expect(plain(formatScore(850))).toBe("850");
+    expect(plain(formatScore(-3_400_000))).toBe("-3,4 M");
+    expect(plain(formatScore(2.5e15))).toBe("2 500 T");
+    expect(formatScore(1_250_000_000)).not.toContain("Md");
+  });
+
+  it("formats the points of the score on 1000", () => {
+    expect(formatPoints(399)).toBe("399/1000");
+    expect(formatPoints(1000, 1000)).toBe("1000/1000");
   });
 
   it("formats full euro amounts without decimals", () => {

@@ -97,6 +97,10 @@ export const methodologyFixture: Methodology = {
     amortization_years: 5,
     max_feasibility: 5,
     delay_half_life_months: 24,
+    points_floor: 1000,
+    points_ceiling: 100_000_000_000,
+    max_points: 1000,
+    points_per_decade: 125,
     confidence_factors: [
       { level: "low", factor: 0.5 },
       { level: "medium", factor: 0.75 },

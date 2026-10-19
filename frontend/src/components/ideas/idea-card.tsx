@@ -2,7 +2,7 @@ import { BotIcon, CalculatorIcon, ClockIcon, UsersIcon } from "lucide-react";
 import { Link } from "react-router";
 
 import { paths } from "@/app/paths";
-import { formatMonths, formatScore } from "@/lib/format";
+import { formatMonths } from "@/lib/format";
 import type { IdeaSummary } from "@/lib/idea-model";
 import { cn } from "@/lib/utils";
 
@@ -15,7 +15,7 @@ import {
   TerritoryBadge,
 } from "./idea-badges";
 import { GainRange } from "./gain-range";
-import { SCORE_LABEL } from "./score-breakdown";
+import { SCORE_LABEL, ScorePoints } from "./score-breakdown";
 
 interface IdeaCardProps {
   idea: IdeaSummary;
@@ -81,7 +81,7 @@ export function IdeaCard({ idea, rank, headingLevel = 3, className }: IdeaCardPr
         <p className="flex items-center gap-1.5">
           <CalculatorIcon className="size-4 text-muted-foreground" aria-hidden="true" />
           <span className="text-muted-foreground">{SCORE_LABEL} :</span>
-          <strong className="tabular-nums">{formatScore(idea.score)}</strong>
+          <ScorePoints points={idea.points} />
         </p>
         <p className="flex items-center gap-1.5 text-muted-foreground">
           <UsersIcon className="size-4" aria-hidden="true" />

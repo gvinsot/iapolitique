@@ -27,6 +27,7 @@ export const ideaSummaryFixture: IdeaSummary = {
   time_to_effect_months: 12,
   confidence: "medium",
   score: 1_920_000,
+  points: 410,
   proposal_count: 3,
   contribution_count: 2,
   updated_at: "2026-10-12T08:30:00Z",
@@ -40,6 +41,8 @@ export const scoreBreakdownFixture: ScoreBreakdownData = {
   confidence_factor: 0.75,
   delay_factor: 0.6667,
   score: 1_920_000,
+  points: 410,
+  max_points: 1000,
 };
 
 export const impactPublics = [

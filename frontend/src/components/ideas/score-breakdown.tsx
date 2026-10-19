@@ -2,12 +2,32 @@ import { CalculatorIcon } from "lucide-react";
 import { Link } from "react-router";
 
 import { paths } from "@/app/paths";
-import { formatEurosCompact, formatFactor, formatScore } from "@/lib/format";
+import { formatEurosCompact, formatFactor, formatPoints, formatScore } from "@/lib/format";
 import type { ScoreBreakdownData } from "@/lib/idea-model";
 import { RULES_SCORE_ANCHOR } from "@/lib/rules";
 import { cn } from "@/lib/utils";
 
 export const SCORE_LABEL = "Score calculé par algorithme";
+
+/** « 429/1000 », read « 429 points sur 1000 » by screen readers. */
+export function ScorePoints({
+  points,
+  max = 1000,
+  className,
+}: {
+  points: number;
+  max?: number;
+  className?: string;
+}) {
+  return (
+    <strong className={cn("tabular-nums", className)}>
+      <span aria-hidden="true">{formatPoints(points, max)}</span>
+      <span className="sr-only">
+        {points} points sur {max}
+      </span>
+    </strong>
+  );
+}
 
 interface Component {
   label: string;
@@ -67,7 +87,7 @@ export function ScoreBreakdown({
           <CalculatorIcon className="size-4 shrink-0" aria-hidden="true" />
           <span>
             {SCORE_LABEL} :{" "}
-            <strong className="text-lg tabular-nums">{formatScore(data.score)}</strong>
+            <ScorePoints points={data.points} max={data.max_points} className="text-lg" />
           </span>
         </p>
         <p className="text-sm">
@@ -81,8 +101,11 @@ export function ScoreBreakdown({
         </p>
       </div>
       <p className="text-xs text-muted-foreground">
-        Ce score résulte d’une formule appliquée aux estimations de l’analyse ; ce n’est ni un
-        sondage, ni un vote, ni une mesure d’opinion.
+        Score brut (produit des composantes) : {formatScore(data.score)}. Il est ramené sur{" "}
+        {data.max_points} points par une échelle fixe : 0 jusqu’à 1 000, {data.max_points} à partir
+        de 100 milliards, 125 points de plus chaque fois que le score brut est multiplié par 10. Ce
+        score résulte d’une formule appliquée aux estimations de l’analyse ; ce n’est ni un sondage,
+        ni un vote, ni une mesure d’opinion.
       </p>
     </div>
   );

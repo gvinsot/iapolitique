@@ -113,7 +113,8 @@ describe("IdeaCard", () => {
     expect(card).toHaveTextContent("Faisabilité 4/5 · Plutôt facile");
     expect(card).toHaveTextContent("Confiance moyenne");
     expect(card).toHaveTextContent("Premiers effets : 1 an");
-    expect(plain(card.textContent)).toContain("Score calculé par algorithme :1,92 M");
+    expect(plain(card.textContent)).toContain("Score calculé par algorithme :410/1000");
+    expect(card.textContent).not.toContain("1,92 M");
     expect(card).toHaveTextContent("Proposée 3 fois");
     expect(card).toHaveTextContent(/générés par IA/);
   });
@@ -150,6 +151,10 @@ describe("estimates and score", () => {
     expect(screen.getByText("× 0,8")).toBeInTheDocument();
     expect(screen.getByText("× 0,67")).toBeInTheDocument();
     expect(screen.getByText(/Score calculé par algorithme/)).toBeInTheDocument();
+    // Points on 1000, read in full by screen readers; the raw score stays visible.
+    expect(screen.getByText("410/1000")).toBeInTheDocument();
+    expect(screen.getByText("410 points sur 1000")).toHaveClass("sr-only");
+    expect(screen.getByText(/Score brut \(produit des composantes\) : 1,92 M/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Comment ce score est-il calculé ?" })).toHaveAttribute(
       "href",
       "/regles#score",

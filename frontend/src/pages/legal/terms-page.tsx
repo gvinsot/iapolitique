@@ -270,8 +270,11 @@ export function TermsPage() {
         </li>
       </ul>
       <p>
-        Score = gain net annuel × faisabilité × confiance × délai. Les composantes sont affichées
-        sur chaque idée ; la formule en vigueur et sa version sont publiées sur la page{" "}
+        Score = gain net annuel × faisabilité × confiance × délai. Il est affiché sur 1000 points
+        par une échelle fixe, qui ne dépend pas des autres idées : 0 point jusqu’à un score de 1
+        000, 1000 points à partir de 100 milliards, 125 points de plus chaque fois que le score est
+        multiplié par 10 ; le classement suit le score exact. Les composantes sont affichées sur
+        chaque idée ; la formule en vigueur et sa version sont publiées sur la page{" "}
         <Link to={paths.methodology}>Méthodologie</Link>. Vous pouvez aussi trier les idées par
         gain, faisabilité, délai ou date.
       </p>

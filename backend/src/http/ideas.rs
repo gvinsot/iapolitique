@@ -23,6 +23,7 @@ use super::extract::{ApiPath, ApiQuery};
 use super::pagination::PageRequest;
 use crate::ai::prompts::Taxonomy;
 use crate::db::portal::{self, AnalysisRow, IdeaFilter, IdeaSort, ListedIdea, SearchMode};
+use crate::domain::scoring;
 use crate::domain::slug::is_valid_slug;
 use crate::domain::status::IdeaStatus;
 use crate::domain::text_enum;
@@ -235,8 +236,11 @@ pub struct IdeaListItem {
     pub feasibility: u8,
     pub time_to_effect_months: u32,
     pub confidence: Confidence,
-    /// Composite score in euros per year (« score calculé par algorithme »).
+    /// Composite score in euros per year (« score calculé par algorithme »), the ranking key.
     pub score: i64,
+    /// The score on the fixed scale of 1 000 (§6.3), shown as « 429/1000 ».
+    #[schema(maximum = 1000)]
+    pub points: u16,
     /// How many times the idea was proposed (merged duplicates included).
     pub proposal_count: u32,
     /// Integrated improvements and objections.
@@ -278,6 +282,7 @@ fn list_item(taxonomy: &Taxonomy, idea: ListedIdea) -> Result<IdeaListItem, ApiE
         feasibility: u8::try_from(idea.feasibility).unwrap_or(0),
         time_to_effect_months: u32::try_from(idea.time_to_effect_months).unwrap_or(0),
         score: idea.score_eur,
+        points: scoring::points(idea.score_eur),
         proposal_count: count(idea.proposal_count),
         contribution_count: count(idea.contribution_count),
         updated_at: idea.updated_at,
@@ -417,6 +422,11 @@ pub struct ScoreComponents {
     pub confidence_factor: f64,
     pub delay_factor: f64,
     pub score: i64,
+    /// The score on the fixed scale of 1 000 (§6.3).
+    #[schema(maximum = 1000)]
+    pub points: u16,
+    /// Highest number of points (1 000).
+    pub max_points: u16,
 }
 
 /// Machine-readable marking of the generated content (AI Act art. 50, §7.5).
@@ -699,6 +709,8 @@ pub async fn detail(
             confidence_factor: row.confidence_factor,
             delay_factor: row.delay_factor,
             score: row.score_eur,
+            points: scoring::points(row.score_eur),
+            max_points: scoring::MAX_POINTS,
         },
         contributions,
         rights_of_reply,

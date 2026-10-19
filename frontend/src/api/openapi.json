@@ -5877,6 +5877,7 @@
           "time_to_effect_months",
           "confidence",
           "score",
+          "points",
           "proposal_count",
           "contribution_count",
           "updated_at"
@@ -5932,7 +5933,14 @@
           "score": {
             "type": "integer",
             "format": "int64",
-            "description": "Composite score in euros per year (« score calculé par algorithme »)."
+            "description": "Composite score in euros per year (« score calculé par algorithme »), the ranking key."
+          },
+          "points": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The score on the fixed scale of 1 000 (§6.3), shown as « 429/1000 ».",
+            "maximum": 1000,
+            "minimum": 0
           },
           "proposal_count": {
             "type": "integer",
@@ -6727,7 +6735,9 @@
           "feasibility_factor",
           "confidence_factor",
           "delay_factor",
-          "score"
+          "score",
+          "points",
+          "max_points"
         ],
         "properties": {
           "label": {
@@ -6756,6 +6766,19 @@
           "score": {
             "type": "integer",
             "format": "int64"
+          },
+          "points": {
+            "type": "integer",
+            "format": "int32",
+            "description": "The score on the fixed scale of 1 000 (§6.3).",
+            "maximum": 1000,
+            "minimum": 0
+          },
+          "max_points": {
+            "type": "integer",
+            "format": "int32",
+            "description": "Highest number of points (1 000).",
+            "minimum": 0
           }
         }
       },
@@ -6768,7 +6791,11 @@
           "amortization_years",
           "max_feasibility",
           "delay_half_life_months",
-          "confidence_factors"
+          "confidence_factors",
+          "points_floor",
+          "points_ceiling",
+          "max_points",
+          "points_per_decade"
         ],
         "properties": {
           "version": {
@@ -6800,6 +6827,25 @@
             "items": {
               "$ref": "#/components/schemas/ConfidenceFactor"
             }
+          },
+          "points_floor": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Fixed scale of the displayed points: 0 up to `points_floor`, `max_points` from\n`points_ceiling`, `points_per_decade` per factor 10 of the score in between."
+          },
+          "points_ceiling": {
+            "type": "integer",
+            "format": "int64"
+          },
+          "max_points": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "points_per_decade": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
           }
         }
       },

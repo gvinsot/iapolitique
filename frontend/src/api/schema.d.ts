@@ -1900,9 +1900,14 @@ export interface components {
             confidence: components["schemas"]["Confidence"];
             /**
              * Format: int64
-             * @description Composite score in euros per year (« score calculé par algorithme »).
+             * @description Composite score in euros per year (« score calculé par algorithme »), the ranking key.
              */
             score: number;
+            /**
+             * Format: int32
+             * @description The score on the fixed scale of 1 000 (§6.3), shown as « 429/1000 ».
+             */
+            points: number;
             /**
              * Format: int32
              * @description How many times the idea was proposed (merged duplicates included).
@@ -2263,6 +2268,16 @@ export interface components {
             delay_factor: number;
             /** Format: int64 */
             score: number;
+            /**
+             * Format: int32
+             * @description The score on the fixed scale of 1 000 (§6.3).
+             */
+            points: number;
+            /**
+             * Format: int32
+             * @description Highest number of points (1 000).
+             */
+            max_points: number;
         };
         /** @description The composite score (§6.3). */
         ScoringMethod: {
@@ -2282,6 +2297,18 @@ export interface components {
              */
             delay_half_life_months: number;
             confidence_factors: components["schemas"]["ConfidenceFactor"][];
+            /**
+             * Format: int64
+             * @description Fixed scale of the displayed points: 0 up to `points_floor`, `max_points` from
+             *     `points_ceiling`, `points_per_decade` per factor 10 of the score in between.
+             */
+            points_floor: number;
+            /** Format: int64 */
+            points_ceiling: number;
+            /** Format: int32 */
+            max_points: number;
+            /** Format: int32 */
+            points_per_decade: number;
         };
         /** @description A criterion of the screening grid with the thresholds applied in production. */
         ScreeningCriterion: {

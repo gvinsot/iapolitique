@@ -14,11 +14,7 @@ const fullEuros = new Intl.NumberFormat("fr-FR", {
   maximumFractionDigits: 0,
 });
 
-const compactNumber = new Intl.NumberFormat("fr-FR", {
-  notation: "compact",
-  compactDisplay: "short",
-  maximumSignificantDigits: 3,
-});
+const significant = new Intl.NumberFormat("fr-FR", { maximumSignificantDigits: 3 });
 
 const decimal = new Intl.NumberFormat("fr-FR", { maximumFractionDigits: 2 });
 
@@ -57,9 +53,27 @@ export function formatInteger(value: number): string {
   return integer.format(value);
 }
 
-/** Composite ranking score (AGENTS.md §6.3), a weighted amount without unit: "12,3 M". */
+/** SI prefixes of the score: never « Md », which reads as billions of euros. */
+const SCORE_PREFIXES = ["", " k", " M", " G", " T"] as const;
+
+/**
+ * Composite ranking score (AGENTS.md §6.3), a weighted amount without unit, with SI prefixes
+ * so that it is not mistaken for a euro amount: "12,3 M", "1,25 G".
+ */
 export function formatScore(score: number): string {
-  return compactNumber.format(score);
+  let value = score;
+  let prefix = 0;
+  // Rounded to 3 significant digits first, so that 999 950 reads "1 M", not "1 000 k".
+  while (prefix < SCORE_PREFIXES.length - 1 && Math.abs(Number(value.toPrecision(3))) >= 1000) {
+    value /= 1000;
+    prefix += 1;
+  }
+  return `${significant.format(value)}${SCORE_PREFIXES[prefix]}`;
+}
+
+/** Points of the score on its fixed scale (AGENTS.md §6.3): "429/1000". */
+export function formatPoints(points: number, max = 1000): string {
+  return `${Math.round(points)}/${max}`;
 }
 
 /** Score factor between 0 and 1: "0,75". */

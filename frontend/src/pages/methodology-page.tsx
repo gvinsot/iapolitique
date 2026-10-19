@@ -110,7 +110,8 @@ export function MethodologyPage() {
           <p>
             Ainsi, une idée crédible et rapide à mettre en œuvre peut devancer une idée au montant
             spectaculaire mais incertain. Aucun score n’est ajusté à la main. Les composantes du
-            score sont affichées sur chaque idée.
+            score sont affichées sur chaque idée, et le score est ramené sur 1000 points par une
+            échelle fixe (125 points par facteur 10, voir la formule ci-dessous).
           </p>
 
           <h2 id="neutralite">4. La neutralité</h2>

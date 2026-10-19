@@ -6,7 +6,14 @@
 //! confidence   = { low: 0.5, medium: 0.75, high: 1.0 }
 //! delay        = 1 / (1 + time_to_effect_months / 24)
 //! score        = net_annual × feasibility × confidence × delay
+//! points       = 125 × log10(score / 1 000), rounded, between 0 and 1 000
 //! ```
+//!
+//! The **points** (version 2) put the score on a fixed scale of 1 000 for display: 0 up to a
+//! score of 1 000, 1 000 from 100 billion, 125 points per factor 10 (logarithmic, so that they
+//! do not move when other ideas are published). The ranking still sorts by the exact score;
+//! the points are a function of it only, so they are the same for an analysis scored with
+//! version 1, whose score is computed the same way.
 //!
 //! All factors are rational, so the score is computed **exactly** with integers and rounded
 //! once (half away from zero) to whole euros: the ranking never depends on floating point
@@ -21,7 +28,7 @@ use utoipa::ToSchema;
 use super::types::Confidence;
 
 /// Version of the formula, stored with every analysis.
-pub const SCORING_VERSION: &str = "1";
+pub const SCORING_VERSION: &str = "2";
 
 /// Years over which the one-off implementation cost is spread.
 pub const AMORTIZATION_YEARS: i64 = 5;
@@ -35,13 +42,26 @@ pub const DELAY_HALF_LIFE_MONTHS: u32 = 24;
 /// Upper bound accepted for `time_to_effect_months` (50 years).
 pub const MAX_TIME_TO_EFFECT_MONTHS: u32 = 600;
 
+/// Score worth 0 points (and below), and score worth [`MAX_POINTS`] (and above).
+pub const POINTS_FLOOR: i64 = 1_000;
+pub const POINTS_CEILING: i64 = 100_000_000_000;
+
+/// Highest number of points.
+pub const MAX_POINTS: u16 = 1_000;
+
+/// Points per factor 10 of the score: `MAX_POINTS / log10(POINTS_CEILING / POINTS_FLOOR)`.
+pub const POINTS_PER_DECADE: u16 = 125;
+
 /// The formula as shown on the methodology page (French, public).
 pub const FORMULA_FR: &str = "\
 gain_net_annuel = gain_annuel.médian − coût_de_mise_en_œuvre.médian / 5   (coût amorti sur 5 ans)
 faisabilité     = faisabilité / 5
 confiance       = { faible : 0,5 ; moyenne : 0,75 ; élevée : 1,0 }
 délai           = 1 / (1 + délai_avant_effets_en_mois / 24)
-score           = gain_net_annuel × faisabilité × confiance × délai";
+score           = gain_net_annuel × faisabilité × confiance × délai
+points          = 125 × log10(score / 1 000), arrondi, entre 0 et 1 000
+                  (score de 1 000 ou moins : 0 ; 100 milliards ou plus : 1 000 ;
+                   chaque facteur 10 du score ajoute 125 points)";
 
 /// Inputs of the score, taken from an analysis (§6.2).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -71,6 +91,8 @@ pub struct ScoreBreakdown {
     pub delay_factor: f64,
     /// Final score in euros per year, used for the default ranking.
     pub score: i64,
+    /// [`points`] of the score, 0 to 1 000, for display.
+    pub points: u16,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, thiserror::Error)]
@@ -107,6 +129,20 @@ fn clamp_to_i64(value: i128) -> i64 {
     i64::try_from(value).unwrap_or(if value < 0 { i64::MIN } else { i64::MAX })
 }
 
+/// The score on the fixed scale of [`MAX_POINTS`] (logarithmic, see the module doc).
+pub fn points(score: i64) -> u16 {
+    if score <= POINTS_FLOOR {
+        return 0;
+    }
+    if score >= POINTS_CEILING {
+        return MAX_POINTS;
+    }
+    let decades = (score as f64 / POINTS_FLOOR as f64).log10();
+    let points = (decades * f64::from(POINTS_PER_DECADE)).round();
+    // Between 0 and 1 000 by the bounds above.
+    points.clamp(0.0, f64::from(MAX_POINTS)) as u16
+}
+
 /// Computes the score of an analysis.
 pub fn compute(input: &ScoreInput) -> Result<ScoreBreakdown, ScoringError> {
     if !(1..=MAX_FEASIBILITY).contains(&input.feasibility) {
@@ -134,6 +170,7 @@ pub fn compute(input: &ScoreInput) -> Result<ScoreBreakdown, ScoringError> {
     let numerator = net_times_years * feasibility * quarters * half_life;
     let denominator = years * max_feasibility * 4 * (half_life + months);
 
+    let score = clamp_to_i64(div_round(numerator, denominator));
     Ok(ScoreBreakdown {
         scoring_version: SCORING_VERSION,
         net_annual_eur: clamp_to_i64(div_round(net_times_years, years)),
@@ -141,7 +178,8 @@ pub fn compute(input: &ScoreInput) -> Result<ScoreBreakdown, ScoringError> {
         confidence_factor: quarters as f64 / 4.0,
         delay_factor: f64::from(DELAY_HALF_LIFE_MONTHS)
             / f64::from(DELAY_HALF_LIFE_MONTHS + input.time_to_effect_months),
-        score: clamp_to_i64(div_round(numerator, denominator)),
+        score,
+        points: points(score),
     })
 }
 
@@ -347,8 +385,42 @@ mod tests {
     }
 
     #[test]
+    fn points_are_on_a_fixed_logarithmic_scale_of_1000() {
+        assert_eq!(points(i64::MIN), 0);
+        assert_eq!(points(-5_000_000), 0);
+        assert_eq!(points(0), 0);
+        assert_eq!(points(1_000), 0);
+        assert_eq!(points(10_000), 125);
+        assert_eq!(points(1_000_000), 375);
+        assert_eq!(points(67_000_000), 603);
+        assert_eq!(points(160_000_000), 651);
+        assert_eq!(points(1_000_000_000), 750);
+        assert_eq!(points(99_999_999_999), 1_000);
+        assert_eq!(points(100_000_000_000), 1_000);
+        assert_eq!(points(i64::MAX), 1_000);
+        // Never decreasing: the points keep the order of the ranking (ties allowed).
+        let mut last = 0;
+        for exponent in 0..=18u32 {
+            for mantissa in [1, 2, 5] {
+                let p = points(mantissa * 10_i64.pow(exponent));
+                assert!(p >= last, "{mantissa}e{exponent}");
+                last = p;
+            }
+        }
+        assert_eq!(
+            u32::from(POINTS_PER_DECADE) * (POINTS_CEILING / POINTS_FLOOR).ilog10(),
+            u32::from(MAX_POINTS)
+        );
+        let s = compute(&input(10_000_000, 5_000_000, 3, Confidence::Medium, 12)).unwrap();
+        assert_eq!(s.points, points(s.score));
+        assert_eq!(s.points, 429);
+    }
+
+    #[test]
     fn formula_text_mentions_every_factor() {
-        for word in ["médian", "/ 5", "0,5", "0,75", "1,0", "/ 24"] {
+        for word in [
+            "médian", "/ 5", "0,5", "0,75", "1,0", "/ 24", "125", "log10", "1 000",
+        ] {
             assert!(FORMULA_FR.contains(word), "{word}");
         }
     }

@@ -31,11 +31,11 @@ use super::schedule::DailySchedule;
 use super::worker::{HandlerFuture, JobContext, JobHandler};
 use super::{Job, JobKind, JobOutcome};
 use crate::db::exports::{self, ExportFile, ExportedIdea};
-use crate::domain::scoring::SCORING_VERSION;
+use crate::domain::scoring::{self, SCORING_VERSION};
 use crate::domain::types::ExportFormat;
 
 /// Version of the layout of the export files; bump it when a field changes.
-pub const EXPORT_SCHEMA_VERSION: &str = "1.0";
+pub const EXPORT_SCHEMA_VERSION: &str = "1.1";
 
 /// Nightly regeneration, Europe/Paris time (after the 03:30 purge).
 pub const SCHEDULE: DailySchedule =
@@ -152,6 +152,8 @@ fn idea_json(host: &str, idea: &ExportedIdea, contributions: &[(String, String)]
             "label": "score calculé par algorithme",
             "scoring_version": idea.scoring_version,
             "score_eur": idea.score_eur,
+            "points": scoring::points(idea.score_eur),
+            "max_points": scoring::MAX_POINTS,
             "net_annual_eur": idea.net_annual_eur,
             "feasibility_factor": idea.feasibility_factor,
             "confidence_factor": idea.confidence_factor,
@@ -263,6 +265,7 @@ const CSV_COLUMNS: &[&str] = &[
     "feasibility",
     "confidence",
     "score_eur",
+    "points",
     "net_annual_eur",
     "feasibility_factor",
     "confidence_factor",
@@ -352,6 +355,7 @@ pub fn ideas_csv(host: &str, ideas: &[ExportedIdea]) -> Vec<u8> {
             idea.feasibility.to_string(),
             idea.confidence.clone(),
             idea.score_eur.to_string(),
+            scoring::points(idea.score_eur).to_string(),
             idea.net_annual_eur.to_string(),
             idea.feasibility_factor.to_string(),
             idea.confidence_factor.to_string(),

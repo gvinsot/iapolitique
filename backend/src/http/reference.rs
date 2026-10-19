@@ -22,7 +22,8 @@ use crate::config::MistralConfig;
 use crate::db::provider_alerts;
 use crate::domain::rules::{self, CGU_VERSION, RuleReference};
 use crate::domain::scoring::{
-    AMORTIZATION_YEARS, DELAY_HALF_LIFE_MONTHS, FORMULA_FR, MAX_FEASIBILITY, SCORING_VERSION,
+    AMORTIZATION_YEARS, DELAY_HALF_LIFE_MONTHS, FORMULA_FR, MAX_FEASIBILITY, MAX_POINTS,
+    POINTS_CEILING, POINTS_FLOOR, POINTS_PER_DECADE, SCORING_VERSION,
 };
 use crate::domain::types::{Confidence, ReasoningEffort, TargetKind};
 use crate::jobs::analysis::schema_version;
@@ -52,6 +53,12 @@ pub struct ScoringMethod {
     /// Delay (months) at which the delay factor is halved.
     pub delay_half_life_months: u32,
     pub confidence_factors: Vec<ConfidenceFactor>,
+    /// Fixed scale of the displayed points: 0 up to `points_floor`, `max_points` from
+    /// `points_ceiling`, `points_per_decade` per factor 10 of the score in between.
+    pub points_floor: i64,
+    pub points_ceiling: i64,
+    pub max_points: u16,
+    pub points_per_decade: u16,
 }
 
 /// Answers of a yes/no criterion, as described to the decision model.
@@ -258,6 +265,10 @@ fn scoring_method() -> ScoringMethod {
         amortization_years: u32::try_from(AMORTIZATION_YEARS).unwrap_or(u32::MAX),
         max_feasibility: u32::from(MAX_FEASIBILITY),
         delay_half_life_months: DELAY_HALF_LIFE_MONTHS,
+        points_floor: POINTS_FLOOR,
+        points_ceiling: POINTS_CEILING,
+        max_points: MAX_POINTS,
+        points_per_decade: POINTS_PER_DECADE,
         confidence_factors: Confidence::ALL
             .iter()
             .map(|&level| ConfidenceFactor {

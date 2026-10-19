@@ -1188,7 +1188,10 @@ aucune valeur de la requête ne peut y figurer.
   derrière `dashboard-allowlist@file` (§14.4) ; `/admin` du host public redirige vers `ADMIN_HOST`.
 - CI (`devops/Dockerfile.test`) : `cargo deny check advisories bans` (ou `cargo audit`) et
   `npm audit --omit=dev --audit-level=high` bloquants ; `Cargo.lock` et `package-lock.json`
-  committés ; `npm ci` uniquement. Réalisation : `npm audit` dans le stage `frontend-audit` ;
+  committés ; `npm ci` uniquement, sans script de cycle de vie des dépendances (`ignore-scripts=true`
+  dans `frontend/.npmrc` ; un paquet qui en aurait besoin passe par un `npm rebuild <paquet>`
+  explicite et une entrée justifiée de `src/test/supply-chain.test.ts`, qui vérifie le réglage et
+  qu'aucun paquet verrouillé n'a de script d'installation hors de cette liste). Réalisation : `npm audit` dans le stage `frontend-audit` ;
   `cargo deny --locked --config ../devops/deny.toml check advisories bans sources` à la fin du
   stage `backend-test` (binaire officiel épinglé par version et SHA-256). `devops/deny.toml` :
   toute alerte RustSec (vulnérabilité, crate non maintenue ou unsound) et toute version retirée

@@ -118,6 +118,7 @@ iapolitique/
 │   ├── Dockerfile          # stages: build, runtime (contrôles CI : devops/Dockerfile.test)
 │   ├── migrations/         # migrations sqlx (NNNN_description.sql)
 │   ├── assets/             # fichiers embarqués (texte officiel de la Licence Ouverte 2.0)
+│   ├── dev/                # seed et pile de développement local (jamais en prod, voir dev/README.md)
 │   └── src/
 │       ├── main.rs         # sous-commandes: api | worker | migrate | openapi | healthcheck
 │       ├── config.rs       # lecture env + /run/secrets

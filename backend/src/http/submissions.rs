@@ -41,7 +41,7 @@ use crate::domain::validation::{
     CONTRIBUTION_TEXT_LIMITS, FieldError, IDEA_TEXT_LIMITS, REPORT_DETAILS_LIMITS,
     REPORTER_NAME_MAX_CHARS, TERRITORY_MAX_CHARS, TextError, TextLimits,
     validate_contribution_text, validate_email, validate_idea_text, validate_line,
-    validate_optional_text,
+    validate_optional_text, validate_territory,
 };
 use crate::moderation::second_opinion::{self, FALLBACK_DELAY};
 use crate::moderation::statement::{self, StatementOfReasons};
@@ -344,11 +344,7 @@ pub async fn submit_idea(
 ) -> Result<Response, ApiError> {
     require_consents(body.accept_licence, body.accept_publication)?;
     let text = validate_idea_text(&body.text)?;
-    let territory = validate_line(
-        body.territory.as_deref(),
-        "Le territoire",
-        TERRITORY_MAX_CHARS,
-    )?;
+    let territory = validate_territory(body.territory.as_deref())?;
     check_abuse(&state, ip, RateAction::Idea, &body.altcha)?;
 
     let idea = NewIdea {

@@ -110,6 +110,9 @@ pub(crate) struct Content {
     pub idea_summary: Option<String>,
     /// Kind of contribution or reason of the report, as a French label.
     pub label: Option<String>,
+    /// Territory given by the author of an idea: inserted in the analysis prompts, so it is
+    /// screened with the text (INJ-1).
+    pub territory: Option<String>,
 }
 
 impl Content {
@@ -119,7 +122,10 @@ impl Content {
         let summary = self.idea_summary.as_deref().unwrap_or_default();
         let label = self.label.as_deref().unwrap_or_default();
         match kind {
-            TargetKind::Idea => self.text.as_deref().map(decision::idea_state),
+            TargetKind::Idea => self
+                .text
+                .as_deref()
+                .map(|text| decision::idea_state(text, self.territory.as_deref())),
             TargetKind::Contribution => self
                 .text
                 .as_deref()
@@ -138,7 +144,7 @@ impl Content {
         let label = self.label.as_deref().unwrap_or_default();
         let text = self.text.as_deref().unwrap_or_default();
         match kind {
-            TargetKind::Idea => text.to_owned(),
+            TargetKind::Idea => decision::idea_state_text(text, self.territory.as_deref()),
             TargetKind::Contribution => format!(
                 "Résumé de l'idée concernée :\n{summary}\n\nType : {label}\n\nContribution :\n{text}"
             ),
@@ -169,6 +175,7 @@ struct ContentRow {
     idea_summary: Option<String>,
     /// Contribution kind or report reason.
     key: Option<String>,
+    territory: Option<String>,
 }
 
 /// Reads what the moderation needs about a text, `None` when it does not exist.
@@ -180,16 +187,17 @@ pub(crate) async fn load_content(
     let sql = match target.kind {
         TargetKind::Idea => {
             "SELECT status, id AS idea_id, original_text AS text, NULL::text AS idea_summary,
-                    NULL::text AS key
+                    NULL::text AS key, submitted_territory AS territory
              FROM ideas WHERE id = $1"
         }
         TargetKind::Contribution => {
-            "SELECT c.status, c.idea_id, c.text, i.summary AS idea_summary, c.kind AS key
+            "SELECT c.status, c.idea_id, c.text, i.summary AS idea_summary, c.kind AS key,
+                    NULL::text AS territory
              FROM contributions c JOIN ideas i ON i.id = c.idea_id WHERE c.id = $1"
         }
         TargetKind::Report => {
             "SELECT r.status, r.idea_id, r.details AS text, i.summary AS idea_summary,
-                    r.reason AS key
+                    r.reason AS key, NULL::text AS territory
              FROM reports r JOIN ideas i ON i.id = r.idea_id WHERE r.id = $1"
         }
     };
@@ -204,6 +212,7 @@ pub(crate) async fn load_content(
             text,
             idea_summary,
             key,
+            territory,
         } = row;
         let label = key.map(|key| match target.kind {
             TargetKind::Contribution => contribution_label(&prompts.taxonomy, &key),
@@ -215,6 +224,7 @@ pub(crate) async fn load_content(
             text,
             idea_summary,
             label,
+            territory,
         }
     }))
 }

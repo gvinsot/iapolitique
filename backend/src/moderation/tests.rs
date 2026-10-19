@@ -254,3 +254,37 @@ async fn hidden_ideas_have_a_statement(pool: PgPool) {
         .unwrap();
     assert_eq!(statement.purge_on, None);
 }
+
+/// INJ-1: the territory given by the author is screened with the text of the idea (decision
+/// model and second opinion), not only inserted in the analysis prompts.
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn the_territory_of_an_idea_is_screened_with_its_text(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), false, &[]).await;
+    app.decision_answers(TargetKind::Idea, &[]).await;
+    let id = crate::test_support::idea_with_status(&pool, "submitted").await;
+    sqlx::query("UPDATE ideas SET submitted_territory = 'Métropole de Lyon' WHERE id = $1")
+        .bind(id)
+        .execute(&pool)
+        .await
+        .unwrap();
+
+    screen_now(&app, Target::new(TargetKind::Idea, id)).await;
+    let requests = app.decision.received_requests().await.unwrap();
+    let sent: Value = serde_json::from_slice(&requests[0].body).unwrap();
+    assert_eq!(
+        sent["state"],
+        json!(
+            "Territoire indiqué par l'auteur : Métropole de Lyon\n\n\
+             Mutualiser les achats de fournitures entre communes voisines."
+        )
+    );
+    let content = load_content(&pool, &app.state.prompts, Target::new(TargetKind::Idea, id))
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        content
+            .prompt_content(TargetKind::Idea)
+            .starts_with("Territoire indiqué par l'auteur : Métropole de Lyon\n\n")
+    );
+}

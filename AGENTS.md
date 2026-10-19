@@ -202,7 +202,9 @@ iapolitique/
 ### 5.1 Dépôt
 
 Formulaire : texte libre (50 à 4 000 caractères), niveau administratif facultatif, territoire
-facultatif (120 caractères). Protégé par ALTCHA et rate limit ([§7](#7-anonymat-anti-abus-et-données)).
+facultatif (120 caractères : lettres, chiffres, espaces et `' ’ ( ) , . -` seulement, sinon
+`422 invalid_territory` ; ni lien ni consigne ne peut s'y glisser, il est inséré dans les prompts
+d'analyse et filtré avec le texte, §5.3). Protégé par ALTCHA et rate limit ([§7](#7-anonymat-anti-abus-et-données)).
 
 Ordre de traitement de tout formulaire public (`http/submissions.rs`) : validation du corps
 (consentements, longueurs : une erreur ne consomme ni la solution ALTCHA ni le quota), rate
@@ -268,7 +270,8 @@ n'appeler que `/v1/systemone`.
   deux : **zone grise** → second avis Mistral avec la même grille (`prompts/second_opinion.md`).
 - Motif de refus = premier critère en échec selon l'ordre ci-dessus ; libellés en français
   définis dans `screening.yaml`.
-- `state` limité au texte (masqué) de l'idée (< 2 000 tokens). Timeout 5 s pour le filtrage
+- `state` limité au texte (masqué) de l'idée, précédé de « Territoire indiqué par l'auteur : … »
+  s'il est renseigné (< 2 000 tokens) ; le second avis reçoit le même contenu. Timeout 5 s pour le filtrage
   synchrone de l'api (`DECISION_SERVICE_TIMEOUT_SECS`), 30 s pour les jobs de filtrage du worker
   (`DECISION_SERVICE_JOB_TIMEOUT_SECS`) : le service traite les requêtes presque en série et une
   idée de 4 000 caractères prend 4 s seule, 17 s quand quatre dépôts arrivent ensemble
@@ -842,7 +845,7 @@ API publique (port 8080) :
 |---|---|---|
 | GET | `/api/health`, `/api/ready` | vivacité, base joignable |
 | GET | `/api/altcha/challenge` | défi proof-of-work |
-| POST | `/api/ideas` | dépôt d'une idée `{ text, admin_level?, territory?, accept_licence, accept_publication, altcha }` → `201 { status, tracking_token, reason_code, reason_message, statement }` (`statement` : exposé des motifs d'un refus `{ measure, reason_code, reason_message, rule: { article, title, url }, automated, second_opinion, decided_on, purge_on }`) ; erreurs `consent_required`, `altcha_*` (400), `text_*`, `field_too_long`, `invalid_body` (422), `rate_limited` (429) |
+| POST | `/api/ideas` | dépôt d'une idée `{ text, admin_level?, territory?, accept_licence, accept_publication, altcha }` → `201 { status, tracking_token, reason_code, reason_message, statement }` (`statement` : exposé des motifs d'un refus `{ measure, reason_code, reason_message, rule: { article, title, url }, automated, second_opinion, decided_on, purge_on }`) ; erreurs `consent_required`, `altcha_*` (400), `text_*`, `field_too_long`, `invalid_territory`, `invalid_body` (422), `rate_limited` (429) |
 | POST | `/api/track` | suivi d'une idée, contribution ou signalement (corps `{ "token" }`, jamais dans l'URL) → `200 { kind, status, submitted_on, idea: { slug, title }?, decision: exposé des motifs?, report_outcome?, review_request: { requested_on, status }? }` (`status` : statut du §5.2 ou `deleted`) |
 | POST | `/api/track/delete` | suppression par l'auteur (corps `{ "token" }`) → `200 { status: "deleted" }`, idempotent |
 | POST | `/api/track/review-request` | demande de réexamen humain (corps `{ "token", "message"? }`) → `201 { requested_on, status: "pending" }` ; `409 review_not_available` / `review_already_requested` |
@@ -927,7 +930,7 @@ au démarrage (un fichier invalide empêche le démarrage).
 
 | Fichier | Format |
 |---|---|
-| `screening.yaml` | `version` + trois sections `idea`, `contribution`, `report`. Chaque section : liste ordonnée de critères `{ key, type: noul\|score, instructions, criteria?, pass_when (true/false pour noul, niveau minimal pour score), reject_below, accept_above, reason_code, reason_message }`. Les seuils portent sur la probabilité de **réussir** le critère (`noul` ou `1 − noul` selon `pass_when` ; pour `score`, somme des probabilités des niveaux d'indice ≥ `pass_when`) ; entre `reject_below` et `accept_above` = zone grise. `state` envoyé : texte brut (idea), objet `{ idee, type, contribution }` (contribution), objet `{ idee, motif, precision }` (report), où `idee` est le résumé neutre de l'idée publiée. Calibration : `docs/calibration/`. |
+| `screening.yaml` | `version` + trois sections `idea`, `contribution`, `report`. Chaque section : liste ordonnée de critères `{ key, type: noul\|score, instructions, criteria?, pass_when (true/false pour noul, niveau minimal pour score), reject_below, accept_above, reason_code, reason_message }`. Les seuils portent sur la probabilité de **réussir** le critère (`noul` ou `1 − noul` selon `pass_when` ; pour `score`, somme des probabilités des niveaux d'indice ≥ `pass_when`) ; entre `reject_below` et `accept_above` = zone grise. `state` envoyé : texte brut (idea, précédé de `Territoire indiqué par l'auteur : <territoire>` et d'une ligne vide si l'auteur en a indiqué un), objet `{ idee, type, contribution }` (contribution), objet `{ idee, motif, precision }` (report), où `idee` est le résumé neutre de l'idée publiée. Calibration : `docs/calibration/`. |
 | `analysis_research.md`, `analysis.md`, `second_opinion.md`, `report_review.md` | En-tête YAML entre deux lignes `---` : `version`, `model_hint`, `tools` (`[web_search]` ou `[]`), `output_schema` (fichier de schéma ou `null`), `variables` (map nom → description ; toutes doivent être substituées ; une valeur absente ou vide prend la valeur citée dans la description après « ou » — « (aucune) », « non précisé »… —, une chaîne vide si la description dit « chaîne vide », « (aucun) » sinon). Corps en français découpé par la ligne `<!-- user -->` : avant = instructions système (seule variable admise : `{{today}}`, pour garder le cache de prompt), après = message utilisateur avec les variables `{{nom}}`. Les textes de visiteurs sont insérés entre balises (`<idee_originale>`…) : le backend met chaque valeur substituée en forme NFKC (`＜`, `﹤` deviennent `<`, lettres et accents combinants recomposés) puis remplace tout chevron (`<`, `>`, `〈`, `〉`, `⟨`, `⟩`, `❮`, `❯`…) par `‹` ou `›` : ni balise à attributs, ni balise auto-fermante, ni variante Unicode ne peut fermer un cadre (`PromptTemplate::neutralize`). |
 | Analyse en deux étapes | Étape 1 `analysis_research.md` (Conversations API avec `web_search`) → mémo sourcé en texte ; étape 2 `analysis.md` (`response_format` json_schema strict, sans outil) avec `{{research}}` = le mémo. Si la recherche web et la sortie structurée sont compatibles dans un même appel, `analysis.md` seul suffit avec `{{research}}` vide et l'outil `web_search` activé. Les versions des deux fichiers sont stockées avec l'analyse. |
 | `analysis.schema.json` | JSON Schema (draft 2020-12, sous-ensemble compatible avec le mode strict de Mistral : `type`, `properties`, `required` = toutes les propriétés, `additionalProperties: false`, `items`, `enum`, `description`, `title`) de la sortie d'analyse (§6.2), utilisé tel quel en `response_format` (`{"type": "json_schema", "json_schema": {"name": "analysis", "schema": …, "strict": true}}`) et pour valider la réponse. Le backend vérifie en plus : low ≤ median ≤ high, montants et délai ≥ 0, catégorie compatible avec `admin_level`, références `[Sx]` présentes dans `sources`, au moins une source. |

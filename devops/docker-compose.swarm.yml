@@ -348,7 +348,9 @@ services:
         condition: none
 
   test-db:
-    image: pgvector/pgvector:pg18
+    # Pinned by index digest (AGENTS.md §14.7, devops/check_image_pins.py). To upgrade, take the
+    # first "Digest:" line of `docker buildx imagetools inspect pgvector/pgvector:pg18`.
+    image: pgvector/pgvector:pg18@sha256:2358fcba361ed2233a5ed81b5fe4ca779ccb304120ce531a3bf51c0ed7e2bc11
     environment:
       # No password (a *_PASSWORD variable would become a Docker secret): the network is internal
       # and the database is thrown away after the run.

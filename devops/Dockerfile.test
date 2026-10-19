@@ -75,15 +75,22 @@ RUN set -eu; \
 
 # ---------------------------------------------------------------------------------------------
 # 3. devops: security invariants of docker-compose.swarm.yml (container hardening, networks,
-#    Traefik routers and the admin port; AGENTS.md §14.4, §14.7) and the tests of the checker.
+#    Traefik routers and the admin port; AGENTS.md §14.4, §14.7), base images pinned by digest
+#    in the Dockerfiles and the compose (§14.7), and the tests of both checkers.
 # ---------------------------------------------------------------------------------------------
 FROM alpine:${ALPINE_VERSION}@${ALPINE_DIGEST} AS devops-check
 RUN apk add --no-cache python3 py3-yaml
-WORKDIR /devops
-COPY devops/docker-compose.swarm.yml devops/check_compose_security.py \
-     devops/test_check_compose_security.py ./
+# Same layout as the repository: check_image_pins.py reads ../backend and ../frontend.
+WORKDIR /repo/devops
+COPY backend/Dockerfile /repo/backend/Dockerfile
+COPY frontend/Dockerfile /repo/frontend/Dockerfile
+COPY devops/docker-compose.swarm.yml devops/Dockerfile.test devops/check_compose_security.py \
+     devops/test_check_compose_security.py devops/check_image_pins.py \
+     devops/test_check_image_pins.py ./
 RUN PYTHONDONTWRITEBYTECODE=1 python3 check_compose_security.py \
+    && PYTHONDONTWRITEBYTECODE=1 python3 check_image_pins.py \
     && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -q test_check_compose_security.py \
+        test_check_image_pins.py \
     && touch /devops-ok
 
 # ---------------------------------------------------------------------------------------------

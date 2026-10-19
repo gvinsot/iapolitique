@@ -957,7 +957,8 @@ Le service `test` du compose construit `devops/Dockerfile.test` (contexte `..`) 
    servi par `frontend/nginx.conf`, contrôlé par `devops/check_frontend_headers.sh` (en-têtes,
    nonce CSP, cache, méthodes, fichiers cachés, `security.txt` avec et sans adresse, §14.2) ;
 3. stage `devops-check` (alpine, python3 + PyYAML du paquet `py3-yaml`) :
-   `devops/check_compose_security.py` (invariants du compose, §14.4 et §14.7) et ses tests ;
+   `devops/check_compose_security.py` (invariants du compose, §14.4 et §14.7),
+   `devops/check_image_pins.py` (images de base épinglées par digest, §14.7) et leurs tests ;
 4. stage `backend-test` (rust) : `cargo fmt --check`, `cargo clippy -D warnings`, compilation des
    tests, puis `cargo deny` (advisories, bans, sources ; §14.7) ; il copie un fichier témoin
    produit par chacun des stages précédents (sinon BuildKit les saute) ;
@@ -1149,7 +1150,12 @@ aucune valeur de la requête ne peut y figurer.
   épinglées.
 - Épinglage : `frontend/Dockerfile` et `devops/Dockerfile.test` fixent chaque image de base par
   version **et** digest de l'index multi-architecture (`ARG *_DIGEST`, procédure de mise à jour en
-  tête de fichier) ; `backend/Dockerfile` (rust, debian) reste à épingler de la même façon.
+  tête de fichier) ; `backend/Dockerfile` (rust, debian) reste à épingler de la même façon. Toute
+  image du compose qui n'est pas construite ici (`registry.methodinfo.fr`) est épinglée par
+  `@sha256:` (`test-db`). `devops/check_image_pins.py` (CI) le vérifie : chaque `FROM` nomme un
+  stage ou une image `@${*_DIGEST}` / `@sha256:`, et un `ARG` présent dans plusieurs Dockerfiles
+  (`RUST_VERSION`, `RUST_DIGEST`, `NGINX_DIGEST`…) a la même valeur partout ; `backend/Dockerfile`
+  y figure en attente (`PENDING`, signalé sans bloquer) jusqu'à son épinglage.
 - Dans `devops/docker-compose.swarm.yml`, api, worker et frontend ont `read_only: true`,
   `init: true` et `cap_drop: [ALL]` (tous pris en charge par `docker stack deploy`, vérifié sur
   Docker 29) ; les seuls chemins inscriptibles sont des volumes `type: tmpfs` (la clé courte

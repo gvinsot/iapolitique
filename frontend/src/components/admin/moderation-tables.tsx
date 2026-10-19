@@ -63,6 +63,13 @@ function ReporterEmail({ email }: { email: string }) {
 
 // --- Ideas -----------------------------------------------------------------------------------
 
+function statusBadgeVariant(status: string): "destructive" | "outline" | "secondary" {
+  if (status === "hidden") return "destructive";
+  // Withdrawn by its author (owner decision D2): read only, never republished.
+  if (status === "withdrawn") return "outline";
+  return "secondary";
+}
+
 interface IdeasTableProps {
   rows: AdminIdea[];
   onHide: (id: string, reason: string) => Promise<void>;
@@ -70,7 +77,10 @@ interface IdeasTableProps {
   onReanalyze: (id: string) => Promise<void>;
 }
 
-/** Ideas of every status (AGENTS.md §8): hide, republish, relaunch an analysis, replies. */
+/**
+ * Ideas of every status (AGENTS.md §8): hide, republish, relaunch an analysis, replies. An idea
+ * withdrawn by its author is shown read only: no action applies to it (§5.2).
+ */
 export function IdeasTable({ rows, onHide, onRepublish, onReanalyze }: IdeasTableProps) {
   return (
     <AdminTable
@@ -85,18 +95,18 @@ export function IdeasTable({ rows, onHide, onRepublish, onReanalyze }: IdeasTabl
         return (
           <tr key={row.id} className="border-b last:border-b-0">
             <td className={`${cellClass} max-w-xs`}>
-              <AdminIdeaLink idea={row} />
+              <AdminIdeaLink idea={row} markWithdrawn={false} />
               <p className="mt-1 text-xs text-muted-foreground">
                 Reçue le {formatDateTime(row.created_at)} · proposée {row.proposal_count} fois
                 {row.score_eur !== null ? ` · score ${formatEuros(row.score_eur)}` : null}
               </p>
             </td>
             <td className={cellClass}>
-              <Badge variant={row.status === "hidden" ? "destructive" : "secondary"}>
+              <Badge variant={statusBadgeVariant(row.status)}>
                 {labelFor(ideaStatusLabels, row.status)}
               </Badge>
               <p className="mt-1 text-xs text-muted-foreground">
-                depuis le {formatDateTime(row.status_changed_at)}
+                depuis le {formatDateTime(row.withdrawn_at ?? row.status_changed_at)}
               </p>
               {row.hidden_reason ? (
                 <p className="mt-1 text-xs">{labelFor(hiddenReasonLabels, row.hidden_reason)}</p>
@@ -131,6 +141,12 @@ export function IdeasTable({ rows, onHide, onRepublish, onReanalyze }: IdeasTabl
               </ul>
             </td>
             <td className={cellClass}>
+              {row.status === "withdrawn" ? (
+                <p className="max-w-48 text-xs text-muted-foreground">
+                  Lecture seule : retrait définitif décidé par l’auteur, effacement 12 mois après le
+                  retrait.
+                </p>
+              ) : null}
               <div className="flex flex-wrap gap-2">
                 {row.status === "published" ? (
                   <ConfirmDialog

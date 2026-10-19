@@ -130,6 +130,29 @@ export const ideasFixture: AdminIdea[] = [
   },
 ];
 
+/** An idea withdrawn by its author (owner decision D2): read only in the administration. */
+export const withdrawnIdeaFixture: AdminIdea = {
+  id: "01a15179-0000-7000-8000-000000000003",
+  status: "withdrawn",
+  slug: "idee-retiree",
+  title: "Une idée retirée",
+  excerpt: "Texte d’une idée retirée par son auteur.",
+  submitted_admin_level: null,
+  created_at: "2026-10-01T08:00:00Z",
+  status_changed_at: "2026-10-18T08:00:00Z",
+  rejection_reason_code: null,
+  hidden_reason: null,
+  hidden_at: null,
+  parent_idea_id: null,
+  proposal_count: 1,
+  contribution_count: 2,
+  score_eur: 300_000,
+  reports_pending: 0,
+  review_request_pending: false,
+  escalation_pending: false,
+  withdrawn_at: "2026-10-18T08:00:00Z",
+};
+
 export const reportsFixture: AdminReport[] = [
   {
     id: "r-1",

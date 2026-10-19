@@ -21,6 +21,7 @@ import {
   reviewRequestsFixture,
   screeningsFixture,
   settingsFixture,
+  withdrawnIdeaFixture,
 } from "@/test/fixtures/admin";
 import { renderComponent } from "@/test/render-component";
 
@@ -163,6 +164,37 @@ describe("moderation tables", () => {
     await user.type(within(dialog).getByRole("textbox", { name: "Motif" }), "Erreur de revue");
     await user.click(within(dialog).getByRole("button", { name: "Republier l’idée" }));
     expect(await within(dialog).findByRole("alert")).toHaveTextContent("L’idée n’est pas masquée.");
+  });
+
+  it("shows an idea withdrawn by its author read only, without a public link", () => {
+    renderComponent(
+      <IdeasTable
+        rows={[withdrawnIdeaFixture]}
+        onHide={vi.fn()}
+        onRepublish={vi.fn()}
+        onReanalyze={vi.fn()}
+      />,
+    );
+    const row = screen.getAllByRole("row")[1];
+    if (!row) throw new Error("missing row");
+    expect(within(row).getAllByText("Retirée par son auteur")).toHaveLength(1);
+    expect(row).toHaveTextContent("Lecture seule : retrait définitif décidé par l’auteur");
+    expect(within(row).queryByRole("button")).toBeNull();
+    expect(within(row).queryByRole("link")).toBeNull();
+  });
+
+  it("marks a withdrawn idea in the other admin lists", () => {
+    const [report] = reportsFixture;
+    if (!report) throw new Error("missing fixture");
+    renderComponent(
+      <ReportsTable
+        rows={[{ ...report, idea: { ...report.idea, status: "withdrawn", slug: "idee-retiree" } }]}
+      />,
+    );
+    const row = screen.getAllByRole("row")[1];
+    if (!row) throw new Error("missing row");
+    expect(row).toHaveTextContent("Retirée par son auteur");
+    expect(within(row).queryByRole("link", { name: report.idea.title ?? "" })).toBeNull();
   });
 
   it("shows the reports with the reporter contact and the AI review", () => {

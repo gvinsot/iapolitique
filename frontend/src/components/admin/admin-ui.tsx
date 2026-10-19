@@ -7,6 +7,7 @@ import type { AdminIdeaRef } from "@/api/types";
 import { paths } from "@/app/paths";
 import { Pagination } from "@/components/common/pagination";
 import { ErrorState, ListSkeleton } from "@/components/common/states";
+import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
   Dialog,
@@ -177,18 +178,34 @@ export function FilterSelect({ label, value, onChange, options, all }: FilterSel
   );
 }
 
-/** Link to the public page of an idea (when published) or its identifier. */
-export function AdminIdeaLink({ idea }: { idea: Pick<AdminIdeaRef, "slug" | "title" | "id"> }) {
+/**
+ * Link to the public page of an idea or its identifier. An idea withdrawn by its author (owner
+ * decision D2) has no public page any more: it is named without a link and marked as such.
+ */
+export function AdminIdeaLink({
+  idea,
+  markWithdrawn = true,
+}: {
+  idea: Pick<AdminIdeaRef, "slug" | "title" | "id"> & { status?: string };
+  /** Adds the « Retirée par son auteur » badge (off where the status is already shown). */
+  markWithdrawn?: boolean;
+}) {
   const title = idea.title ?? "Idée sans titre (pas encore analysée)";
+  const withdrawn = idea.status === "withdrawn";
   return (
     <span className="space-y-0.5">
-      {idea.slug ? (
+      {idea.slug && !withdrawn ? (
         <Link to={paths.idea(idea.slug)} className={adminLinkClass}>
           {title}
         </Link>
       ) : (
         <span className="font-medium">{title}</span>
       )}
+      {withdrawn && markWithdrawn ? (
+        <span className="block">
+          <Badge variant="outline">Retirée par son auteur</Badge>
+        </span>
+      ) : null}
       <span className="block font-mono text-xs text-muted-foreground">{idea.id}</span>
     </span>
   );

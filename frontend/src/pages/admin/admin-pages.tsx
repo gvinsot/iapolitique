@@ -416,7 +416,9 @@ export function AdminRepliesPage() {
         </h2>
         {idea && idea.status !== "published" && idea.status !== "hidden" ? (
           <p className="text-muted-foreground">
-            Un droit de réponse ne peut être publié que sous une idée publiée ou masquée.
+            {idea.status === "withdrawn"
+              ? "Cette idée a été retirée par son auteur : elle n’est plus publiée et aucun droit de réponse ne peut y être ajouté."
+              : "Un droit de réponse ne peut être publié que sous une idée publiée ou masquée."}
           </p>
         ) : (
           <RightOfReplyEditor ideaTitle={title} onSubmit={create} resetOnSuccess />

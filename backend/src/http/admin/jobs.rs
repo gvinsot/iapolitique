@@ -7,12 +7,17 @@ use serde::Deserialize;
 use serde_json::{Value, json};
 use utoipa::{IntoParams, ToSchema};
 
+use super::ideas::status_error;
 use super::{conflict, not_found};
 use crate::db::admin_actions::{self, NewAdminAction};
+use crate::db::status::{self, Change};
+use crate::domain::status::IdeaStatus;
+use crate::domain::types::Actor;
 use crate::http::AppState;
 use crate::http::error::{ApiError, ErrorBody};
 use crate::http::extract::{ApiPath, ApiQuery};
 use crate::http::pagination::{PageRequest, page_type};
+use crate::jobs::pipeline::AnalyzePayload;
 use crate::jobs::queue::{self, JobRow, RetryError};
 use crate::jobs::{JobKind, JobStatus};
 
@@ -114,7 +119,9 @@ pub async fn list(
 }
 
 /// Queues a dead job again (attempts reset, due now). A dead screening or second opinion
-/// leaves its text waiting: retrying it resumes the pipeline.
+/// leaves its text waiting: retrying it resumes the pipeline. A dead analysis left its idea in
+/// `analysis_failed`, which the job ignores: retrying it also moves the idea back to
+/// `queued_analysis`, as « Relancer l'analyse » of the idea does.
 #[utoipa::path(
     post,
     path = "/api/admin/jobs/{id}/retry",
@@ -154,11 +161,32 @@ pub async fn retry(
         }
         Err(RetryError::Database(err)) => return Err(err.into()),
     };
+    let mut details = json!({ "kind": row.kind });
+    if row.kind == JobKind::AnalyzeIdea.as_str() {
+        let idea_id = serde_json::from_value::<AnalyzePayload>(row.payload.clone())
+            .map_err(|err| {
+                tracing::error!(job_id = row.id, error = %err, "analysis job without idea");
+                ApiError::internal()
+            })?
+            .idea_id;
+        let current = status::lock::<IdeaStatus>(&mut tx, idea_id)
+            .await
+            .map_err(status_error)?;
+        let requeued = current == Some(IdeaStatus::AnalysisFailed);
+        if requeued {
+            let change = Change::by(Actor::Admin).reason("admin_reanalysis");
+            status::transition(&mut tx, idea_id, IdeaStatus::QueuedAnalysis, &change)
+                .await
+                .map_err(status_error)?;
+        }
+        details["idea_id"] = json!(idea_id);
+        details["idea_requeued"] = json!(requeued);
+    }
     admin_actions::record(
         &mut tx,
         &NewAdminAction::new("job.retry")
             .target("job", row.id)
-            .details(json!({ "kind": row.kind })),
+            .details(details),
     )
     .await?;
     tx.commit().await?;

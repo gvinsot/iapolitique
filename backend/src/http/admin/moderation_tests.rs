@@ -9,6 +9,7 @@ use uuid::Uuid;
 use crate::jobs::priority;
 use crate::test_support::{
     IdeaSpec, TestApp, admin_actions, admin_call, admin_get, idea_with_status, listed_idea,
+    published_idea,
 };
 
 async fn post(app: &TestApp, uri: &str, body: Option<Value>) -> (StatusCode, Value) {
@@ -234,6 +235,76 @@ async fn hides_republishes_and_reanalyzes_ideas(pool: PgPool) {
         [
             ("hidden".to_owned(), "admin".to_owned()),
             ("published".to_owned(), "admin".to_owned())
+        ]
+    );
+}
+
+/// A dead analysis left its idea in `analysis_failed`, which the job ignores: retrying the job
+/// moves the idea back to `queued_analysis`, like « Relancer l'analyse ». An idea in another
+/// status keeps it (the job knows what to do with it).
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn retrying_a_dead_analysis_queues_its_idea_again(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), false, &[]).await;
+    let dead_analysis = |idea: Uuid| {
+        let pool = pool.clone();
+        async move {
+            sqlx::query_scalar::<_, i64>(
+                "INSERT INTO jobs (kind, status, attempts, finished_at, last_error, payload,
+                                   dedupe_key)
+                 VALUES ('analyze_idea', 'dead', 3, now(), 'lock expired', $1, $2) RETURNING id",
+            )
+            .bind(json!({ "idea_id": idea, "trigger": "initial" }))
+            .bind(format!("analyze_idea:{idea}"))
+            .fetch_one(&pool)
+            .await
+            .unwrap()
+        }
+    };
+
+    let failed = idea_with_status(&pool, "analysis_failed").await;
+    let job = dead_analysis(failed).await;
+    let (status, body) = post(&app, &format!("/api/admin/jobs/{job}/retry"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "queued");
+    assert_eq!(status_of(&pool, "ideas", failed).await, "queued_analysis");
+    let events: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT to_status, actor, reason_code FROM idea_events WHERE idea_id = $1 ORDER BY id",
+    )
+    .bind(failed)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        events.last().unwrap(),
+        &(
+            "queued_analysis".to_owned(),
+            "admin".to_owned(),
+            Some("admin_reanalysis".to_owned())
+        )
+    );
+
+    let published = published_idea(&pool, "retry-analysis").await;
+    let job_published = dead_analysis(published).await;
+    let (status, _) = post(
+        &app,
+        &format!("/api/admin/jobs/{job_published}/retry"),
+        None,
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(status_of(&pool, "ideas", published).await, "published");
+
+    let details: Vec<Value> = sqlx::query_scalar(
+        "SELECT details FROM admin_actions WHERE action = 'job.retry' ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        details,
+        [
+            json!({ "kind": "analyze_idea", "idea_id": failed, "idea_requeued": true }),
+            json!({ "kind": "analyze_idea", "idea_id": published, "idea_requeued": false }),
         ]
     );
 }

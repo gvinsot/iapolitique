@@ -1033,7 +1033,7 @@
         "tags": [
           "admin"
         ],
-        "summary": "Queues a dead job again (attempts reset, due now). A dead screening or second opinion\nleaves its text waiting: retrying it resumes the pipeline.",
+        "summary": "Queues a dead job again (attempts reset, due now). A dead screening or second opinion\nleaves its text waiting: retrying it resumes the pipeline. A dead analysis left its idea in\n`analysis_failed`, which the job ignores: retrying it also moves the idea back to\n`queued_analysis`, as « Relancer l'analyse » of the idea does.",
         "operationId": "retryAdminJob",
         "parameters": [
           {

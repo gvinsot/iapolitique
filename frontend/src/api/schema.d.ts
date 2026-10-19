@@ -251,7 +251,9 @@ export interface paths {
         put?: never;
         /**
          * Queues a dead job again (attempts reset, due now). A dead screening or second opinion
-         *     leaves its text waiting: retrying it resumes the pipeline.
+         *     leaves its text waiting: retrying it resumes the pipeline. A dead analysis left its idea in
+         *     `analysis_failed`, which the job ignores: retrying it also moves the idea back to
+         *     `queued_analysis`, as « Relancer l'analyse » of the idea does.
          */
         post: operations["retryAdminJob"];
         delete?: never;

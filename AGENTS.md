@@ -996,7 +996,11 @@ dispensent d'aucune des mesures ci-dessous.
   Markdown ou HTML de contenu venant des visiteurs ou de l'IA : texte brut uniquement (les prompts
   de la page Méthodologie sont affichés en `<pre>`). Les URL de sources ne sont rendues en lien
   que si leur schéma est `https:` (ou `http:`), avec `rel="noopener noreferrer nofollow ugc"` et
-  `target="_blank"` ; `javascript:`, `data:` et autres sont affichées en texte. Le test
+  `target="_blank"` ; `javascript:`, `data:` et autres sont affichées en texte. Une adresse
+  e-mail n'est rendue en lien `mailto:` que si elle respecte le motif strict de
+  `frontend/src/lib/email.ts` (dot-atom sans `?`, `&`, `%` ni `#`, domaine en libellés DNS), aussi
+  appliqué par le formulaire de signalement ; sinon elle est affichée en texte, pour qu'aucun champ
+  d'en-tête (`cc`, `bcc`, `body`, RFC 6068) ne s'ajoute à la réponse de l'éditeur. Le test
   `src/test/xss-guards.test.ts` vérifie en plus, dans les sources : aucun puits HTML ni code
   dynamique, aucune règle XSS désactivée, aucune dépendance de rendu Markdown/HTML, et le
   stockage navigateur limité au thème, aux liens de suivi (`localStorage`) et au jeton admin

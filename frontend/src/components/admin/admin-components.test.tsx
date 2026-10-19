@@ -177,6 +177,19 @@ describe("moderation tables", () => {
     );
   });
 
+  it("never links a reporter address that carries mailto header fields (INJ-7)", () => {
+    const hostile = "contact@mairie.fr?cc=attacker%40evil.example&subject=Re%3A";
+    const [report] = reportsFixture;
+    if (!report) throw new Error("missing fixture");
+    renderComponent(<ReportsTable rows={[{ ...report, reporter_email: hostile }]} />);
+    const row = screen.getAllByRole("row")[1];
+    if (!row) throw new Error("missing row");
+    expect(row).toHaveTextContent(hostile);
+    expect(row).toHaveTextContent("adresse non conforme");
+    expect(within(row).queryByRole("link", { name: hostile })).toBeNull();
+    expect(row.querySelector('a[href^="mailto:"]')).toBeNull();
+  });
+
   it("tracks the 24-hour target of an escalation and records its outcome", async () => {
     const onHandle = vi.fn(() => Promise.resolve());
     const { user } = renderComponent(

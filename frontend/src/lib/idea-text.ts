@@ -1,3 +1,5 @@
+import { isValidEmail } from "./email";
+
 /** Submission rules for an idea (AGENTS.md §5.1). The API validates again: this is UX only. */
 export const IDEA_TEXT_MIN_LENGTH = 50;
 export const IDEA_TEXT_MAX_LENGTH = 4000;
@@ -60,13 +62,10 @@ export function validateReportDetails(text: string): string | null {
     : null;
 }
 
-/** Deliberately simple: one "@", a dot in the domain, no spaces. The API decides. */
-const EMAIL_PATTERN = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
-
 export function validateOptionalEmail(email: string): string | null {
   const value = email.trim();
   if (value === "") return null;
-  if (value.length > REPORTER_EMAIL_MAX_LENGTH || !EMAIL_PATTERN.test(value)) {
+  if (value.length > REPORTER_EMAIL_MAX_LENGTH || !isValidEmail(value)) {
     return "Cette adresse e-mail ne semble pas valide. Corrigez-la ou laissez le champ vide.";
   }
   return null;

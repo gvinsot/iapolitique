@@ -2,6 +2,7 @@ import { RotateCwIcon, TriangleAlertIcon } from "lucide-react";
 
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
+import { mailtoHref } from "@/lib/email";
 import { LEGAL_DETAILS_UNAVAILABLE } from "@/lib/legal";
 
 /** One detail coming from the API, or a visible placeholder while it is missing or loading. */
@@ -29,7 +30,8 @@ export function LegalEmail({
   pending: boolean;
 }) {
   if (!email) return <LegalValue value={undefined} pending={pending} />;
-  return <a href={`mailto:${email}`}>{email}</a>;
+  const href = mailtoHref(email);
+  return href ? <a href={href}>{email}</a> : <>{email}</>;
 }
 
 /** Page-level notice when GET /api/legal failed. */

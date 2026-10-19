@@ -23,6 +23,7 @@ import {
   reviewResolutionLabels,
   targetKindLabels,
 } from "@/lib/admin-model";
+import { mailtoHref } from "@/lib/email";
 import { formatDateTime, formatEuros, formatInteger } from "@/lib/format";
 import { PHAROS_URL } from "@/lib/legal";
 import { labelOf } from "@/lib/taxonomy-labels";
@@ -36,6 +37,28 @@ const NOTE_MAX_LENGTH = 2000;
 
 function Muted({ children = "—" }: { children?: string }) {
   return <span className="text-muted-foreground">{children}</span>;
+}
+
+/**
+ * The reporter's address: a mailto link only when it is a plain address, so that an address
+ * smuggling header fields (`?cc=…&body=…`, RFC 6068) never prefills the publisher's reply
+ * (finding INJ-7). Otherwise it is shown as text, flagged, for the publisher to copy by hand.
+ */
+function ReporterEmail({ email }: { email: string }) {
+  const href = mailtoHref(email);
+  if (href) {
+    return (
+      <a href={href} className={adminLinkClass}>
+        {email}
+      </a>
+    );
+  }
+  return (
+    <p className="break-all">
+      {email}{" "}
+      <span className="text-xs text-muted-foreground">(adresse non conforme, pas de lien)</span>
+    </p>
+  );
 }
 
 // --- Ideas -----------------------------------------------------------------------------------
@@ -194,11 +217,7 @@ export function ReportsTable({ rows }: { rows: AdminReport[] }) {
             {row.reporter_name || row.reporter_email ? (
               <>
                 {row.reporter_name ? <p>{row.reporter_name}</p> : null}
-                {row.reporter_email ? (
-                  <a href={`mailto:${row.reporter_email}`} className={adminLinkClass}>
-                    {row.reporter_email}
-                  </a>
-                ) : null}
+                {row.reporter_email ? <ReporterEmail email={row.reporter_email} /> : null}
               </>
             ) : (
               <Muted>Anonyme</Muted>

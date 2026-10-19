@@ -20,23 +20,47 @@ ARG NODE_DIGEST=sha256:0a7108bf6c7bf5de370ffb1a3ed6be93d405b43ff159f681a8d18c0e2
 # Keep NGINX_VERSION aligned with frontend/Dockerfile.
 ARG NGINX_VERSION=1.31
 ARG NGINX_DIGEST=sha256:892bb2152464f0c5d8972593a5f5afaf8054552580b699d95f8ff4af08c2d33d
+# Alpine release of that nginx image (/etc/alpine-release): selects its security feed.
+ARG NGINX_ALPINE_RELEASE=3.24
 ARG ALPINE_VERSION=3.24
 ARG ALPINE_DIGEST=sha256:294b683cb724975bec92580e1e685676bd4b50bda910ddb8c51d4cabeaec77e6
 
 # ---------------------------------------------------------------------------------------------
-# 1. Frontend: known vulnerabilities of the runtime dependencies (npm audit, blocking from
-#    "high", AGENTS.md §14.7), ESLint + Prettier, tsc, Vitest, production build, no third-party
-#    origin in it. The audit asks the npm registry at every frontend change.
+# Advisory feeds (AGENTS.md §14.7, finding SUP-2). BuildKit fetches an ADD URL at every build
+# and reuses the layers that follow only while the content is unchanged: binding these files
+# into the audit steps re-runs `npm audit`, `cargo deny` and `apk upgrade` whenever a new
+# advisory or Alpine fix is published, even when no source changed. They leave no file behind.
 # ---------------------------------------------------------------------------------------------
-FROM node:${NODE_VERSION}-alpine@${NODE_DIGEST} AS frontend-check
+FROM scratch AS npm-advisories
+ADD https://github.com/github/advisory-database/commits/main.atom /feed.atom
+
+FROM scratch AS rustsec-advisories
+ADD https://github.com/rustsec/advisory-db/commits/main.atom /feed.atom
+
+FROM scratch AS alpine-secdb
+ARG NGINX_ALPINE_RELEASE
+ADD https://secdb.alpinelinux.org/v${NGINX_ALPINE_RELEASE}/main.json /main.json
+
+# ---------------------------------------------------------------------------------------------
+# 1. Frontend: known vulnerabilities of the runtime dependencies (npm audit, blocking from
+#    "high", AGENTS.md §14.7) in its own stage, re-run at every new advisory; then ESLint +
+#    Prettier, tsc, Vitest, production build, no third-party origin in it.
+# ---------------------------------------------------------------------------------------------
+FROM node:${NODE_VERSION}-alpine@${NODE_DIGEST} AS frontend-deps
 WORKDIR /app
 ENV CI=true
 COPY frontend/package.json frontend/package-lock.json frontend/.npmrc* ./
 RUN --mount=type=cache,id=iapolitique-npm,target=/root/.npm,sharing=locked \
     npm ci --no-audit --no-fund
+
+FROM frontend-deps AS frontend-audit
+RUN --mount=type=bind,from=npm-advisories,target=/tmp/advisories \
+    npm audit --omit=dev --audit-level=high \
+    && touch /frontend-audit-ok
+
+FROM frontend-deps AS frontend-check
 COPY frontend/ ./
-RUN npm audit --omit=dev --audit-level=high \
-    && npm run lint \
+RUN npm run lint \
     && npm run typecheck \
     && npm test \
     && npm run build \
@@ -52,7 +76,11 @@ RUN npm audit --omit=dev --audit-level=high \
 #    as the runtime stage of frontend/Dockerfile: keep them aligned.
 # ---------------------------------------------------------------------------------------------
 FROM nginx:${NGINX_VERSION}-alpine@${NGINX_DIGEST} AS frontend-headers
-RUN rm -f /etc/nginx/conf.d/default.conf
+ARG NGINX_ALPINE_RELEASE
+RUN --mount=type=bind,from=alpine-secdb,target=/tmp/secdb \
+    grep -q "^${NGINX_ALPINE_RELEASE}\." /etc/alpine-release \
+    && apk upgrade --no-cache \
+    && rm -f /etc/nginx/conf.d/default.conf
 ENV NGINX_ENVSUBST_OUTPUT_DIR=/run/nginx-generated
 COPY frontend/nginx.conf /etc/nginx/nginx.conf
 COPY frontend/nginx/.well-known/security.txt.template /etc/nginx/templates/.well-known/
@@ -125,6 +153,7 @@ ENV CARGO_TERM_COLOR=always \
     RUST_BACKTRACE=1
 WORKDIR /src
 # Witness files: without a dependency on the other stages, BuildKit would skip them entirely.
+COPY --from=frontend-audit /frontend-audit-ok /tmp/frontend-audit-ok
 COPY --from=frontend-check /frontend-ok /tmp/frontend-ok
 COPY --from=frontend-headers /frontend-headers-ok /tmp/frontend-headers-ok
 COPY --from=devops-check /devops-ok /tmp/devops-ok
@@ -154,9 +183,11 @@ RUN --mount=type=cache,id=iapolitique-cargo-registry,target=/cache/registry,shar
     exit "$rc"
 
 # Supply chain (AGENTS.md §14.7), blocking: RustSec advisories (fetched now), banned crates,
-# crates.io as the only source. Runs on the registry left in the image by the step above.
+# crates.io as the only source. Runs on the registry left in the image by the step above, and
+# again whenever the RustSec feed changes (rustsec-advisories), even if no source changed.
 COPY devops/deny.toml /src/devops/deny.toml
-RUN cargo deny --locked --config ../devops/deny.toml check advisories bans sources
+RUN --mount=type=bind,from=rustsec-advisories,target=/tmp/rustsec-feed \
+    cargo deny --locked --config ../devops/deny.toml check advisories bans sources
 
 COPY --chmod=0755 devops/run-tests.sh /usr/local/bin/run-tests
 ENTRYPOINT ["/usr/local/bin/run-tests"]

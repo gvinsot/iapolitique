@@ -954,11 +954,11 @@ au démarrage (un fichier invalide empêche le démarrage).
 ### 13.5 Tests en CI
 
 Le service `test` du compose construit `devops/Dockerfile.test` (contexte `..`) :
-1. stage `frontend-check` (node 22) : `npm ci`, `npm audit --omit=dev --audit-level=high`, lint,
-   typecheck, Vitest, build, puis `npm run check:dist` (`scripts/check-dist-urls.mjs` : le build ne nomme aucune origine tierce
+1. stages `frontend-audit` et `frontend-check` (node 22), sur le même `npm ci` : d'un côté
+   `npm audit --omit=dev --audit-level=high`, de l'autre lint, typecheck, Vitest, build, puis `npm run check:dist` (`scripts/check-dist-urls.mjs` : le build ne nomme aucune origine tierce
    hors d'une liste justifiée d'identifiants et de liens de documentation ; aussi exécuté par
    `frontend/Dockerfile`) ;
-2. stage `frontend-headers` (même image nginx que le runtime) : le `dist/` de `frontend-check`
+2. stage `frontend-headers` (même image nginx que le runtime, même `apk upgrade`) : le `dist/` de `frontend-check`
    servi par `frontend/nginx.conf`, contrôlé par `devops/check_frontend_headers.sh` (en-têtes,
    nonce CSP, cache, méthodes, fichiers cachés, `security.txt` avec et sans adresse, §14.2) ;
 3. stage `devops-check` (alpine, python3 + PyYAML du paquet `py3-yaml`) :
@@ -1181,14 +1181,24 @@ aucune valeur de la requête ne peut y figurer.
   derrière `dashboard-allowlist@file` (§14.4) ; `/admin` du host public redirige vers `ADMIN_HOST`.
 - CI (`devops/Dockerfile.test`) : `cargo deny check advisories bans` (ou `cargo audit`) et
   `npm audit --omit=dev --audit-level=high` bloquants ; `Cargo.lock` et `package-lock.json`
-  committés ; `npm ci` uniquement. Réalisation : `npm audit` en tête du stage `frontend-check` ;
+  committés ; `npm ci` uniquement. Réalisation : `npm audit` dans le stage `frontend-audit` ;
   `cargo deny --locked --config ../devops/deny.toml check advisories bans sources` à la fin du
   stage `backend-test` (binaire officiel épinglé par version et SHA-256). `devops/deny.toml` :
   toute alerte RustSec (vulnérabilité, crate non maintenue ou unsound) et toute version retirée
   bloquent, une exception se note dans `ignore` avec sa raison et une date de réexamen ; crates
   interdites `openssl`, `openssl-sys`, `native-tls`, `aws-lc-sys` (TLS = rustls + ring) ;
   crates.io comme seule source. Ces deux contrôles interrogent leur base à chaque exécution de
-  leur étape (relancée quand les sources du frontend, resp. du backend, changent).
+  leur étape, relancée quand les sources du frontend, resp. du backend, changent, **et** quand
+  le flux d'alertes change : `Dockerfile.test` lie à chaque étape (`RUN --mount=type=bind`) un
+  fichier téléchargé par `ADD` à chaque build (flux Atom des commits de
+  `github/advisory-database` et de `rustsec/advisory-db`), qui invalide le cache de BuildKit dès
+  qu'une alerte paraît, sans rien laisser dans l'image (revue SUP-2).
+- Images nginx (runtime du frontend et stage `frontend-headers`) : `apk upgrade --no-cache` après
+  le `FROM` épinglé, relancé de la même façon à chaque mise à jour du flux de sécurité d'Alpine
+  (`secdb.alpinelinux.org/v<NGINX_ALPINE_RELEASE>/main.json`) : les paquets corrigés sont pris
+  sans attendre un nouveau digest. `NGINX_ALPINE_RELEASE` suit `/etc/alpine-release` de l'image
+  (le build échoue sinon). Reste à faire : scan de vulnérabilités des images construites
+  (Trivy ou Grype) et mise à jour automatique des digests (Renovate).
 - Le worker n'est pas sur le réseau `proxy` ; seuls api et frontend y sont. `proxy` est partagé
   par toutes les stacks du cluster (`attachable`, non `internal`) : tant qu'un réseau dédié à
   Traefik et à iapolitique n'existe pas (`docs/ops.md` §5.4), les ports 8080 et 8081 de l'api

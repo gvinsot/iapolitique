@@ -1,10 +1,13 @@
 //! Normalization and validation of texts typed by anonymous visitors.
 //!
 //! The normalized text is what gets stored, screened and analysed: line endings are unified,
-//! control and invisible formatting characters (zero-width, bidirectional overrides…) are
-//! removed, full-width ASCII forms become ASCII, horizontal whitespace is collapsed, blank lines
-//! are limited to one in a row and the whole text is trimmed. Lengths are counted in Unicode
-//! characters after normalization.
+//! the text is put in NFC form, control and invisible characters (zero-width, bidirectional
+//! overrides, Unicode tag characters, variation selectors, fillers…) are removed, full-width
+//! ASCII forms become ASCII, horizontal whitespace is collapsed, blank lines are limited to one
+//! in a row and the whole text is trimmed. Lengths are counted in Unicode characters after
+//! normalization.
+
+use unicode_normalization::UnicodeNormalization;
 
 /// Inclusive bounds of a text length, in characters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -60,19 +63,38 @@ impl TextError {
     }
 }
 
-/// Invisible characters that can hide content or reorder text, removed from user input.
+/// Invisible characters that can hide content or reorder text, removed from user input: every
+/// `Default_Ignorable_Code_Point` of Unicode (zero-width characters, bidi controls, variation
+/// selectors, Hangul fillers, the Unicode tag characters that can smuggle hidden ASCII…) and
+/// every other format character (`Cf`), INJ-4.
 fn is_invisible_format_char(c: char) -> bool {
     matches!(
         c,
-        '\u{00AD}'                  // soft hyphen
-            | '\u{061C}'            // arabic letter mark
-            | '\u{180E}'            // mongolian vowel separator
-            | '\u{200B}'..='\u{200F}' // zero-width chars, LRM, RLM
-            | '\u{202A}'..='\u{202E}' // bidi embeddings and overrides
-            | '\u{2060}'..='\u{2064}' // word joiner, invisible operators
-            | '\u{2066}'..='\u{2069}' // bidi isolates
-            | '\u{FEFF}'            // byte order mark
-            | '\u{FFF9}'..='\u{FFFB}' // interlinear annotations
+        '\u{00AD}'                      // soft hyphen
+            | '\u{034F}'                // combining grapheme joiner
+            | '\u{0600}'..='\u{0605}'   // arabic number signs (Cf)
+            | '\u{061C}'                // arabic letter mark
+            | '\u{06DD}'                // arabic end of ayah (Cf)
+            | '\u{070F}'                // syriac abbreviation mark (Cf)
+            | '\u{0890}'..='\u{0891}'   // arabic pound and piastre marks above (Cf)
+            | '\u{08E2}'                // arabic disputed end of ayah (Cf)
+            | '\u{115F}'..='\u{1160}'   // Hangul fillers
+            | '\u{17B4}'..='\u{17B5}'   // khmer inherent vowels
+            | '\u{180B}'..='\u{180F}'   // mongolian variation selectors, vowel separator
+            | '\u{200B}'..='\u{200F}'   // zero-width chars, LRM, RLM
+            | '\u{202A}'..='\u{202E}'   // bidi embeddings and overrides
+            | '\u{2060}'..='\u{206F}'   // word joiner, invisible operators, bidi isolates…
+            | '\u{3164}'                // Hangul filler
+            | '\u{FE00}'..='\u{FE0F}'   // variation selectors
+            | '\u{FEFF}'                // byte order mark
+            | '\u{FFA0}'                // halfwidth Hangul filler
+            | '\u{FFF0}'..='\u{FFFB}'   // unassigned specials, interlinear annotations
+            | '\u{110BD}'               // kaithi number sign (Cf)
+            | '\u{110CD}'               // kaithi number sign above (Cf)
+            | '\u{13430}'..='\u{1343F}' // egyptian hieroglyph format controls (Cf)
+            | '\u{1BCA0}'..='\u{1BCA3}' // shorthand format controls
+            | '\u{1D173}'..='\u{1D17A}' // musical symbol format controls
+            | '\u{E0000}'..='\u{E0FFF}' // tag characters, variation selectors supplement
     )
 }
 
@@ -80,7 +102,8 @@ fn is_invisible_format_char(c: char) -> bool {
 pub fn normalize_text(raw: &str) -> String {
     let mut lines: Vec<String> = Vec::new();
     let mut current = String::with_capacity(raw.len().min(16 * 1024));
-    let mut chars = raw.chars().peekable();
+    // Canonical composition first: `e` + U+0301 is `é`, one character.
+    let mut chars = raw.nfc().peekable();
     let mut last_was_space = false;
 
     while let Some(c) = chars.next() {
@@ -308,6 +331,22 @@ mod tests {
     fn strips_control_and_invisible_characters() {
         let raw = "A\u{0000}B\u{0007}C\u{001B}[31mD\u{200B}E\u{202E}F\u{2066}G\u{FEFF}H\u{00AD}I\u{007F}J";
         assert_eq!(normalize_text(raw), "ABC[31mDEFGHIJ");
+    }
+
+    /// INJ-4: invisible characters that can smuggle hidden text (Unicode tag characters,
+    /// variation selectors, fillers, every format character) are removed.
+    #[test]
+    fn strips_every_default_ignorable_and_format_character() {
+        let raw = "a\u{E0041}\u{E0001}\u{E007F}b\u{FE0F}\u{E0100}c\u{034F}\u{3164}\u{115F}\u{1160}\
+                   d\u{FFA0}\u{180B}\u{2061}\u{206F}e\u{200D}\u{0600}\u{110BD}\u{1D173}f\u{E0FFF}g";
+        assert_eq!(normalize_text(raw), "abcdefg");
+        // A text made of fillers only is empty.
+        assert_eq!(
+            validate_idea_text(&"\u{3164}".repeat(60)),
+            Err(TextError::Empty)
+        );
+        // Canonical composition: a decomposed accent counts as one character.
+        assert_eq!(normalize_text("e\u{0301}"), "\u{00E9}");
     }
 
     #[test]

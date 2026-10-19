@@ -1,7 +1,7 @@
 //! HTTP layers shared by the public and admin servers.
 //!
-//! From the outside in: security headers (`security.rs`, §14.2), `Connection: close` after an
-//! unread request body, sensitive headers marking, request id, tracing, no CORS and anti-CSRF
+//! From the outside in: security headers (`security.rs`, §14.2), draining of unread request
+//! bodies (keep-alive behind Traefik), sensitive headers marking, request id, tracing, no CORS and anti-CSRF
 //! (`csrf.rs`, §14.3), panic catching, compression, JSON error bodies, timeout and body size
 //! limit.
 //!
@@ -11,9 +11,10 @@
 
 use std::any::Any;
 use std::pin::Pin;
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, Mutex};
 use std::task::{Context, Poll};
+use std::time::Duration;
 
 use axum::Router;
 use axum::body::{Body, Bytes};
@@ -54,10 +55,24 @@ pub async fn request_id(mut request: Request, next: Next) -> Response {
     response
 }
 
-/// Request body that records whether it was read to its end.
+/// Most bytes of an unread request body read (and discarded) after the response.
+const DRAIN_MAX_BYTES: usize = 1024 * 1024;
+/// Longest wait for the rest of an unread request body.
+const DRAIN_TIMEOUT: Duration = Duration::from_secs(2);
+
+/// Shared state of a [`TrackedBody`]: whether it was read to its end, and the body itself when
+/// the inner service dropped it unread.
+#[derive(Default)]
+struct BodyTracker {
+    finished: AtomicBool,
+    returned: Mutex<Option<Body>>,
+}
+
+/// Request body that records whether it was read to its end, and hands itself back to
+/// [`drain_unread_body`] when dropped unread.
 struct TrackedBody {
-    inner: Body,
-    finished: Arc<AtomicBool>,
+    inner: Option<Body>,
+    tracker: Arc<BodyTracker>,
 }
 
 impl http_body::Body for TrackedBody {
@@ -68,50 +83,109 @@ impl http_body::Body for TrackedBody {
         mut self: Pin<&mut Self>,
         cx: &mut Context<'_>,
     ) -> Poll<Option<Result<http_body::Frame<Bytes>, axum::Error>>> {
-        let poll = Pin::new(&mut self.inner).poll_frame(cx);
+        let Some(inner) = self.inner.as_mut() else {
+            return Poll::Ready(None);
+        };
+        let poll = Pin::new(inner).poll_frame(cx);
         if matches!(poll, Poll::Ready(None)) {
-            self.finished.store(true, Ordering::Relaxed);
+            self.tracker.finished.store(true, Ordering::Relaxed);
         }
         poll
     }
 
     fn is_end_stream(&self) -> bool {
-        let end = self.inner.is_end_stream();
+        let end = self
+            .inner
+            .as_ref()
+            .is_none_or(http_body::Body::is_end_stream);
         if end {
-            self.finished.store(true, Ordering::Relaxed);
+            self.tracker.finished.store(true, Ordering::Relaxed);
         }
         end
     }
 
     fn size_hint(&self) -> http_body::SizeHint {
-        self.inner.size_hint()
+        self.inner
+            .as_ref()
+            .map_or_else(http_body::SizeHint::default, http_body::Body::size_hint)
     }
 }
 
-/// Answers `Connection: close` when an HTTP/1 response leaves the request body unread (unknown
+impl Drop for TrackedBody {
+    fn drop(&mut self) {
+        if self.tracker.finished.load(Ordering::Relaxed) {
+            return;
+        }
+        if let (Some(inner), Ok(mut slot)) = (self.inner.take(), self.tracker.returned.lock()) {
+            *slot = Some(inner);
+        }
+    }
+}
+
+/// Reads and discards what is left of a request body: `true` when it ended within
+/// [`DRAIN_MAX_BYTES`] and [`DRAIN_TIMEOUT`].
+async fn drain(mut body: Body) -> bool {
+    let read = async {
+        let mut total = 0_usize;
+        loop {
+            let frame =
+                std::future::poll_fn(|cx| http_body::Body::poll_frame(Pin::new(&mut body), cx));
+            match frame.await {
+                None => return true,
+                Some(Ok(frame)) => {
+                    total += frame.data_ref().map_or(0, Bytes::len);
+                    if total > DRAIN_MAX_BYTES {
+                        return false;
+                    }
+                }
+                Some(Err(_)) => return false,
+            }
+        }
+    };
+    tokio::time::timeout(DRAIN_TIMEOUT, read)
+        .await
+        .unwrap_or(false)
+}
+
+/// Keeps the HTTP/1 connection usable when a response leaves the request body unread (unknown
 /// route, `403`/`415` of the anti-CSRF layer, `405`, `413`, a handler that ignores its body).
 ///
-/// hyper then closes the connection, since the unread bytes would corrupt the next request,
-/// but without the header Traefik cannot know it: it pools its connections to the api for all
-/// clients and may send another visitor's request on the closing one, which it then answers
-/// `500` (`server closed idle connection`) without retrying a `POST`, so that a stranger's
-/// rejected requests could fail a legitimate submission (security review ZAP-2). With the
-/// header, Traefik drops the connection from its pool.
-pub async fn close_unread_body(request: Request, next: Next) -> Response {
+/// hyper closes such a connection, since the unread bytes would corrupt the next request, and
+/// does so without saying it: Traefik, which pools its connections to the api for all clients,
+/// then sent another visitor's request on the closing one and answered it `500` (`server closed
+/// idle connection`) without retrying a `POST`, so that a stranger's rejected requests could
+/// fail a legitimate submission (security review ZAP-2). The rest of the body is therefore read
+/// and discarded before the response leaves (at most [`DRAIN_MAX_BYTES`] within
+/// [`DRAIN_TIMEOUT`]), and the connection stays reusable; past these bounds the response says
+/// `Connection: close`, so that no proxy reuses it.
+pub async fn drain_unread_body(request: Request, next: Next) -> Response {
     let http1 = matches!(request.version(), Version::HTTP_10 | Version::HTTP_11);
     if !http1 || http_body::Body::is_end_stream(request.body()) {
         return next.run(request).await;
     }
-    let finished = Arc::new(AtomicBool::new(false));
-    let tracked = finished.clone();
+    let tracker = Arc::new(BodyTracker::default());
+    let shared = tracker.clone();
     let request = request.map(move |inner| {
         Body::new(TrackedBody {
-            inner,
-            finished: tracked,
+            inner: Some(inner),
+            tracker: shared,
         })
     });
     let mut response = next.run(request).await;
-    if !finished.load(Ordering::Relaxed) {
+    if tracker.finished.load(Ordering::Relaxed) {
+        return response;
+    }
+    let unread = tracker
+        .returned
+        .lock()
+        .ok()
+        .and_then(|mut slot| slot.take());
+    let drained = match unread {
+        Some(body) => drain(body).await,
+        // Still held by the inner service (never the case today): let no proxy reuse it.
+        None => false,
+    };
+    if !drained {
         response
             .headers_mut()
             .insert(header::CONNECTION, HeaderValue::from_static("close"));
@@ -227,7 +301,7 @@ pub fn with_common_layers(
             header::COOKIE,
             HeaderName::from_static("x-forwarded-for"),
         ]))
-        .layer(middleware::from_fn(close_unread_body))
+        .layer(middleware::from_fn(drain_unread_body))
         .layer(middleware::from_fn_with_state(
             surface,
             security::security_headers,
@@ -480,27 +554,17 @@ hello
             .unwrap()
     }
 
-    /// ZAP-2: a response that leaves the request body unread closes the connection explicitly.
+    /// ZAP-2: an unread request body is drained, so the connection stays usable; only a body
+    /// past the drain bounds closes it, explicitly.
     #[tokio::test]
-    async fn unread_request_bodies_close_the_connection() {
-        let unread = [
+    async fn unread_request_bodies_are_drained() {
+        for request in [
             post_req("/missing", "application/json", "{}".into()),
             post_req("/ok", "application/json", "{}".into()),
             post_req("/echo", "text/plain", "hello".into()),
             post_req("/echo", "application/json", "y".repeat(2048)),
-        ];
-        for request in unread {
-            let uri = request.uri().clone();
-            let response = app().oneshot(request).await.unwrap();
-            assert!(response.status().is_client_error(), "{uri}");
-            assert_eq!(response.headers()[header::CONNECTION], "close", "{uri}");
-            security::assert_security_headers(response.headers(), "unread body");
-        }
-        // Read bodies and bodyless requests keep the connection.
-        for request in [
             post_req("/echo", "application/json", "small".into()),
             get_req("/ok"),
-            get_req("/missing"),
             axum::http::Request::post("/echo")
                 .body(Body::empty())
                 .unwrap(),
@@ -512,17 +576,30 @@ hello
                 "{uri}"
             );
         }
-        // HTTP/2 has no Connection header.
-        let mut request = post_req("/missing", "application/json", "{}".into());
+        let request = post_req(
+            "/missing",
+            "application/json",
+            "z".repeat(DRAIN_MAX_BYTES + 1),
+        );
+        let response = app().oneshot(request).await.unwrap();
+        assert_eq!(response.status(), StatusCode::NOT_FOUND);
+        assert_eq!(response.headers()[header::CONNECTION], "close");
+        security::assert_security_headers(response.headers(), "undrained body");
+        // HTTP/2 has no Connection header and no such issue.
+        let mut request = post_req(
+            "/missing",
+            "application/json",
+            "z".repeat(DRAIN_MAX_BYTES + 1),
+        );
         *request.version_mut() = Version::HTTP_2;
         let response = app().oneshot(request).await.unwrap();
         assert!(!response.headers().contains_key(header::CONNECTION));
     }
 
-    /// ZAP-2 on a real server: the headers of a rejected request arrive before its body (as
-    /// Traefik may send them); the early answer says `Connection: close`, and hyper closes.
-    #[tokio::test]
-    async fn early_answers_close_the_connection_on_a_real_server() {
+    /// Sends `parts` on one connection to a real server running [`app`], pausing between them
+    /// (as Traefik may send the headers of a request before its body), and returns everything
+    /// read until the server closes the connection or stays silent for 3 seconds.
+    async fn raw_exchange(parts: Vec<&'static str>) -> String {
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         let server = tokio::spawn(async move { axum::serve(listener, app()).await });
@@ -530,14 +607,14 @@ hello
             use std::io::{Read, Write};
             let mut stream = std::net::TcpStream::connect(address).unwrap();
             stream
-                .set_read_timeout(Some(Duration::from_secs(5)))
+                .set_read_timeout(Some(Duration::from_secs(3)))
                 .unwrap();
-            let head = "POST /missing HTTP/1.1\r\nHost: x\r\n\
-                        Content-Type: application/json\r\nContent-Length: 2\r\n\r\n";
-            stream.write_all(head.as_bytes()).unwrap();
+            for part in parts {
+                stream.write_all(part.as_bytes()).unwrap();
+                std::thread::sleep(Duration::from_millis(300));
+            }
             let mut answer = Vec::new();
             let mut buffer = [0_u8; 4096];
-            // Until the server closes the connection (EOF), without ever sending the body.
             while let Ok(read) = stream.read(&mut buffer) {
                 if read == 0 {
                     break;
@@ -549,6 +626,47 @@ hello
         .await
         .unwrap();
         server.abort();
+        answer
+    }
+
+    /// ZAP-2 on a real server: a request rejected before its body arrives (unknown route, then
+    /// anti-CSRF `415`) leaves the connection usable for the next request.
+    #[tokio::test]
+    async fn rejected_requests_keep_the_connection_usable_on_a_real_server() {
+        let answer = raw_exchange(vec![
+            "POST /missing HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n\
+             Content-Length: 2\r\n\r\n",
+            "{}",
+            "POST /echo HTTP/1.1\r\nHost: x\r\nContent-Type: text/plain\r\n\
+             Content-Length: 5\r\n\r\n",
+            "hello",
+            "GET /ok HTTP/1.1\r\nHost: x\r\nConnection: close\r\n\r\n",
+        ])
+        .await;
+        // Bodies have no trailing newline: each answer starts right after the previous body.
+        let statuses: Vec<&str> = answer
+            .split("http/1.1 ")
+            .skip(1)
+            .filter_map(|answer| answer.lines().next())
+            .collect();
+        assert_eq!(
+            statuses,
+            ["404 not found", "415 unsupported media type", "200 ok"],
+            "{answer}"
+        );
+        // Only the last answer (to `Connection: close`) closes the connection.
+        assert_eq!(answer.matches("connection: close").count(), 1, "{answer}");
+    }
+
+    /// A body that never comes is waited for [`DRAIN_TIMEOUT`] at most, then the response
+    /// says `Connection: close`.
+    #[tokio::test]
+    async fn a_missing_body_closes_the_connection_on_a_real_server() {
+        let answer = raw_exchange(vec![
+            "POST /missing HTTP/1.1\r\nHost: x\r\nContent-Type: application/json\r\n\
+             Content-Length: 2\r\n\r\n",
+        ])
+        .await;
         assert!(answer.starts_with("http/1.1 404"), "{answer}");
         assert!(answer.contains("\r\nconnection: close\r\n"), "{answer}");
     }

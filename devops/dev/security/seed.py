@@ -189,8 +189,10 @@ def main() -> None:
     status, answer = api.post(f"/api/ideas/{hostile_slug}/reports", body, ip=api.next_ip())
     report = {"status": status, "outcome": answer.get("status")}
     status, page = api.admin_call("GET", f"/ideas?q={hostile_slug}")
-    e2e.expect(status == 200 and page["total"] >= 1, "admin finds the hostile idea")
-    idea_id = page["items"][0]["id"]
+    # `q` is a substring search: pick the idea with this exact slug.
+    match = [item for item in page.get("items", []) if item["slug"] == hostile_slug]
+    e2e.expect(status == 200 and len(match) == 1, "admin finds the hostile idea")
+    idea_id = match[0]["id"]
     status, _ = api.admin_call("POST", f"/ideas/{idea_id}/replies", {
         "author_label": "Ministère <b>test</b>", "body": REPLY_BODY,
         "requested_on": time.strftime("%Y-%m-%d"),

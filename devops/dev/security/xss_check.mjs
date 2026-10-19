@@ -163,7 +163,10 @@ async function runBrowser(browserType) {
       `${ADMIN_ORIGIN}/api/admin/ideas?q=${encodeURIComponent(hostile)}`,
       { headers: { Authorization: `Bearer ${ADMIN_TOKEN}` } },
     )).json();
-    const ideaId = ideas.items?.[0]?.id;
+    // `q` is a substring search: the escalated hostile idea (slug `<hostile>-2`) matches too, and
+    // it is the newer one. Only the idea with the exact slug carries the right of reply.
+    const ideaId = ideas.items?.find((item) => item.slug === hostile)?.id;
+    if (!ideaId) throw new Error(`admin search does not find the hostile idea ${hostile}`);
     const adminPages = [
       ["/admin", []],
       ["/admin/idees", ["=HYPERLINK("]],
@@ -175,9 +178,7 @@ async function runBrowser(browserType) {
       ["/admin/journal", []],
       ["/admin/moderation", []],
     ];
-    if (ideaId) {
-      adminPages.push([`/admin/idees/${ideaId}/reponses`, ['<img src=x onerror="window.__xss=14">']]);
-    }
+    adminPages.push([`/admin/idees/${ideaId}/reponses`, ['<img src=x onerror="window.__xss=14">']]);
     adminPages.push(["/admin/copies-scellees", []]);
     for (const [path, texts] of adminPages) await visit(page, browserName, ADMIN_ORIGIN + path, texts);
 

@@ -431,8 +431,11 @@ version de prompt (l'admin peut relancer manuellement).
   d'un `thinking`, puis par les **résultats des recherches** : dans l'`info` (non documenté) des
   entrées `tool.execution` dont le `name` commence par `web_search`, tout objet portant une
   adresse http(s) dans `url` (à défaut `link`, `href`, `uri`, `source_url`) est une page, titrée
-  par `title` (à défaut `name`) ; un JSON écrit en chaîne est lu aussi (`ai::mistral::
-  collect_search_pages`, 100 pages au plus, profondeur et nombre de valeurs bornés). Relevé en
+  par `title` (à défaut `name`) ; un JSON écrit en chaîne n'est lu qu'au premier niveau
+  (`info.result`), et un résultat (objet portant un champ d'adresse ou de titre, valide ou non)
+  n'est jamais fouillé plus loin : son extrait est du texte de page, une adresse ou un JSON qui
+  s'y trouve ne devient jamais une page (`ai::mistral::collect_search_pages`, 100 pages au plus,
+  profondeur et nombre de valeurs bornés). Relevé en
   production le 2026-10-19 : `mistral-large-4` avec l'effort `high` ne renvoie **aucun**
   `tool_reference`, ses pages sont dans `info.result` (12 à 15 recherches, toutes analyses en
   échec « consulted no page » auparavant). Pages dédoublonnées par la clé de comparaison

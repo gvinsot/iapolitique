@@ -1102,6 +1102,14 @@ fichier incomplet.
   chaque échec est un événement de sécurité (§14.6) ; côté navigateur, conservé en mémoire ou en `sessionStorage`, jamais en
   `localStorage`.
 - Le port public ne connaît aucune route admin (404) ; test dédié.
+- **Exposition résiduelle** (revue de sécurité NET-1, NET-4) : « jamais routé depuis Internet »
+  vaut pour Traefik seulement. L'api écoute sur `0.0.0.0` et rejoint les réseaux partagés
+  `proxy`, `postgresqlcluster_internal` et `llm-net` : tout conteneur de ces réseaux joint
+  directement 8080 (sans WAF ni rate limit de Traefik, en choisissant son `X-Forwarded-For`) et
+  8081 (sans `dashboard-allowlist@file`, protégé par le seul jeton, et capable de déclencher le
+  verrouillage). Corrections attendues et procédure : `docs/ops.md` §5.4 (réseau overlay dédié
+  partagé avec Traefik seul, à créer par le propriétaire de Traefik ; confiance en
+  `X-Forwarded-For` limitée au pair Traefik côté backend).
 
 ### 14.5 Abus et déni de service
 
@@ -1144,7 +1152,8 @@ aucune valeur de la requête ne peut y figurer.
   (uid 10001 pour api et worker, utilisateur `nginx` pour les workers nginx). Aucun port publié :
   tout passe par Traefik. `devops/dev/e2e.sh` lance les conteneurs avec les mêmes options.
 - `devops/check_compose_security.py` (CI, stage `devops-check`) vérifie ces réglages, les
-  réseaux (worker hors `proxy`, services de CI sur leur réseau interne), et les routeurs Traefik :
+  réseaux (worker hors `proxy`, liste fermée de réseaux pour api, worker et frontend, services de
+  CI sur leur réseau interne), et les routeurs Traefik :
   chacun nomme son service, son point d'entrée et un seul `Host()` connu ; `global@file` sur tout
   routeur HTTPS public, `dashboard-allowlist@file` sur `ADMIN_HOST` ; les routeurs HTTP ne font que
   rediriger ; le port admin 8081 n'est servi que sur `ADMIN_HOST`, pour `/api/admin`, derrière
@@ -1159,7 +1168,10 @@ aucune valeur de la requête ne peut y figurer.
   interdites `openssl`, `openssl-sys`, `native-tls`, `aws-lc-sys` (TLS = rustls + ring) ;
   crates.io comme seule source. Ces deux contrôles interrogent leur base à chaque exécution de
   leur étape (relancée quand les sources du frontend, resp. du backend, changent).
-- Le worker n'est pas sur le réseau `proxy` ; seuls api et frontend y sont.
+- Le worker n'est pas sur le réseau `proxy` ; seuls api et frontend y sont. `proxy` est partagé
+  par toutes les stacks du cluster (`attachable`, non `internal`) : tant qu'un réseau dédié à
+  Traefik et à iapolitique n'existe pas (`docs/ops.md` §5.4), les ports 8080 et 8081 de l'api
+  sont joignables par les autres services de ce réseau (exposition résiduelle, §14.4).
 
 ### 14.8 Vérification
 

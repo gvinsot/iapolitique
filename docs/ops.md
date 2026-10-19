@@ -332,3 +332,50 @@ find "$dir" -name 'iapolitique_*.dump' -mtime +29 -delete
   données dont l'échéance est passée.
 - Restauration : `pg_restore -h pg-primary -U postgres -d <base> --clean <fichier>.dump`
   (voir `PostgreSqlCluster/MANAGE.md`).
+
+### 5.4 Réseaux overlay partagés : exposition directe des ports 8080 et 8081
+
+Constat de la revue de sécurité (NET-1, NET-4, 2026-10-19) : l'api rejoint trois réseaux overlay
+partagés, `proxy` (Traefik et une cinquantaine de services d'autres stacks, `attachable`, non
+`internal`), `postgresqlcluster_internal` et `llm-net`, et écoute sur `0.0.0.0` pour ses ports
+8080 (public) et 8081 (admin). « Le port 8081 n'est jamais routé depuis Internet » reste vrai pour
+**Traefik** : mais tout conteneur de ces réseaux joint directement `iapolitique_api:8080` et
+`:8081`, sans le WAF, sans le rate limit de Traefik et sans `dashboard-allowlist@file`. Un
+attaquant qui compromet un service voisin pourrait :
+
+- choisir son empreinte de limitation de débit en posant lui-même `X-Forwarded-For` (l'api prend
+  l'entrée la plus à droite, quel que soit le pair TCP : `TRUSTED_PROXY_HOPS=1`) ; ALTCHA et le
+  budget Mistral restent les seules limites des dépôts ;
+- envoyer dix jetons faux toutes les 5 minutes sur 8081 et tenir l'administration verrouillée
+  (`429 admin_locked`, AGENTS.md §14.4), ce qui bloque la modération et les retraits.
+
+Le jeton admin lui-même (≥ 32 caractères aléatoires) reste hors de portée d'une recherche
+exhaustive.
+
+**Correction attendue côté infrastructure** (propriétaire de la stack `privatenetwork`) : un
+réseau dédié que seuls Traefik, l'api et le frontend partagent.
+
+```bash
+# Sur un manager. Le second réseau sert à la QA si PulsarCD y préfixe ce réseau externe
+# comme il le fait pour llm-net (qa-llm-net) : à vérifier au premier déploiement QA.
+docker network create --driver overlay --opt encrypted iapolitique_edge
+docker network create --driver overlay --opt encrypted qa-iapolitique_edge
+```
+
+puis ajouter ces réseaux au service `traefik` dans le compose de la stack `privatenetwork`
+(pas de `docker service update` manuel : il serait perdu au prochain déploiement). Ensuite,
+dans `devops/docker-compose.swarm.yml` : remplacer `proxy` par `iapolitique_edge` pour api et
+frontend, poser `traefik.swarm.network=iapolitique_edge`, et faire exiger ce réseau par
+`devops/check_compose_security.py` (api et frontend hors de `proxy`). Vérifier sur la QA avant la
+production que PulsarCD réécrit aussi le nom du réseau dans l'étiquette `traefik.swarm.network`.
+
+**Complément dans l'application** (en attente côté backend) : ne croire `X-Forwarded-For` que si
+le pair TCP est dans une plage de confiance (`TRUSTED_PROXY_CIDRS`, sous-réseau du réseau de
+Traefik, valeur prise de `docker network inspect`), ou exiger un en-tête secret posé par Traefik
+(middleware défini dans le provider de fichiers de Traefik, pas en étiquette) avant toute
+vérification de jeton sur 8081, pour qu'un client hors Traefik ne puisse ni choisir son empreinte
+ni faire compter des échecs d'authentification.
+
+Tant que ni l'un ni l'autre n'est en place, l'exposition résiduelle est acceptée et notée dans
+AGENTS.md §14.4 et §14.7 : 8080 et 8081 sont joignables depuis les réseaux partagés, 8081
+protégé par le seul jeton.

@@ -94,6 +94,17 @@ class ComposeSecurityTest(unittest.TestCase):
             lambda c: c["services"]["test"]["networks"].append("proxy"), "test: CI services"
         )
 
+    def test_no_new_shared_network_without_a_decision(self) -> None:
+        # NET-1/NET-4: every overlay the api joins can reach 8080 and 8081 without Traefik.
+        self.assert_reported(
+            lambda c: c["services"]["api"]["networks"].append("monitoring"),
+            "api: unexpected networks ['monitoring']",
+        )
+        self.assert_reported(
+            lambda c: c["services"]["frontend"]["networks"].append("llm"),
+            "frontend: unexpected networks ['llm']",
+        )
+
     def test_admin_port_only_behind_admin_host_and_allowlist(self) -> None:
         self.assert_reported(
             lambda c: set_label(

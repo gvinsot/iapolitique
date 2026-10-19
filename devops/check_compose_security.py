@@ -8,8 +8,9 @@ broken invariant:
 - deployed services (api, worker, frontend): read-only root file system, init, every capability
   dropped and only the listed ones added back, writable paths as tmpfs mounts only, no published
   port, no `DATABASE_URL`;
-- networks: only api and frontend on `proxy`; the worker on no routed network; the CI services on
-  their internal network only;
+- networks: only api and frontend on `proxy`; the worker on no routed network; each deployed
+  service on a closed list of networks (a shared overlay exposes its ports outside Traefik); the
+  CI services on their internal network only;
 - Traefik: every router names its service, its entry point and a Host() rule on TRAEFIK_HOST or
   ADMIN_HOST only; HTTPS routers on TRAEFIK_HOST carry `global@file`, those on ADMIN_HOST
   `dashboard-allowlist@file`; HTTP routers only redirect; the admin port 8081 is reachable only
@@ -32,6 +33,13 @@ ALLOWED_CAPS = {
     "frontend": {"CHOWN", "SETGID", "SETUID", "NET_BIND_SERVICE"},
 }
 PROXY_SERVICES = {"api", "frontend"}
+# Every shared overlay a service joins exposes its ports to all the other containers on it, outside
+# Traefik (docs/ops.md §5.4, findings NET-1/NET-4): the list is closed, a new network is a decision.
+ALLOWED_NETWORKS = {
+    "api": {"proxy", "postgresqlcluster_internal", "llm"},
+    "worker": {"postgresqlcluster_internal", "llm"},
+    "frontend": {"proxy"},
+}
 PUBLIC_HOST = "${TRAEFIK_HOST}"
 ADMIN_HOST = "${ADMIN_HOST}"
 WWW_HOST = "www.${TRAEFIK_HOST}"
@@ -89,6 +97,13 @@ def check_networks(services: dict, errors: list[str]) -> None:
     for name in PROXY_SERVICES:
         if "proxy" not in service_networks(services.get(name, {})):
             errors.append(f"{name}: must join the proxy network to be routed")
+    for name, allowed in ALLOWED_NETWORKS.items():
+        extra = service_networks(services.get(name, {})) - allowed
+        if extra:
+            errors.append(
+                f"{name}: unexpected networks {sorted(extra)} (each shared overlay exposes the "
+                "service's ports outside Traefik, docs/ops.md §5.4)"
+            )
 
 
 def check_traefik(services: dict, errors: list[str]) -> None:

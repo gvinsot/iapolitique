@@ -1154,7 +1154,9 @@ processus est contenue.
 
 Secrets uniquement via `/run/secrets` / environnement, type `Secret` à `Debug` masqué, jamais
 dans une erreur, un log, une réponse ou un `ARG` Docker. Les erreurs 500 renvoient un message
-générique (détail seulement dans les logs, sans donnée sensible). Journaliser les événements de
+générique (détail seulement dans les logs, sans donnée sensible). Les rejets de désérialisation
+(`400 invalid_query`, `422 invalid_body`, `http/extract.rs`) ont un message français fixe : ni le
+texte technique de serde, ni le nom ou la valeur reçus n'y sont repris (revue ZAP-1). Journaliser les événements de
 sécurité (échec d'auth admin, CSRF refusé, rate limit atteint, ALTCHA invalide) **sans** IP, jeton
 ni texte. Format : `http::security::security_event`, niveau `WARN`, cible `security`, message
 `security event`, champs `event` (`admin_auth_failure`, `admin_auth_lockout`, `admin_auth_refused`,

@@ -1,6 +1,8 @@
 //! Extractors whose rejections use the unified JSON error format (axum's defaults answer in
-//! plain text). Rejection details are returned to the caller but never logged: they may quote
-//! the submitted content.
+//! plain text). Rejection details are neither returned nor logged: serde's messages are English
+//! and technical, and quote the submitted content (`unknown variant `<script>…``), whereas the
+//! error message is shown as is to the visitor, in French and without technical detail
+//! (AGENTS.md §13.3, security review ZAP-1).
 
 use axum::extract::rejection::{JsonRejection, PathRejection, QueryRejection};
 use axum::extract::{FromRequest, FromRequestParts, Request};
@@ -9,6 +11,12 @@ use axum::http::request::Parts;
 use serde::de::DeserializeOwned;
 
 use super::error::ApiError;
+
+/// Message of `422 invalid_body`: a well-formed JSON body that does not fit the expected type.
+pub const INVALID_BODY: &str = "Contenu de la requête invalide : un champ manque, est inconnu      ou n'a pas le type attendu.";
+/// Message of `400 invalid_query`: an unknown parameter or a value out of its domain.
+pub const INVALID_QUERY: &str =
+    "Paramètres invalides : un paramètre est inconnu ou sa valeur      n'est pas acceptée.";
 
 /// JSON body.
 #[derive(Debug, Clone, Copy, Default)]
@@ -31,10 +39,7 @@ where
 
 fn json_rejection(rejection: &JsonRejection) -> ApiError {
     match rejection {
-        JsonRejection::JsonDataError(err) => ApiError::validation(
-            "invalid_body",
-            format!("Contenu de la requête invalide : {}", err.body_text()),
-        ),
+        JsonRejection::JsonDataError(_) => ApiError::validation("invalid_body", INVALID_BODY),
         JsonRejection::JsonSyntaxError(_) => ApiError::bad_request(
             "malformed_json",
             "Le corps de la requête n'est pas du JSON valide.",
@@ -60,10 +65,9 @@ where
     async fn from_request_parts(parts: &mut Parts, state: &S) -> Result<Self, Self::Rejection> {
         match axum::extract::Query::<T>::from_request_parts(parts, state).await {
             Ok(axum::extract::Query(value)) => Ok(Self(value)),
-            Err(QueryRejection::FailedToDeserializeQueryString(err)) => Err(ApiError::bad_request(
-                "invalid_query",
-                format!("Paramètres invalides : {}", err.body_text()),
-            )),
+            Err(QueryRejection::FailedToDeserializeQueryString(_)) => {
+                Err(ApiError::bad_request("invalid_query", INVALID_QUERY))
+            }
             Err(other) => Err(ApiError::from_status(other.status())),
         }
     }
@@ -139,6 +143,73 @@ mod tests {
         value["error"]["code"].as_str().unwrap().to_owned()
     }
 
+    fn message(body: &str) -> String {
+        let value: serde_json::Value = serde_json::from_str(body).unwrap();
+        value["error"]["message"].as_str().unwrap().to_owned()
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(deny_unknown_fields)]
+    #[allow(dead_code)]
+    struct Strict {
+        kind: Kind,
+    }
+
+    #[derive(Debug, Deserialize)]
+    #[serde(rename_all = "snake_case")]
+    enum Kind {
+        Score,
+    }
+
+    /// ZAP-1: a rejected value, field or parameter is never echoed back, nor serde's English
+    /// and technical wording (the message is shown as is to the visitor, §13.3).
+    #[tokio::test]
+    async fn rejections_do_not_echo_the_request() {
+        let app = Router::new()
+            .route("/json", post(|ApiJson(_): ApiJson<Strict>| async { "" }))
+            .route("/query", get(|ApiQuery(_): ApiQuery<Strict>| async { "" }));
+        let payload = "<script>alert(1)</script>";
+        let encoded = "%3Cscript%3Ealert(1)%3C%2Fscript%3E";
+        let requests = [
+            axum::http::Request::get(format!("/query?kind={encoded}")),
+            axum::http::Request::get(format!("/query?kind=score&{encoded}=1")),
+        ]
+        .map(|r| r.body(Body::empty()).unwrap())
+        .into_iter()
+        .chain(
+            [
+                format!(r#"{{"kind": "{payload}"}}"#),
+                format!(r#"{{"kind": "score", "{payload}": 1}}"#),
+                format!(r#"{{"kind": 1, "x": "{payload}"}}"#),
+            ]
+            .map(|body| {
+                axum::http::Request::post("/json")
+                    .header("content-type", "application/json")
+                    .body(Body::from(body))
+                    .unwrap()
+            }),
+        );
+        for request in requests {
+            let response = app.clone().oneshot(request).await.unwrap();
+            let status = response.status();
+            let bytes = response.into_body().collect().await.unwrap().to_bytes();
+            let body = String::from_utf8(bytes.to_vec()).unwrap();
+            assert!(status.is_client_error(), "{status}");
+            for leak in [
+                "script", "alert", "Failed", "unknown", "variant", "expected",
+            ] {
+                assert!(!body.contains(leak), "{leak} echoed in {body}");
+            }
+            assert!(
+                matches!(
+                    code(&body).as_str(),
+                    "invalid_body" | "invalid_query" | "malformed_json"
+                ),
+                "{body}"
+            );
+        }
+    }
+
     #[tokio::test]
     async fn json_extractor() {
         assert_eq!(
@@ -153,6 +224,7 @@ mod tests {
         let (status, body) = call(json(r#"{"count": -1}"#)).await;
         assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
         assert_eq!(code(&body), "invalid_body");
+        assert_eq!(message(&body), INVALID_BODY);
 
         let request = axum::http::Request::post("/json")
             .body(Body::from(r#"{"count": 3}"#))
@@ -172,6 +244,7 @@ mod tests {
         let (status, body) = call(get("/query?count=x")).await;
         assert_eq!(status, StatusCode::BAD_REQUEST);
         assert_eq!(code(&body), "invalid_query");
+        assert_eq!(message(&body), INVALID_QUERY);
 
         assert_eq!(call(get("/path/5")).await, (StatusCode::OK, "5".into()));
         let (status, body) = call(get("/path/abc")).await;

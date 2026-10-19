@@ -22,6 +22,7 @@ pub mod admin;
 pub mod antispam;
 pub mod cache;
 pub mod client_ip;
+pub mod csrf;
 pub mod error;
 pub mod exports;
 pub mod extract;
@@ -115,7 +116,12 @@ pub fn public_router(state: AppState) -> Router {
         .route("/api/track/review-request", post(tracking::request_review))
         .fallback(not_found)
         .with_state(state.clone());
-    middleware::with_common_layers(router, &state.config.http, security::Surface::Public)
+    middleware::with_common_layers(
+        router,
+        &state.config.http,
+        security::Surface::Public,
+        csrf::OriginPolicy::public(&state.config),
+    )
 }
 
 /// Admin API (port 8081): health probes and the OpenAPI spec are open (healthchecks), every
@@ -134,7 +140,12 @@ pub fn admin_router(state: AppState, token: Secret) -> Router {
         .nest(openapi::ADMIN_PREFIX, protected)
         .fallback(not_found)
         .with_state(state.clone());
-    middleware::with_common_layers(router, &state.config.http, security::Surface::Admin)
+    middleware::with_common_layers(
+        router,
+        &state.config.http,
+        security::Surface::Admin,
+        csrf::OriginPolicy::admin(&state.config),
+    )
 }
 
 #[cfg(test)]

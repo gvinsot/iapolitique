@@ -124,6 +124,14 @@ pub async fn security_headers(
     response
 }
 
+/// Logs a security event (AGENTS.md §14.6): admin authentication failure, CSRF refusal, rate
+/// limit reached, invalid ALTCHA… Only fixed labels are accepted (`&'static str`), so an event
+/// can never carry an IP address, a token or a visitor text; the request span adds the route
+/// template and the request id.
+pub fn security_event(event: &'static str, reason: &'static str) {
+    tracing::warn!(target: "security", event, reason, "security event");
+}
+
 /// Asserts the headers every backend response carries (tests of each response family).
 #[cfg(test)]
 pub fn assert_security_headers(headers: &HeaderMap, context: &str) {

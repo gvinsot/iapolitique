@@ -1,8 +1,8 @@
 //! HTTP layers shared by the public and admin servers.
 //!
 //! From the outside in: security headers (`security.rs`, §14.2), sensitive headers marking,
-//! request id, tracing, panic catching, compression, JSON error bodies, timeout and body size
-//! limit.
+//! request id, tracing, no CORS and anti-CSRF (`csrf.rs`, §14.3), panic catching, compression,
+//! JSON error bodies, timeout and body size limit.
 //!
 //! Tracing records the method, the **route template** (never the concrete URI, which may hold
 //! a tracking token or a search text), the status and the latency. No header, IP or body is
@@ -26,6 +26,7 @@ use tower_http::timeout::TimeoutLayer;
 use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::{Level, Span};
 
+use super::csrf::{self, OriginPolicy};
 use super::error::ApiError;
 use super::security::{self, Surface};
 use crate::config::HttpConfig;
@@ -122,7 +123,12 @@ fn log_failure(class: ServerErrorsFailureClass, latency: std::time::Duration, _s
 
 /// Wraps a router with the shared layers; `surface` selects the `Cache-Control` policy of the
 /// security headers.
-pub fn with_common_layers(router: Router, config: &HttpConfig, surface: Surface) -> Router {
+pub fn with_common_layers(
+    router: Router,
+    config: &HttpConfig,
+    surface: Surface,
+    origins: OriginPolicy,
+) -> Router {
     router
         .layer(RequestBodyLimitLayer::new(config.body_limit_bytes))
         .layer(DefaultBodyLimit::max(config.body_limit_bytes))
@@ -133,6 +139,7 @@ pub fn with_common_layers(router: Router, config: &HttpConfig, surface: Surface)
         .layer(middleware::from_fn(json_errors))
         .layer(CompressionLayer::new())
         .layer(CatchPanicLayer::custom(panic_response))
+        .layer(middleware::from_fn_with_state(origins, csrf::csrf))
         .layer(
             TraceLayer::new_for_http()
                 .make_span_with(make_span)
@@ -217,7 +224,12 @@ mod tests {
             .route("/panic", get(panicking))
             .route("/echo", post(|body: String| async move { body }))
             .route("/big", get(|| async { "x".repeat(10_000) }));
-        with_common_layers(router, &http_config(), Surface::Public)
+        with_common_layers(
+            router,
+            &http_config(),
+            Surface::Public,
+            OriginPolicy::default(),
+        )
     }
 
     async fn send(request: axum::http::Request<Body>) -> (Response, serde_json::Value) {
@@ -291,6 +303,7 @@ mod tests {
     #[tokio::test]
     async fn bodies_over_the_limit_are_rejected() {
         let request = axum::http::Request::post("/echo")
+            .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from("y".repeat(2048)))
             .unwrap();
         let (response, json) = send(request).await;
@@ -300,6 +313,7 @@ mod tests {
         assert_eq!(response.headers()[header::CACHE_CONTROL], "no-store");
 
         let request = axum::http::Request::post("/echo")
+            .header(header::CONTENT_TYPE, "application/json")
             .body(Body::from("small"))
             .unwrap();
         let (response, _) = send(request).await;
@@ -315,5 +329,71 @@ mod tests {
         let response = app().oneshot(request).await.unwrap();
         assert_eq!(response.headers()[header::CONTENT_ENCODING], "gzip");
         security::assert_security_headers(response.headers(), "compressed");
+    }
+
+    /// Status line of a raw HTTP/1.1 request sent to a real server running [`app`].
+    async fn raw_status(raw: &'static str) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app()).await });
+        let answer = tokio::task::spawn_blocking(move || {
+            use std::io::{Read, Write};
+            let mut stream = std::net::TcpStream::connect(address).unwrap();
+            stream.write_all(raw.as_bytes()).unwrap();
+            let mut answer = String::new();
+            stream.read_to_string(&mut answer).unwrap();
+            answer
+        })
+        .await
+        .unwrap();
+        server.abort();
+        answer.lines().next().unwrap_or_default().to_owned()
+    }
+
+    #[tokio::test]
+    async fn bodyless_writes_may_omit_the_content_type_on_a_real_server() {
+        let status = raw_status(
+            "POST /echo HTTP/1.1
+Host: x
+Connection: close
+
+",
+        )
+        .await;
+        assert_eq!(status, "HTTP/1.1 200 OK");
+        let status = raw_status(
+            "POST /echo HTTP/1.1
+Host: x
+Content-Length: 0
+Connection: close
+
+",
+        )
+        .await;
+        assert_eq!(status, "HTTP/1.1 200 OK");
+        let status = raw_status(
+            "POST /echo HTTP/1.1
+Host: x
+Content-Length: 5
+Connection: close
+
+hello",
+        )
+        .await;
+        assert_eq!(status, "HTTP/1.1 415 Unsupported Media Type");
+        let status = raw_status(
+            "POST /echo HTTP/1.1
+Host: x
+Transfer-Encoding: chunked
+Connection: close
+
+5
+hello
+0
+
+",
+        )
+        .await;
+        assert_eq!(status, "HTTP/1.1 415 Unsupported Media Type");
     }
 }

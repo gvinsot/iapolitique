@@ -90,9 +90,9 @@ pub struct Config {
     /// Directory holding the versioned prompts (§13.4).
     pub prompts_dir: PathBuf,
     pub log: LogConfig,
-    /// Public host (`TRAEFIK_HOST`), informative only (Traefik routes on it).
+    /// Public host (`TRAEFIK_HOST`): canonical URLs, origin accepted by the anti-CSRF check.
     pub public_host: Option<String>,
-    /// Admin host (`ADMIN_HOST`), informative only.
+    /// Admin host (`ADMIN_HOST`): origin accepted by the anti-CSRF check of both ports.
     pub admin_host: Option<String>,
     /// Publisher details served by `GET /api/legal` (§7.5).
     pub legal: LegalConfig,
@@ -154,6 +154,10 @@ pub struct HttpConfig {
     pub trusted_proxy_hops: usize,
     /// Bearer token protecting the admin port. Required for [`Role::Api`].
     pub admin_api_token: Option<Secret>,
+    /// `ALLOWED_DEV_ORIGINS`: origins accepted by the anti-CSRF check besides
+    /// `https://TRAEFIK_HOST` and `https://ADMIN_HOST` (`http://localhost:5173` for the Vite dev
+    /// server…), normalized as `scheme://host[:port]` in lower case. Empty by default.
+    pub allowed_dev_origins: Vec<String>,
 }
 
 #[derive(Debug, Clone)]
@@ -279,6 +283,7 @@ impl Config {
             ),
             trusted_proxy_hops: env.parse_in("TRUSTED_PROXY_HOPS", 1usize, 0..=10),
             admin_api_token,
+            allowed_dev_origins: env.origins("ALLOWED_DEV_ORIGINS"),
         };
 
         let worker = WorkerConfig {
@@ -503,6 +508,27 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
         }
     }
 
+    /// Comma-separated list of web origins (`http(s)://host[:port]`, no path), normalized.
+    fn origins(&mut self, key: &str) -> Vec<String> {
+        let Some(raw) = self.opt_string(key) else {
+            return Vec::new();
+        };
+        let mut origins = Vec::new();
+        for item in raw
+            .split(',')
+            .map(str::trim)
+            .filter(|item| !item.is_empty())
+        {
+            match normalize_origin(item) {
+                Some(origin) => origins.push(origin),
+                None => self.problem(format!(
+                    "{key}: `{item}` is not an origin (expected http(s)://host[:port])"
+                )),
+            }
+        }
+        origins
+    }
+
     fn url(&mut self, key: &str, default: &str) -> String {
         let value = self.string(key, default);
         if !(value.starts_with("http://") || value.starts_with("https://")) {
@@ -611,6 +637,20 @@ pub unsafe fn load_secrets_into_env(dir: &Path) -> Vec<String> {
     loaded
 }
 
+/// A web origin `http(s)://host[:port]` in lower case without trailing slash, `None` when
+/// `value` is not one (path, query, credentials, spaces…).
+pub fn normalize_origin(value: &str) -> Option<String> {
+    let value = value.trim().trim_end_matches('/').to_ascii_lowercase();
+    let rest = value
+        .strip_prefix("https://")
+        .or_else(|| value.strip_prefix("http://"))?;
+    let valid = !rest.is_empty()
+        && rest
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '.' | '-' | ':' | '[' | ']'));
+    valid.then_some(value)
+}
+
 fn is_env_name(name: &str) -> bool {
     let mut chars = name.chars();
     matches!(chars.next(), Some(c) if c.is_ascii_alphabetic() || c == '_')
@@ -671,7 +711,40 @@ mod tests {
         assert_eq!(jobs.timeout, Duration::from_secs(30));
         assert_eq!(jobs.url, config.decision_service.url);
         assert_eq!(config.log.format, LogFormat::Json);
+        assert!(config.http.allowed_dev_origins.is_empty());
         assert!(config.public_host.is_none());
+    }
+
+    #[test]
+    fn dev_origins_are_normalized_and_validated() {
+        let mut env = api_env();
+        env.push((
+            "ALLOWED_DEV_ORIGINS",
+            " http://localhost:5173, HTTPS://Dev.Example.org/ ,,http://[::1]:4173",
+        ));
+        let config = Config::from_lookup(Role::Api, lookup(&env)).unwrap();
+        assert_eq!(
+            config.http.allowed_dev_origins,
+            [
+                "http://localhost:5173",
+                "https://dev.example.org",
+                "http://[::1]:4173"
+            ]
+        );
+        for bad in [
+            "localhost:5173",
+            "http://localhost:5173/app",
+            "ftp://x",
+            "http://",
+            "http://a b",
+            "http://user@host",
+            "null",
+        ] {
+            let mut env = api_env();
+            env.push(("ALLOWED_DEV_ORIGINS", bad));
+            let err = Config::from_lookup(Role::Api, lookup(&env)).unwrap_err();
+            assert!(err.problems[0].contains("ALLOWED_DEV_ORIGINS"), "{bad}");
+        }
     }
 
     #[test]

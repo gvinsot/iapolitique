@@ -215,3 +215,280 @@ async fn admin_responses_carry_the_security_headers(pool: PgPool) {
         assert_eq!(headers[header::CACHE_CONTROL], "no-store", "{context}");
     }
 }
+
+/// Runs `future` with a subscriber capturing every log line (current thread): the output.
+pub(crate) async fn capture_logs<F: std::future::Future>(future: F) -> (F::Output, String) {
+    use std::sync::{Arc, Mutex};
+
+    #[derive(Clone, Default)]
+    struct Buffer(Arc<Mutex<Vec<u8>>>);
+    impl std::io::Write for Buffer {
+        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(data);
+            Ok(data.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    let buffer = Buffer::default();
+    let writer = buffer.clone();
+    let subscriber = tracing_subscriber::fmt()
+        .json()
+        .with_max_level(tracing::Level::TRACE)
+        .with_writer(move || writer.clone())
+        .finish();
+    let guard = tracing::subscriber::set_default(subscriber);
+    let output = future.await;
+    drop(guard);
+    let logs = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
+    (output, logs)
+}
+
+const PUBLIC_HOST: &str = "qa.iapolitique.fr";
+const ADMIN_HOST: &str = "qa.admin.iapolitique.fr";
+
+async fn app_with_hosts(pool: PgPool) -> TestApp {
+    TestApp::new(
+        pool,
+        false,
+        &[("TRAEFIK_HOST", PUBLIC_HOST), ("ADMIN_HOST", ADMIN_HOST)],
+    )
+    .await
+}
+
+fn with_headers(
+    method: Method,
+    uri: &str,
+    headers: &[(&str, &str)],
+    body: Option<&str>,
+) -> Request<Body> {
+    let mut builder = Request::builder()
+        .method(method)
+        .uri(uri)
+        .header("x-forwarded-for", CLIENT_IP);
+    for (name, value) in headers {
+        builder = builder.header(*name, *value);
+    }
+    builder
+        .body(body.map_or_else(Body::empty, |b| Body::from(b.to_owned())))
+        .unwrap()
+}
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn cors_preflights_are_refused_and_never_answered(pool: PgPool) {
+    let app = app_with_hosts(pool).await;
+    let admin = admin_router(app.state.clone(), Secret::new(SECRET));
+    let preflight = [
+        ("origin", "https://evil.example"),
+        ("access-control-request-method", "POST"),
+        ("access-control-request-headers", "content-type"),
+    ];
+    for (router, uri) in [
+        (&app.router, "/api/ideas"),
+        (&app.router, "/api/track"),
+        (&app.router, "/api/nothing"),
+        (&admin, "/api/admin/session"),
+    ] {
+        let (status, headers, body) =
+            send(router, with_headers(Method::OPTIONS, uri, &preflight, None)).await;
+        assert_eq!(status, StatusCode::METHOD_NOT_ALLOWED, "{uri}");
+        assert_eq!(body["error"]["code"], "method_not_allowed", "{uri}");
+        assert_security_headers(&headers, uri);
+    }
+    // A simple cross-origin GET is answered, without any Access-Control-* header.
+    let (status, headers, _) = send(
+        &app.router,
+        with_headers(
+            Method::GET,
+            "/api/stats",
+            &[("origin", "https://evil.example")],
+            None,
+        ),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_security_headers(&headers, "cross-origin GET");
+}
+
+/// A write request and its expected answer (status, error code).
+type WriteCase<'a> = (
+    &'a axum::Router,
+    Method,
+    &'a str,
+    Vec<(&'a str, &'a str)>,
+    Option<&'a str>,
+    StatusCode,
+    &'a str,
+);
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn cross_site_writes_are_refused(pool: PgPool) {
+    let app = app_with_hosts(pool).await;
+    let admin = admin_router(app.state.clone(), Secret::new(SECRET));
+    let json = ("content-type", "application/json");
+    let bearer = format!("Bearer {SECRET}");
+    let token = ("authorization", bearer.as_str());
+    let public_origin = format!("https://{PUBLIC_HOST}");
+    let admin_origin = format!("https://{ADMIN_HOST}");
+    let job = "/api/admin/jobs/999999/retry".to_owned();
+
+    // (router, method, uri, headers, body, expected status, expected code)
+    let cases: Vec<WriteCase<'_>> = vec![
+        // Wrong Content-Type: a cross-site form.
+        (
+            &app.router,
+            Method::POST,
+            "/api/ideas",
+            vec![("content-type", "application/x-www-form-urlencoded")],
+            Some("text=x"),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_media_type",
+        ),
+        (
+            &app.router,
+            Method::POST,
+            "/api/track",
+            vec![("content-type", "text/plain")],
+            Some(r#"{"token":"x"}"#),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_media_type",
+        ),
+        (
+            &app.router,
+            Method::POST,
+            "/api/track",
+            vec![],
+            Some(r#"{"token":"x"}"#),
+            StatusCode::UNSUPPORTED_MEDIA_TYPE,
+            "unsupported_media_type",
+        ),
+        // Foreign origin.
+        (
+            &app.router,
+            Method::POST,
+            "/api/ideas",
+            vec![json, ("origin", "https://evil.example")],
+            Some("{}"),
+            StatusCode::FORBIDDEN,
+            "origin_not_allowed",
+        ),
+        (
+            &app.router,
+            Method::POST,
+            "/api/track/delete",
+            vec![json, ("origin", "null")],
+            Some(r#"{"token":"x"}"#),
+            StatusCode::FORBIDDEN,
+            "origin_not_allowed",
+        ),
+        (
+            &app.router,
+            Method::POST,
+            "/api/track",
+            vec![json, ("sec-fetch-site", "cross-site")],
+            Some(r#"{"token":"x"}"#),
+            StatusCode::FORBIDDEN,
+            "origin_not_allowed",
+        ),
+        (
+            &admin,
+            Method::POST,
+            &job,
+            vec![token, ("origin", public_origin.as_str())],
+            None,
+            StatusCode::FORBIDDEN,
+            "origin_not_allowed",
+        ),
+        (
+            &admin,
+            Method::PUT,
+            "/api/admin/settings/dedup-threshold",
+            vec![token, json, ("origin", "https://evil.example")],
+            Some(r#"{"value":0.9}"#),
+            StatusCode::FORBIDDEN,
+            "origin_not_allowed",
+        ),
+        // Same origin (or no browser at all): the handler answers.
+        (
+            &app.router,
+            Method::POST,
+            "/api/ideas",
+            vec![
+                json,
+                ("origin", public_origin.as_str()),
+                ("sec-fetch-site", "same-origin"),
+            ],
+            Some("{}"),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_body",
+        ),
+        (
+            &app.router,
+            Method::POST,
+            "/api/ideas",
+            vec![json, ("origin", admin_origin.as_str())],
+            Some("{}"),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_body",
+        ),
+        (
+            &app.router,
+            Method::POST,
+            "/api/ideas",
+            vec![json],
+            Some("{}"),
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_body",
+        ),
+        (
+            &admin,
+            Method::POST,
+            &job,
+            vec![token, ("origin", admin_origin.as_str())],
+            None,
+            StatusCode::NOT_FOUND,
+            "job_not_found",
+        ),
+        (
+            &admin,
+            Method::POST,
+            &job,
+            vec![token],
+            None,
+            StatusCode::NOT_FOUND,
+            "job_not_found",
+        ),
+    ];
+    for (router, method, uri, headers, body, status, code) in cases {
+        let context = format!("{method} {uri} {headers:?}");
+        let (actual, response_headers, response) =
+            send(router, with_headers(method, uri, &headers, body)).await;
+        assert_eq!(actual, status, "{context}: {response}");
+        assert_eq!(response["error"]["code"], code, "{context}");
+        assert_security_headers(&response_headers, &context);
+    }
+}
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn csrf_refusals_are_logged_without_ip_nor_content(pool: PgPool) {
+    let app = app_with_hosts(pool).await;
+    let request = with_headers(
+        Method::POST,
+        "/api/ideas",
+        &[
+            ("content-type", "application/json"),
+            ("origin", "https://evil.example"),
+        ],
+        Some(r#"{"text":"texte-secret-du-visiteur"}"#),
+    );
+    let ((status, _, _), logs) = capture_logs(send(&app.router, request)).await;
+    assert_eq!(status, StatusCode::FORBIDDEN);
+    assert!(logs.contains("security event"), "{logs}");
+    assert!(logs.contains("csrf_refused"), "{logs}");
+    assert!(logs.contains("origin_not_allowed"), "{logs}");
+    for secret in [CLIENT_IP, "evil.example", "texte-secret-du-visiteur"] {
+        assert!(!logs.contains(secret), "{secret} logged: {logs}");
+    }
+}

@@ -725,7 +725,7 @@ décidée par l'humain.
   `ADMIN_API_TOKEN`. Ne jamais utiliser `DATABASE_URL` (serait déployé en clair).
 - Coordonnées légales (non secrètes mais hors git) : `LEGAL_PUBLISHER_NAME`,
   `LEGAL_PUBLISHER_ADDRESS`, `LEGAL_PUBLISHER_PHONE`, `LEGAL_CONTACT_EMAIL`, `LEGAL_PRIVACY_EMAIL`.
-- Variables non sensibles : `TRAEFIK_HOST`, `ADMIN_HOST`, `LLM_NETWORK`, `DECISION_SERVICE_URL`,
+- Variables non sensibles : `TRAEFIK_HOST`, `ADMIN_HOST`, `ALLOWED_DEV_ORIGINS` (dev uniquement), `LLM_NETWORK`, `DECISION_SERVICE_URL`,
   `DECISION_SERVICE_TIMEOUT_SECS`, `DECISION_SERVICE_JOB_TIMEOUT_SECS`, `MISTRAL_API_BASE_URL`,
   `MISTRAL_ANALYSIS_MODEL`, `MISTRAL_REVIEW_MODEL`, `MISTRAL_EMBED_MODEL`,
   `MISTRAL_DAILY_BUDGET_EUR`, prix unitaires Mistral, `DEDUP_SIMILARITY_THRESHOLD`, limites de
@@ -807,7 +807,8 @@ configuration liste tous les problèmes et empêche le démarrage) :
 | `RATE_LIMIT_CONTRIBUTIONS_PER_DAY`, `RATE_LIMIT_REPORTS_PER_DAY` | 20, 20 | par empreinte |
 | `PROMPTS_DIR` | `/app/prompts` | prompts versionnés |
 | `RUST_LOG`, `LOG_FORMAT` | `info,sqlx=warn`, `json` | logs (`text` en dev) |
-| `TRAEFIK_HOST`, `ADMIN_HOST` | absents | `TRAEFIK_HOST` sert aussi aux URL canoniques des exports (`iapolitique.fr` si absent) |
+| `TRAEFIK_HOST`, `ADMIN_HOST` | absents | origines `https://…` acceptées par l'anti-CSRF (§14.3) ; `TRAEFIK_HOST` sert aussi aux URL canoniques des exports (`iapolitique.fr` si absent) |
+| `ALLOWED_DEV_ORIGINS` | vide | origines supplémentaires acceptées par l'anti-CSRF (§14.3) sur les deux ports, séparées par des virgules, de la forme `http(s)://hôte[:port]` (en dev : `http://localhost:5173`) ; jamais en production |
 | `LEGAL_PUBLISHER_NAME`, `LEGAL_PUBLISHER_ADDRESS`, `LEGAL_PUBLISHER_PHONE` | absents | identité de l'éditeur (§7.5), une ligne de 200, 300 et 40 caractères au plus ; servis par `GET /api/legal` (`null` si absent, avertissement au démarrage de l'api) |
 | `LEGAL_CONTACT_EMAIL`, `LEGAL_PRIVACY_EMAIL` | absents | adresses de contact et de demandes RGPD (adresse électronique valide, sinon erreur de configuration) |
 
@@ -874,7 +875,7 @@ utilisent). Le worker répond sur `/health` (et `/api/health`)
 du port 8082 : `503` si sa boucle est bloquée.
 
 Erreurs : toute réponse 4xx/5xx a le corps JSON du §4.1, y compris 404, 405, 413 (corps au-delà
-de `HTTP_BODY_LIMIT_BYTES`), 504 (`timeout`, au-delà de `HTTP_REQUEST_TIMEOUT_SECS`) et 500.
+de `HTTP_BODY_LIMIT_BYTES`), 403 et 415 (anti-CSRF, §14.3), 504 (`timeout`, au-delà de `HTTP_REQUEST_TIMEOUT_SECS`) et 500.
 Chaque réponse porte un en-tête `x-request-id` généré par le serveur.
 
 Le frontend appelle toujours des chemins relatifs `/api/...`. En dev, Vite proxifie `/api` vers
@@ -1020,11 +1021,19 @@ gabarit et de la configuration, sans donnée personnelle dans le dépôt) et une
 - **Aucun CORS** : l'API est same-origin uniquement. Elle n'émet jamais
   `Access-Control-Allow-*` ; une pré-requête `OPTIONS` est refusée. Pas de couche CORS
   permissive, même en dev (le proxy Vite rend tout same-origin).
-- **Anti-CSRF** sur toute requête non `GET`/`HEAD` : `Content-Type: application/json` exigé
-  (`415` sinon : bloque les formulaires cross-site) ; en-tête `Origin` (ou à défaut
-  `Sec-Fetch-Site`) vérifié : seule l'origine `https://TRAEFIK_HOST` (resp. `https://ADMIN_HOST`
-  sur le port admin, plus les origines de dev configurées explicitement) est acceptée,
-  `Sec-Fetch-Site: cross-site` refusé (`403`, message français).
+- **Anti-CSRF** sur toute requête non `GET`/`HEAD` (`http/csrf.rs`) : `Content-Type:
+  application/json` exigé (`415 unsupported_media_type` sinon : bloque les formulaires
+  cross-site) ; seule une requête **sans corps** peut l'omettre (`openapi-fetch` n'en envoie pas
+  pour un `POST`/`DELETE` sans corps). En-tête `Origin` vérifié : sur le port public, seules
+  `https://TRAEFIK_HOST` et `https://ADMIN_HOST` (Traefik y route aussi `/api`) sont acceptées ;
+  sur le port admin, seule `https://ADMIN_HOST` ; plus, sur les deux, `ALLOWED_DEV_ORIGINS`
+  (§13.1). Sans `Origin`, `Sec-Fetch-Site` doit valoir `same-origin` ou `none` ;
+  `Sec-Fetch-Site: cross-site` ou `same-site` est refusé même avec un `Origin` admis. Refus :
+  `403 origin_not_allowed` (message français). Une requête **sans** `Origin` **ni**
+  `Sec-Fetch-Site` est acceptée : elle ne vient pas d'un navigateur (curl, scripts, scénario de
+  bout en bout), or un CSRF suppose un navigateur, qui envoie toujours `Origin` sur un `POST`
+  cross-site. En dev derrière le proxy Vite, définir `ALLOWED_DEV_ORIGINS=http://localhost:5173`.
+- `OPTIONS` (pré-requête CORS ou non) : `405 method_not_allowed` sur les deux ports.
 - Aucun cookie n'existe ; s'il en apparaissait un, il serait `Secure; HttpOnly; SameSite=Strict`.
 
 ### 14.4 Authentification et autorisation (admin)

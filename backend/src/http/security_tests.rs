@@ -216,32 +216,56 @@ async fn admin_responses_carry_the_security_headers(pool: PgPool) {
     }
 }
 
-/// Runs `future` with a subscriber capturing every log line (current thread): the output.
-pub(crate) async fn capture_logs<F: std::future::Future>(future: F) -> (F::Output, String) {
-    use std::sync::{Arc, Mutex};
+/// Log lines written by the current thread while [`capture_logs`] runs on it.
+#[derive(Clone, Default)]
+struct LogBuffer(std::sync::Arc<std::sync::Mutex<Vec<u8>>>);
 
-    #[derive(Clone, Default)]
-    struct Buffer(Arc<Mutex<Vec<u8>>>);
-    impl std::io::Write for Buffer {
-        fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
-            self.0.lock().unwrap().extend_from_slice(data);
-            Ok(data.len())
-        }
-        fn flush(&mut self) -> std::io::Result<()> {
-            Ok(())
-        }
+impl std::io::Write for LogBuffer {
+    fn write(&mut self, data: &[u8]) -> std::io::Result<usize> {
+        self.0.lock().unwrap().extend_from_slice(data);
+        Ok(data.len())
     }
+    fn flush(&mut self) -> std::io::Result<()> {
+        Ok(())
+    }
+}
 
-    let buffer = Buffer::default();
-    let writer = buffer.clone();
-    let subscriber = tracing_subscriber::fmt()
-        .json()
-        .with_max_level(tracing::Level::TRACE)
-        .with_writer(move || writer.clone())
-        .finish();
-    let guard = tracing::subscriber::set_default(subscriber);
+thread_local! {
+    static CAPTURE: std::cell::RefCell<Option<LogBuffer>> = const { std::cell::RefCell::new(None) };
+}
+
+/// Runs `future` capturing every log line its thread emits: the output and the lines.
+///
+/// One global subscriber, installed once for the whole test binary, writes the events of a
+/// thread that is capturing into that thread's buffer and ignores the others. A thread-local
+/// subscriber per test (`set_default`) lost events under parallel tests: tracing caches the
+/// interest of each call site and the global maximum level for all threads, and another test
+/// dropping its own subscriber could recompute them without this one, so that the first
+/// `security_event` of a test was sometimes never recorded.
+pub(crate) async fn capture_logs<F: std::future::Future>(future: F) -> (F::Output, String) {
+    use tracing_subscriber::Layer as _;
+    use tracing_subscriber::layer::SubscriberExt as _;
+
+    static INSTALLED: std::sync::Once = std::sync::Once::new();
+    INSTALLED.call_once(|| {
+        let capturing = |_: &tracing::Metadata<'_>| CAPTURE.with(|c| c.borrow().is_some());
+        let layer = tracing_subscriber::fmt::layer()
+            .json()
+            .with_writer(|| {
+                CAPTURE.with(|c| c.borrow().clone()).map_or_else(
+                    || Box::new(std::io::sink()) as Box<dyn std::io::Write>,
+                    |buffer| Box::new(buffer) as Box<dyn std::io::Write>,
+                )
+            })
+            .with_filter(tracing_subscriber::filter::filter_fn(capturing));
+        tracing::subscriber::set_global_default(tracing_subscriber::registry().with(layer))
+            .expect("no other global subscriber in the tests");
+    });
+    let buffer = LogBuffer::default();
+    CAPTURE.with(|c| *c.borrow_mut() = Some(buffer.clone()));
+    tracing::callsite::rebuild_interest_cache();
     let output = future.await;
-    drop(guard);
+    CAPTURE.with(|c| *c.borrow_mut() = None);
     let logs = String::from_utf8(buffer.0.lock().unwrap().clone()).unwrap();
     (output, logs)
 }

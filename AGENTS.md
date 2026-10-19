@@ -393,9 +393,10 @@ version de prompt (l'admin peut relancer manuellement).
   leur comportement (échec non transitoire, `analysis_failed`). Pour appliquer l'effort voulu,
   choisir un modèle qui le prend en charge ; pour s'en passer, vider la variable. Le worker
   journalise au démarrage modèles et efforts configurés. Délais
-  par requête (`ai::mistral::Timeouts`) : chat 180 s et Conversations 300 s, portés à 360 s et
+  par requête (`ai::mistral::Timeouts`) : chat 180 s et Conversations 300 s, portés à 900 s et
   1 200 s avec l'effort `high` (la réflexion allonge la réponse ; une recherche détaillée prend
-  15 min ou plus, et un délai de 480 s a coupé une recherche en production le 2026-10-19) ; le verrou du job est
+  15 min ou plus, et des délais de 480 s pour la recherche et de 360 s pour la structuration,
+  qui cite jusqu'à 100 pages, ont coupé des appels en production le 2026-10-19) ; le verrou du job est
   entretenu pendant ce temps (heartbeat, `JOB_LOCK_TIMEOUT_SECS`).
 - **Recherche web obligatoire** pour le chiffrage (outil `web_search` de l'API Agents /
   Conversations de Mistral). Vérifier la documentation Mistral en vigueur au moment de

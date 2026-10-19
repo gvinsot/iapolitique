@@ -105,7 +105,8 @@ impl Default for Timeouts {
             chat: Duration::from_secs(180),
             conversation: Duration::from_secs(300),
             embedding: Duration::from_secs(30),
-            reasoning_chat: Duration::from_secs(360),
+            // Structuring with thinking, up to 100 pages to cite: 15 minutes.
+            reasoning_chat: Duration::from_secs(900),
             // A detailed web research with thinking takes 15 minutes or more.
             reasoning_conversation: Duration::from_secs(1_200),
         }
@@ -2598,7 +2599,7 @@ mod tests {
     fn thinking_gets_longer_timeouts() {
         let timeouts = Timeouts::default();
         let high = Some(ReasoningEffort::High);
-        assert_eq!(timeouts.chat(high), Duration::from_secs(360));
+        assert_eq!(timeouts.chat(high), Duration::from_secs(900));
         assert_eq!(timeouts.conversation(high), Duration::from_secs(1_200));
         for effort in [None, Some(ReasoningEffort::Off)] {
             assert_eq!(timeouts.chat(effort), Duration::from_secs(180));

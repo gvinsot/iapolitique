@@ -145,7 +145,7 @@ iapolitique/
 │   ├── analysis.md         # étape 2 : structuration JSON (+ analysis.schema.json)
 │   ├── report_review.md    # + report_review.schema.json
 │   └── taxonomy.yaml       # niveaux administratifs, catégories, publics d'impact
-├── docs/                   # documentation fonctionnelle (méthodologie, calibration…)
+├── docs/                   # documentation fonctionnelle (méthodologie, calibration…), securite.md
 │   └── calibration/        # banc de calibration du filtrage, contrôle des fichiers prompts/
 └── devops/
     ├── docker-compose.swarm.yml
@@ -154,6 +154,7 @@ iapolitique/
     ├── check_frontend_headers.sh # contrat HTTP de nginx (CI et bout en bout)
     ├── check_compose_security.py # invariants de sécurité du compose (CI, + ses tests)
     ├── dev/                # bout en bout local des images runtime, faux Mistral (dev/README.md)
+    │   └── security/       # campagne de sécurité locale : sondes, XSS en navigateur, ZAP (§14.8)
     └── .env.example
 ```
 
@@ -1236,5 +1237,11 @@ Tests d'intégration de sécurité obligatoires : en-têtes (§14.2) sur toutes 
 réponses, absence de CORS, refus CSRF (Origin étranger, mauvais Content-Type), charges
 d'injection SQL dans `q`, filtres, tri et slug (aucune erreur 500, aucun résultat anormal),
 XSS stocké rendu échappé (test front), injection de formule CSV, corps trop gros, JSON avec
-champs inconnus, jeton mal formé, routes admin absentes du port public, auth admin. Un scan
-dynamique OWASP ZAP (baseline) sur la stack locale est rejoué avant chaque mise en production.
+champs inconnus, jeton mal formé, routes admin absentes du port public, auth admin. Avant chaque
+mise en production, la campagne `devops/dev/security/run.sh` est rejouée sur la pile locale
+(jamais sur la QA ni la production) : charges hostiles à travers toute la chaîne (faux Mistral en
+mode hostile, marqueur `sondexss`) et aller-retour CSV, sondes manuelles (CORS, CSRF, `Origin`,
+`Host`, tailles, isolement de l'admin, réutilisation des connexions, `X-Forwarded-For`), XSS
+stocké dans Chromium et Firefox, OWASP ZAP (baseline, API scan, scan actif ciblé) ; toute alerte
+ZAP de risque faible ou plus doit être corrigée ou justifiée dans `zap-rules.tsv`. Modèle de
+menace, couverture des exigences, résultats et risques résiduels : `docs/securite.md`.

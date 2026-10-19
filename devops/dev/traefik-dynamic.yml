@@ -1,0 +1,37 @@
+# Local stand-in for the Traefik routing of devops/docker-compose.swarm.yml, used by
+# devops/dev/browser_check.sh and devops/dev/security/run.sh (never deployed): /api/admin on
+# admin.localhost to the admin port, the rest of /api to the public port, everything else to
+# nginx, with Traefik's default self-signed certificate. No header middleware (global@file is
+# shared infrastructure): the clients see the headers of nginx and of the api themselves.
+# Traefik's entry point has no forwardedHeaders.trustedIPs, like production: it replaces any
+# X-Forwarded-For sent by the client with the real peer address.
+http:
+  routers:
+    admin-api:
+      rule: "Host(`admin.localhost`) && PathPrefix(`/api/admin`)"
+      priority: 110
+      service: api-admin
+      tls: {}
+    api:
+      rule: "(Host(`localhost`) || Host(`admin.localhost`)) && PathPrefix(`/api`)"
+      priority: 100
+      service: api
+      tls: {}
+    front:
+      rule: "Host(`localhost`) || Host(`admin.localhost`)"
+      priority: 10
+      service: front
+      tls: {}
+  services:
+    api:
+      loadBalancer:
+        servers:
+          - url: "http://e2e-api:8080"
+    api-admin:
+      loadBalancer:
+        servers:
+          - url: "http://e2e-api:8081"
+    front:
+      loadBalancer:
+        servers:
+          - url: "http://e2e-front:80"

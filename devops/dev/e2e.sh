@@ -16,7 +16,10 @@
 # Build the images first (from devops/, with a copy of .env.example):
 #   docker compose -f docker-compose.swarm.yml --env-file <copy> build api frontend
 # Usage: devops/dev/e2e.sh          (containers are removed at the end; E2E_KEEP=1 keeps them)
+#        E2E_STACK_ONLY=1 devops/dev/e2e.sh   (starts and checks the stack, then leaves it running
+#                                             without any scenario: devops/dev/security/run.sh)
 set -euo pipefail
+[[ "${E2E_STACK_ONLY:-0}" == 1 ]] && export E2E_KEEP=1
 # Git Bash: keep container paths (/app/...) as they are; host paths are given in native form.
 export MSYS_NO_PATHCONV=1
 
@@ -138,6 +141,10 @@ grep -q '<div id="root">' <<<"$page" || { echo "frontend: SPA fallback missing" 
 curl -fsS -H "X-Forwarded-For: 203.0.113.250" "http://127.0.0.1:$front_port/idees/x" >/dev/null
 echo 203.0.113.250 >>"$secrets_file"
 echo "ok    frontend serves the SPA"
+if [[ "${E2E_STACK_ONLY:-0}" == 1 ]]; then
+    echo "Stack running (E2E_STACK_ONLY=1): api 127.0.0.1:$public_port, admin 127.0.0.1:$admin_port, frontend 127.0.0.1:$front_port"
+    exit 0
+fi
 
 echo "== scenario: main"
 "$python" "$here/e2e_scenario.py" --public "http://127.0.0.1:$public_port" \

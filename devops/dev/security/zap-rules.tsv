@@ -1,0 +1,10 @@
+# Triage of the OWASP ZAP rules for devops/dev/security/zap.sh (format of zap-baseline.py -c:
+# rule id, TAB, IGNORE|INFO|WARN|FAIL, TAB, justification). Only false positives and intended
+# behaviours are listed, each with its reason (detailed in docs/securite.md §4.2). Any alert of
+# risk Low or above from a rule that is not listed here fails zap_summary.py.
+10015	INFO	Cache-Control no-cache on the SPA shell is intended (fresh CSP nonce per response); /suivi and /admin are no-store (AGENTS.md 14.2)
+10027	IGNORE	Words such as "admin", "user" or "select" in the minified bundle and in the published prompts of /api/methodology; no developer comment ships
+10049	IGNORE	Non-storable content is intended: no-store on tracking, admin and error responses, no-cache on the nonce-carrying index.html
+10096	IGNORE	The ALTCHA challenge salt carries its expiry timestamp by design (signed, single use); no server clock detail beyond that
+10109	IGNORE	Informational: the frontend is a single-page application
+100001	INFO	text/csv and text/plain exports are intended (attachment, nosniff); paths outside /api are nginx: SPA shell, HTML 404 for dotfiles, HTML 405 for writes

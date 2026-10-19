@@ -18,57 +18,20 @@ playwright_version="${E2E_PLAYWRIGHT_VERSION:-1.63.0}"
 token="${1:-$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' e2e-api |
     sed -n 's/^ADMIN_API_TOKEN=//p')}"
 [[ -n "$token" ]] || { echo "no admin token (is e2e-api running?)" >&2; exit 1; }
-work="$(native_dir "$(mktemp -d)")"
 
 cleanup() {
     docker rm -f e2e-proxy >/dev/null 2>&1 || true
-    rm -rf "$work"
 }
 trap cleanup EXIT
 
-# Same routing as the Traefik labels of devops/docker-compose.swarm.yml, with Traefik's default
-# self-signed certificate (the browsers ignore its errors). No header middleware: the browsers
-# see the headers of nginx and of the api themselves.
-cat >"$work/dynamic.yml" <<'EOF'
-http:
-  routers:
-    admin-api:
-      rule: "Host(`admin.localhost`) && PathPrefix(`/api/admin`)"
-      priority: 110
-      service: api-admin
-      tls: {}
-    api:
-      rule: "(Host(`localhost`) || Host(`admin.localhost`)) && PathPrefix(`/api`)"
-      priority: 100
-      service: api
-      tls: {}
-    front:
-      rule: "Host(`localhost`) || Host(`admin.localhost`)"
-      priority: 10
-      service: front
-      tls: {}
-  services:
-    api:
-      loadBalancer:
-        servers:
-          - url: "http://e2e-api:8080"
-    api-admin:
-      loadBalancer:
-        servers:
-          - url: "http://e2e-api:8081"
-    front:
-      loadBalancer:
-        servers:
-          - url: "http://e2e-front:80"
-EOF
-
+# Same routing as the Traefik labels of devops/docker-compose.swarm.yml (traefik-dynamic.yml).
 echo "== HTTPS proxy"
 docker rm -f e2e-proxy >/dev/null 2>&1 || true
 docker create --name e2e-proxy --network "$net" "$traefik_image" \
     --entrypoints.websecure.address=:443 \
     --providers.file.filename=/dynamic.yml \
     --log.level=ERROR >/dev/null
-docker cp "$work/dynamic.yml" e2e-proxy:/dynamic.yml >/dev/null
+docker cp "$here/traefik-dynamic.yml" e2e-proxy:/dynamic.yml >/dev/null
 docker start e2e-proxy >/dev/null
 
 echo "== browsers"

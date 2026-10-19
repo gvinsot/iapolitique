@@ -19,7 +19,11 @@ Answers are deterministic and driven by the prompt text:
   - report review: `hide` + `escalate` when a report has the reason « Contenu problématique »,
     `update` (with corrections) for « Erreur de chiffrage » or « Source erronée », `maintain`
     otherwise;
-  - analysis: considers every contribution id listed in <contributions>.
+  - analysis: considers every contribution id listed in <contributions>;
+  - hostile mode (devops/dev/security/): when the idea, the report or the text carries the marker
+    `sondexss`, every free-text field of the answer echoes XSS, CSV-formula and JSON-LD breakout
+    payloads, and the web research cites http(s) URLs that carry such payloads, so that the
+    security checks can follow them through the whole pipeline down to a real browser.
 
 Usage:
   python devops/dev/mock_mistral.py [--host 0.0.0.0] [--port 8090]
@@ -71,6 +75,38 @@ SOURCES = [
         "used_for": "Crédits de la mission concernée.",
     },
 ]
+
+
+# Hostile mode (devops/dev/security/): payloads echoed by the AI answers. Each one, if it were
+# ever interpreted as HTML or script, would set `window.__xss` (or fire a CSP violation, which
+# devops/dev/security/xss_check.mjs also treats as a failure). The leading `=`, `+`, `-`, `@`
+# exercise the CSV formula neutralisation of the exports.
+HOSTILE_MARKER = "sondexss"
+XSS_IMG = '<img src=x onerror="window.__xss=1">'
+XSS_SCRIPT = "</script><script>window.__xss=2</script>"
+XSS_SVG = "<svg/onload=window.__xss=3>"
+XSS_IFRAME = '<iframe src="javascript:window.__xss=4"></iframe>'
+XSS_ATTR = '" autofocus onfocus="window.__xss=5" x="'
+HOSTILE_SOURCES = [
+    {
+        "id": "S1",
+        "title": f"Rapport {XSS_SCRIPT}",
+        "publisher": f"Éditeur {XSS_IMG}",
+        "url": 'https://evil.example/rapport/"><script>window.__xss=6</script>',
+        "used_for": f"Montants {XSS_SVG}",
+    },
+    {
+        "id": "S2",
+        "title": "=HYPERLINK(\"https://evil.example/\",\"cliquer\")",
+        "publisher": "@SUM(1+1)*cmd|' /C calc'!A0",
+        "url": f"https://evil.example/recherche?q={XSS_ATTR}",
+        "used_for": f"Crédits {XSS_IFRAME}",
+    },
+]
+
+
+def is_hostile(text: str) -> bool:
+    return HOSTILE_MARKER in normalise(text)
 
 
 def normalise(text: str) -> str:
@@ -187,8 +223,37 @@ def analysis(schema: dict, user: str) -> dict:
     }
 
 
+def hostile_analysis(schema: dict, user: str) -> dict:
+    """A schema-valid analysis whose every free text carries a payload (hostile mode)."""
+    content = analysis(schema, user)
+    content.update({
+        "title": f'=HYPERLINK("https://evil.example/","x") {XSS_SCRIPT}',
+        "summary": f"+SUM(1;2) {XSS_IMG} {XSS_SCRIPT} [S1].",
+        "improved_proposal": f"-2+3 {XSS_SVG} [S2]",
+        "existing_situation": f"@cmd {XSS_IFRAME} [S1]",
+        "confidence_explanation": f"{XSS_ATTR} [S2]",
+        "changes_since_previous": XSS_SCRIPT if content["changes_since_previous"] else "",
+        "assumptions": [f"{XSS_IMG} [S1]"],
+        "pros": [XSS_SCRIPT, XSS_SVG, "javascript:window.__xss=7"],
+        "cons": [XSS_IFRAME, XSS_ATTR, "{{constructor.constructor('window.__xss=8')()}}"],
+        "risks": [XSS_IMG, "<!--", "]]>"],
+        "sources": HOSTILE_SOURCES,
+    })
+    content["annual_gain_eur"]["calculation"] = f"=1+1 {XSS_IMG} [S1]"
+    content["implementation_cost_eur"]["calculation"] = f"{XSS_SCRIPT} [S2]"
+    content["feasibility"]["obstacles"] = [XSS_SVG]
+    for impact in content["impacts"].values():
+        impact["explanation"] = XSS_IMG
+    for item in content["contributions_considered"]:
+        item["summary"] = f"=CMD() {XSS_SCRIPT}"
+        item["response"] = XSS_IMG
+    return content
+
+
 def second_opinion(user: str) -> dict:
     text = normalise(between(user, "texte"))
+    if is_hostile(text):
+        return {"decision": "accept", "reason_code": "none", "explanation": XSS_IMG}
     if any(marker in WORD_RE.findall(text) for marker in map(normalise, INSULT_MARKERS)):
         return {"decision": "reject", "reason_code": "disrespectful",
                 "explanation": "Le texte contient des propos irrespectueux."}
@@ -198,6 +263,9 @@ def second_opinion(user: str) -> dict:
 
 def report_review(user: str) -> dict:
     reports = normalise(between(user, "signalements"))
+    if is_hostile(reports):
+        return {"outcome": "maintain", "escalate": False,
+                "explanation": f"{XSS_SCRIPT} {XSS_IMG}", "corrections": ""}
     if "contenu problematique" in reports:
         return {"outcome": "hide", "escalate": True,
                 "explanation": "Le signalement relève un contenu grave : l'idée est masquée et "
@@ -222,7 +290,8 @@ def chat_completion(body: dict) -> tuple[int, dict]:
     if response_format.get("type") != "json_schema" or spec.get("strict") is not True:
         return 400, {"object": "error", "message": "strict json_schema expected"}
     if name == "analysis":
-        content = analysis(spec["schema"], user)
+        hostile = is_hostile(between(user, "idee_originale"))
+        content = (hostile_analysis if hostile else analysis)(spec["schema"], user)
     elif name == "second_opinion":
         content = second_opinion(user)
     elif name == "report_review":
@@ -250,17 +319,20 @@ def conversation(body: dict) -> tuple[int, dict]:
     if body.get("store") is not False:
         return 400, {"object": "error", "message": "store must be false"}
     inputs = body.get("inputs") or ""
+    if isinstance(inputs, list):
+        inputs = json.dumps(inputs, ensure_ascii=False)
+    sources = HOSTILE_SOURCES if is_hostile(inputs) else SOURCES
     memo_chunks: list[dict] = [
         {"type": "text", "text": "1. Mesure étudiée : mutualisation des achats publics [S1]."},
-        {"type": "tool_reference", "tool": "web_search", "title": SOURCES[0]["title"],
-         "url": SOURCES[0]["url"], "source": "mock"},
+        {"type": "tool_reference", "tool": "web_search", "title": sources[0]["title"],
+         "url": sources[0]["url"], "source": "mock"},
         {"type": "text", "text": "\n2. Montants : crédits de la mission concernée [S2]."},
-        {"type": "tool_reference", "tool": "web_search", "title": SOURCES[1]["title"],
-         "url": SOURCES[1]["url"], "source": "mock"},
-        {"type": "text", "text": "\n3. Sources :\n[S1] " + SOURCES[0]["title"] + " — "
-                                 + SOURCES[0]["publisher"] + " — " + SOURCES[0]["url"]
-                                 + "\n[S2] " + SOURCES[1]["title"] + " — "
-                                 + SOURCES[1]["publisher"] + " — " + SOURCES[1]["url"]},
+        {"type": "tool_reference", "tool": "web_search", "title": sources[1]["title"],
+         "url": sources[1]["url"], "source": "mock"},
+        {"type": "text", "text": "\n3. Sources :\n[S1] " + sources[0]["title"] + " — "
+                                 + sources[0]["publisher"] + " — " + sources[0]["url"]
+                                 + "\n[S2] " + sources[1]["title"] + " — "
+                                 + sources[1]["publisher"] + " — " + sources[1]["url"]},
     ]
     prompt_tokens = tokens(body.get("instructions") or "") + tokens(inputs)
     return 200, {

@@ -20,6 +20,8 @@ import {
   reportsFixture,
   reviewRequestsFixture,
   screeningsFixture,
+  sealFixture,
+  sealsFixture,
   settingsFixture,
   withdrawnIdeaFixture,
 } from "@/test/fixtures/admin";
@@ -35,6 +37,7 @@ import {
 } from "./moderation-tables";
 import { RightOfReplyEditor } from "./right-of-reply-editor";
 import { ScreeningDecisions } from "./screening-decisions";
+import { SealedCopyView, SealsTable } from "./sealed-copy";
 import { DedupThresholdForm, ThresholdSettingsForm } from "./threshold-settings-form";
 
 describe("admin model", () => {
@@ -414,5 +417,39 @@ describe("RightOfReplyEditor", () => {
     await user.click(screen.getByRole("button", { name: "Publier la réponse" }));
     expect(screen.getByText(/ne peut pas être dans le futur/)).toBeInTheDocument();
     expect(onSubmit).not.toHaveBeenCalled();
+  });
+});
+
+describe("sealed copies (D3)", () => {
+  it("lists the copies kept, with the state of their escalation and idea", () => {
+    renderComponent(<SealsTable rows={sealsFixture} />);
+    const [, first, second] = screen.getAllByRole("row");
+    if (!first || !second) throw new Error("missing rows");
+    expect(first).toHaveTextContent("Retirée par son auteur");
+    expect(first).toHaveTextContent("En attente");
+    expect(within(first).getByRole("link", { name: /Consulter la copie scellée/ })).toHaveAttribute(
+      "href",
+      "/admin/escalades/e-1/copie-scellee",
+    );
+    expect(second).toHaveTextContent("Idée effacée");
+    expect(second).toHaveTextContent("Escalade effacée");
+  });
+
+  it("shows the sealed content as plain text, never as HTML", () => {
+    const { container } = renderComponent(<SealedCopyView seal={sealFixture} />);
+    expect(screen.getByText(/<img src=x onerror=alert\(1\)> menace/)).toBeInTheDocument();
+    expect(container.querySelector("img")).toBeNull();
+    expect(screen.getByText("Propos menaçants envers un groupe de personnes.")).toBeInTheDocument();
+    expect(screen.getByText("Menace explicite.")).toBeInTheDocument();
+    expect(screen.getByText("Escalade (contenu grave)")).toBeInTheDocument();
+    expect(container.querySelector("pre")).toHaveTextContent('"title": "Créer une taxe');
+    expect(screen.getByText(/coordonnées des signalants ne sont jamais/)).toBeInTheDocument();
+  });
+
+  it("links each escalation to its sealed copy", () => {
+    renderComponent(<EscalationsTable rows={escalationsFixture} onHandle={vi.fn()} />);
+    expect(
+      screen.getByRole("link", { name: "Copie scellée de « Créer une taxe sur un exemple »" }),
+    ).toHaveAttribute("href", "/admin/escalades/e-1/copie-scellee");
   });
 });

@@ -12,6 +12,8 @@ import {
   jobsFixture,
   repliesFixture,
   screeningsFixture,
+  sealFixture,
+  sealsFixture,
   settingsFixture,
 } from "@/test/fixtures/admin";
 import { renderRoute } from "@/test/render-route";
@@ -190,5 +192,43 @@ describe("admin pages", () => {
     });
     renderRoute("/admin/signalements");
     expect(await screen.findByRole("alert")).toHaveTextContent("Paramètre inconnu : « tri ».");
+  });
+
+  it("reads a sealed copy only once the administrator asks for it", async () => {
+    const calls = adminRoutes({
+      "GET /api/admin/escalation-seals": adminPage(sealsFixture),
+      "GET /api/admin/escalations/e-1/seal": sealFixture,
+    });
+    const { user } = renderRoute("/admin/copies-scellees");
+    const [first] = await screen.findAllByRole("link", {
+      name: /Consulter la copie scellée de l’escalade/,
+    });
+    if (!first) throw new Error("missing link");
+    await user.click(first);
+    expect(
+      await screen.findByRole("heading", { name: "Consultation journalisée" }),
+    ).toBeInTheDocument();
+    expect(calls.some((call) => call.path.endsWith("/seal"))).toBe(false);
+
+    await user.click(screen.getByRole("button", { name: "Afficher la copie scellée" }));
+    expect(await screen.findByRole("article", { name: "Copie scellée" })).toBeInTheDocument();
+    const reads = calls.filter((call) => call.path === "/api/admin/escalations/e-1/seal");
+    expect(reads).toHaveLength(1);
+    expect(reads[0]?.authorization).toBe(`Bearer ${TOKEN}`);
+  });
+
+  it("says when a sealed copy no longer exists", async () => {
+    adminRoutes({
+      "GET /api/admin/escalations/e-9/seal": apiError(
+        404,
+        "seal_not_found",
+        "Aucune copie scellée pour cette escalade.",
+      ),
+    });
+    const { user } = renderRoute("/admin/escalades/e-9/copie-scellee");
+    await user.click(await screen.findByRole("button", { name: "Afficher la copie scellée" }));
+    expect(
+      await screen.findByText("Aucune copie scellée pour cette escalade."),
+    ).toBeInTheDocument();
   });
 });

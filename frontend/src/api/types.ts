@@ -63,6 +63,8 @@ export type ScoringMethod = Schemas["ScoringMethod"];
 
 // --- Administration ---------------------------------------------------------------------------
 export type AdminDashboard = Schemas["AdminDashboard"];
+export type AdminAlert = Schemas["AdminAlert"];
+export type AdminBulkReanalysis = Schemas["AdminBulkReanalysis"];
 export type AdminScreeningRates = Schemas["AdminScreeningRates"];
 export type AdminAiCosts = Schemas["AdminAiCosts"];
 export type AdminQueues = Schemas["AdminQueues"];
@@ -76,6 +78,8 @@ export type IdeaStatus = Schemas["IdeaStatus"];
 export type AdminReport = Schemas["AdminReport"];
 export type ReportStatus = Schemas["ReportStatus"];
 export type AdminEscalation = Schemas["AdminEscalation"];
+export type AdminEscalationSeal = Schemas["AdminEscalationSeal"];
+export type AdminEscalationSealSummary = Schemas["AdminEscalationSealSummary"];
 export type EscalationOutcome = Schemas["EscalationOutcome"];
 export type AdminReviewRequest = Schemas["AdminReviewRequest"];
 export type ReviewResolution = Schemas["ReviewResolution"];

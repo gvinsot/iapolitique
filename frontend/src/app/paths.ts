@@ -21,6 +21,10 @@ export const paths = {
     replies: (ideaId: string) => `/admin/idees/${encodeURIComponent(ideaId)}/reponses`,
     reports: "/admin/signalements",
     escalations: "/admin/escalades",
+    /** Sealed copies of escalated content (owner decision D3). */
+    seals: "/admin/copies-scellees",
+    seal: (escalationId: string) =>
+      `/admin/escalades/${encodeURIComponent(escalationId)}/copie-scellee`,
     reviewRequests: "/admin/reexamens",
     decisions: "/admin/decisions",
     jobs: "/admin/jobs",

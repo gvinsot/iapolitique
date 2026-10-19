@@ -20,6 +20,7 @@ const adminNavItems = [
   { to: paths.admin.ideas, label: "Idées" },
   { to: paths.admin.reports, label: "Signalements" },
   { to: paths.admin.escalations, label: "Escalades" },
+  { to: paths.admin.seals, label: "Copies scellées" },
   { to: paths.admin.reviewRequests, label: "Réexamens" },
   { to: paths.admin.decisions, label: "Décisions de filtrage" },
   { to: paths.admin.jobs, label: "Jobs" },

@@ -35,6 +35,7 @@ import {
   ReviewRequestsTable,
 } from "@/components/admin/moderation-tables";
 import { RightOfReplyEditor } from "@/components/admin/right-of-reply-editor";
+import { SealedCopyView, SealsTable } from "@/components/admin/sealed-copy";
 import { ScreeningDecisions } from "@/components/admin/screening-decisions";
 import {
   DedupThresholdForm,
@@ -550,6 +551,101 @@ export function AdminEscalationsPage() {
           </>
         )}
       </AdminQuery>
+    </div>
+  );
+}
+
+export function AdminSealsPage() {
+  const list = useAdminListParams([] as const);
+  const query = $api.useQuery("get", "/api/admin/escalation-seals", {
+    params: { query: { page: list.page, per_page: PER_PAGE } },
+  });
+
+  return (
+    <div className="space-y-6">
+      <AdminPageHeader
+        title="Copies scellées"
+        description="Copie de chaque contenu escaladé, conservée un an après l’escalade même si l’auteur retire ou supprime son idée (RGPD art. 17(3)(e), LCEN). Réservée à l’administration, jamais publiée ni exportée ; chaque consultation est consignée au journal."
+      />
+      <AdminQuery query={query} label="les copies scellées">
+        {(page) => (
+          <>
+            <SealsTable rows={page.items} />
+            <AdminPagination
+              page={page.page}
+              totalPages={page.total_pages}
+              hrefForPage={list.hrefForPage}
+            />
+          </>
+        )}
+      </AdminQuery>
+    </div>
+  );
+}
+
+/**
+ * One sealed copy. Every read is logged by the API (`escalation.seal_read`): the copy is only
+ * fetched once the administrator asks for it, never refetched in the background, and dropped
+ * from memory when the page is left.
+ */
+export function AdminSealPage() {
+  const { id = "" } = useParams();
+  const [revealed, setRevealed] = useState(false);
+  const query = $api.useQuery(
+    "get",
+    "/api/admin/escalations/{id}/seal",
+    { params: { path: { id } } },
+    {
+      enabled: revealed && id !== "",
+      staleTime: Infinity,
+      gcTime: 0,
+      retry: false,
+      refetchOnWindowFocus: false,
+      refetchOnReconnect: false,
+    },
+  );
+
+  return (
+    <div className="space-y-6">
+      <AdminPageHeader
+        title="Copie scellée"
+        description={
+          <>
+            Contenu escaladé tel qu’il a été scellé, en texte brut.{" "}
+            <Link to={paths.admin.seals} className={adminLinkClass}>
+              Toutes les copies scellées
+            </Link>
+          </>
+        }
+      />
+      {revealed ? (
+        <AdminQuery query={query} label="la copie scellée">
+          {(seal) => <SealedCopyView seal={seal} />}
+        </AdminQuery>
+      ) : (
+        <section
+          aria-labelledby="consultation-journalisee"
+          className="space-y-3 rounded-lg border border-warning/40 bg-warning-surface p-4 text-warning"
+        >
+          <h2 id="consultation-journalisee" className="text-lg font-semibold">
+            Consultation journalisée
+          </h2>
+          <p className="text-pretty">
+            Cette copie peut contenir des propos illicites. Elle n’est conservée que pour la
+            constatation, l’exercice ou la défense de droits en justice et pour répondre aux
+            autorités. Chaque consultation est consignée au journal d’administration (
+            <code>escalation.seal_read</code>).
+          </p>
+          <Button
+            type="button"
+            onClick={() => {
+              setRevealed(true);
+            }}
+          >
+            Afficher la copie scellée
+          </Button>
+        </section>
+      )}
     </div>
   );
 }

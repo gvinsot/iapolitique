@@ -301,7 +301,8 @@ export function EscalationsTable({ rows, onHandle, now = new Date() }: Escalatio
           <span className="sr-only"> (nouvelle fenêtre)</span>
         </a>
         . L’idée reste masquée quelle que soit l’issue ; la republier se fait depuis la liste des
-        idées.
+        idées. Une copie scellée du contenu est conservée un an après l’escalade, même si l’auteur
+        retire son idée (consultation journalisée).
       </p>
       <AdminTable
         caption="File d’escalade"
@@ -348,6 +349,15 @@ export function EscalationsTable({ rows, onHandle, now = new Date() }: Escalatio
                 )}
               </td>
               <td className={cellClass}>
+                <p className="mb-2">
+                  <Link
+                    to={paths.admin.seal(row.id)}
+                    className={adminLinkClass}
+                    aria-label={`Copie scellée de « ${name} »`}
+                  >
+                    Copie scellée
+                  </Link>
+                </p>
                 {pending ? (
                   <div className="flex flex-wrap gap-2">
                     <ConfirmDialog

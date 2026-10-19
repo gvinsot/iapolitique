@@ -108,6 +108,18 @@ export const routes: RouteObject[] = [
             }),
           },
           {
+            path: "escalades/:id/copie-scellee",
+            lazy: async () => ({
+              Component: (await import("@/pages/admin/admin-pages")).AdminSealPage,
+            }),
+          },
+          {
+            path: "copies-scellees",
+            lazy: async () => ({
+              Component: (await import("@/pages/admin/admin-pages")).AdminSealsPage,
+            }),
+          },
+          {
             path: "reexamens",
             lazy: async () => ({
               Component: (await import("@/pages/admin/admin-pages")).AdminReviewRequestsPage,

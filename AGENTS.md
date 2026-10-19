@@ -766,7 +766,10 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
   s'exécutent pas sur l'origine publique.
 - Fonctions : tableau de bord (file de jobs, taux d'acceptation, coûts IA du jour/mois, alertes
   de configuration comme une clé Mistral refusée), idées masquées et signalements,
-  masquer/republier, relancer une analyse ou toutes les analyses échouées, consulter les scores bruts
+  masquer/republier, relancer une analyse ou toutes les analyses échouées, consulter les copies
+  scellées des escalades (`/admin/copies-scellees` ; la copie n'est demandée à l'API qu'après un
+  clic explicite, jamais rechargée en arrière-plan, puisque chaque lecture est journalisée),
+  idées retirées par leur auteur en lecture seule, consulter les scores bruts
   du modèle de décision, **étiqueter** des décisions (accepter/refuser à raison) pour calibrer
   les seuils, réglage des seuils de doublon et de filtrage.
 - Toute action admin est journalisée (`admin_actions`).

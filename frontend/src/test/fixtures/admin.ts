@@ -2,6 +2,8 @@ import type {
   AdminAction,
   AdminDashboard,
   AdminEscalation,
+  AdminEscalationSeal,
+  AdminEscalationSealSummary,
   AdminIdea,
   AdminJob,
   AdminReply,
@@ -187,6 +189,67 @@ export const escalationsFixture: AdminEscalation[] = [
     due_at: "2026-10-19T08:00:00Z",
     handled_at: null,
     review_explanation: "Propos menaçants envers un groupe de personnes.",
+  },
+];
+
+/** Sealed copy of escalation e-1 (owner decision D3); hostile text must stay plain text. */
+export const sealFixture: AdminEscalationSeal = {
+  escalation_id: "e-1",
+  idea_id: IDEA_ID,
+  escalated_at: "2026-10-18T08:00:00Z",
+  purge_after: "2027-10-18T08:00:00Z",
+  sealed_at: "2026-10-18T08:00:00Z",
+  content: {
+    idea: {
+      status: "hidden",
+      slug: "taxe-exemple",
+      title: "Créer une taxe sur un exemple",
+      summary: "Résumé neutre de l’idée.",
+      original_text: "<img src=x onerror=alert(1)> menace envers [donnée masquée]",
+      submitted_territory: "Lyon",
+      submitted_admin_level: "commune",
+      submitted_at: "2026-10-10T08:00:00Z",
+      published_at: "2026-10-11T08:00:00Z",
+      hidden_at: "2026-10-18T08:00:00Z",
+      hidden_reason: "escalation",
+    },
+    analysis: { title: "Créer une taxe sur un exemple" },
+    review: {
+      outcome: "hide",
+      escalate: true,
+      explanation: "Propos menaçants envers un groupe de personnes.",
+      model: "mistral-large-latest",
+      prompt_version: "1.0.0",
+      reviewed_at: "2026-10-18T08:00:00Z",
+    },
+    reports: [
+      {
+        reason: "contenu_problematique",
+        details: "Menace explicite.",
+        reported_at: "2026-10-18T07:00:00Z",
+      },
+    ],
+  } as unknown as AdminEscalationSeal["content"],
+};
+
+export const sealsFixture: AdminEscalationSealSummary[] = [
+  {
+    escalation_id: "e-1",
+    idea_id: IDEA_ID,
+    escalated_at: "2026-10-18T08:00:00Z",
+    purge_after: "2027-10-18T08:00:00Z",
+    sealed_at: "2026-10-18T08:00:00Z",
+    escalation_status: "pending",
+    idea_status: "withdrawn",
+  },
+  {
+    escalation_id: "e-0",
+    idea_id: "01a15179-0000-7000-8000-000000000009",
+    escalated_at: "2026-03-01T08:00:00Z",
+    purge_after: "2027-03-01T08:00:00Z",
+    sealed_at: "2026-10-19T08:00:00Z",
+    escalation_status: null,
+    idea_status: null,
   },
 ];
 

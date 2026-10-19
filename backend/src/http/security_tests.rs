@@ -492,3 +492,114 @@ async fn csrf_refusals_are_logged_without_ip_nor_content(pool: PgPool) {
         assert!(!logs.contains(secret), "{secret} logged: {logs}");
     }
 }
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn admin_authentication_locks_after_repeated_failures(pool: PgPool) {
+    use crate::http::admin::LOCKOUT_MAX_FAILURES;
+
+    let app = TestApp::new(pool, false, &[]).await;
+    let admin = admin_router(app.state.clone(), Secret::new(SECRET));
+    let session = |authorization: Option<&str>| {
+        let headers: Vec<(&str, &str)> = authorization
+            .map(|value| vec![("authorization", value)])
+            .unwrap_or_default();
+        with_headers(Method::GET, "/api/admin/session", &headers, None)
+    };
+    let bearer = format!("Bearer {SECRET}");
+    let wrong = "Bearer wrong-token-0123456789abcdef0123456789";
+
+    // Missing tokens do not count.
+    for _ in 0..LOCKOUT_MAX_FAILURES + 2 {
+        let (status, _, _) = send(&admin, session(None)).await;
+        assert_eq!(status, StatusCode::UNAUTHORIZED);
+    }
+    let (status, _, _) = send(&admin, session(Some(&bearer))).await;
+    assert_eq!(status, StatusCode::OK);
+
+    let ((), logs) = capture_logs(async {
+        for _ in 0..LOCKOUT_MAX_FAILURES {
+            let (status, _, body) = send(&admin, session(Some(wrong))).await;
+            assert_eq!(status, StatusCode::UNAUTHORIZED, "{body}");
+        }
+    })
+    .await;
+    assert!(logs.contains("admin_auth_failure"), "{logs}");
+    assert!(logs.contains("admin_auth_lockout"), "{logs}");
+    assert!(!logs.contains("wrong-token"), "token logged: {logs}");
+    assert!(!logs.contains(CLIENT_IP), "IP logged: {logs}");
+
+    // Locked: even the right token is refused, on every admin route.
+    for uri in ["/api/admin/session", "/api/admin/dashboard"] {
+        let request = with_headers(Method::GET, uri, &[("authorization", &bearer)], None);
+        let (status, headers, body) = send(&admin, request).await;
+        assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{uri}");
+        assert_eq!(body["error"]["code"], "admin_locked");
+        let retry: u64 = headers[header::RETRY_AFTER]
+            .to_str()
+            .unwrap()
+            .parse()
+            .unwrap();
+        assert!((1..=300).contains(&retry), "{retry}");
+        assert_security_headers(&headers, uri);
+    }
+    // Probes stay open.
+    let (status, _, _) = send(&admin, request(Method::GET, "/api/health", None)).await;
+    assert_eq!(status, StatusCode::OK);
+}
+
+/// Every admin route of the full spec, with its methods, path parameters filled in.
+fn admin_operations() -> Vec<(Method, String)> {
+    let spec = serde_json::to_value(super::openapi::full_spec()).unwrap();
+    let mut operations = Vec::new();
+    for (path, item) in spec["paths"].as_object().unwrap() {
+        if !path.starts_with("/api/admin") {
+            continue;
+        }
+        // Job ids are integers, every other id a UUID.
+        let id = if path.contains("/jobs/") {
+            "1"
+        } else {
+            "00000000-0000-0000-0000-000000000001"
+        };
+        let uri = path
+            .replace("{id}", id)
+            .replace("{slug}", "idee")
+            .replace(['{', '}'], "");
+        for method in item.as_object().unwrap().keys() {
+            let method = Method::from_bytes(method.to_ascii_uppercase().as_bytes()).unwrap();
+            operations.push((method, uri.clone()));
+        }
+    }
+    operations
+}
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn the_public_port_knows_no_admin_route(pool: PgPool) {
+    let app = TestApp::new(pool, false, &[]).await;
+    let admin = admin_router(app.state.clone(), Secret::new(SECRET));
+    let operations = admin_operations();
+    assert!(operations.len() >= 25, "{operations:?}");
+    let bearer = format!("Bearer {SECRET}");
+    for (method, uri) in operations {
+        let body = (method != Method::GET).then_some("{}");
+        let headers = [
+            ("authorization", bearer.as_str()),
+            ("content-type", "application/json"),
+        ];
+        let context = format!("{method} {uri}");
+        let (status, response_headers, response) = send(
+            &app.router,
+            with_headers(method.clone(), &uri, &headers, body),
+        )
+        .await;
+        assert_eq!(status, StatusCode::NOT_FOUND, "{context}: {response}");
+        assert_eq!(response["error"]["code"], "not_found", "{context}");
+        assert_security_headers(&response_headers, &context);
+        // The same operation exists on the admin port (anything but a 404 of the router).
+        let (status, _, response) = send(&admin, with_headers(method, &uri, &headers, body)).await;
+        assert!(
+            status != StatusCode::NOT_FOUND || response["error"]["code"] != "not_found",
+            "{context} unknown on the admin port"
+        );
+    }
+}

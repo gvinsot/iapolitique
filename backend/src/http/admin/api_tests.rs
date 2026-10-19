@@ -74,8 +74,9 @@ pub(crate) const ADMIN_ROUTES: &[(&str, &str)] = &[
 #[sqlx::test(migrator = "crate::db::MIGRATOR")]
 async fn every_admin_route_requires_the_token(pool: PgPool) {
     let app = TestApp::new(pool, false, &[]).await;
-    let admin = crate::http::admin_router(app.state.clone(), Secret::new(SECRET));
     for (method, uri) in ADMIN_ROUTES {
+        // A router per route: wrong tokens on every route would lock the admin port (§14.4).
+        let admin = crate::http::admin_router(app.state.clone(), Secret::new(SECRET));
         let method: Method = method.parse().unwrap();
         for authorization in [None, Some("Bearer wrong-token")] {
             let mut request = Request::builder().method(method.clone()).uri(*uri);

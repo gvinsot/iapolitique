@@ -846,7 +846,7 @@ total_pages }`) et refusent les paramètres inconnus (`400 invalid_query`).
 
 | Méthode | Route | Rôle |
 |---|---|---|
-| GET | `/api/admin/session` | vérifie le jeton (`200 { "authenticated": true }` ou `401`) |
+| GET | `/api/admin/session` | vérifie le jeton (`200 { "authenticated": true }` ou `401` ; `429 admin_locked` pendant un verrouillage, §14.4) |
 | GET | `/api/admin/dashboard` | `{ jobs: { queued, running, succeeded, dead, by_kind: [{ kind, status, count }] }, screening_window_days (30), screening: [{ kind, total, accepted, rejected, gray_zone, errors, acceptance_rate, rejection_rate, gray_zone_rate, second_opinion_accept, second_opinion_reject, labeled }], ai_costs: { today_eur, month_eur, daily_budget_eur, remaining_today_eur, budget_reached, next_reset, by_purpose: [{ purpose, provider, calls_today, calls_month, today_eur, month_eur }] }, queues: { escalations_pending, review_requests_pending, ideas_analysis_failed, texts_second_opinion, texts_submitted_stale, ideas_hidden, reports_awaiting_review, jobs_dead } }` (jour et mois Europe/Paris) |
 | GET | `/api/admin/jobs` | jobs, filtres `status`, `kind` ; plus récents d'abord |
 | POST | `/api/admin/jobs/{id}/retry` | remet en file un job `dead` (tentatives remises à zéro) → `200` job ; `404 job_not_found`, `409 job_not_dead` / `job_already_queued` (même clé de dédoublonnage en file) ; action `job.retry` |
@@ -1041,8 +1041,11 @@ gabarit et de la configuration, sans donnée personnelle dans le dépôt) et une
 - Port 8081 jamais routé depuis Internet (routeur admin uniquement sur `ADMIN_HOST`, filtré par
   `dashboard-allowlist@file`) ; un test de configuration vérifie les labels du compose.
 - Jeton `ADMIN_API_TOKEN` ≥ 32 caractères, comparaison en temps constant, jamais dans une URL ni
-  un log ; échecs comptés et limités (verrouillage temporaire après N échecs, sans stocker
-  d'IP en clair) ; côté navigateur, conservé en mémoire ou en `sessionStorage`, jamais en
+  un log ; échecs comptés et limités (`http/admin/mod.rs`) : après 10 jetons **erronés** en
+  5 minutes (fenêtre glissante, compteur en mémoire commun à tout le port, aucune IP stockée), toute
+  requête `/api/admin/…` est refusée 5 minutes, bon jeton compris, par `429 admin_locked` avec
+  `Retry-After` ; un en-tête absent répond `401` sans compter (sonde de session des pages admin) ;
+  chaque échec est un événement de sécurité (§14.6) ; côté navigateur, conservé en mémoire ou en `sessionStorage`, jamais en
   `localStorage`.
 - Le port public ne connaît aucune route admin (404) ; test dédié.
 

@@ -1,5 +1,7 @@
 //! Admin API (port 8081, LAN only, AGENTS.md §8): `Authorization: Bearer $ADMIN_API_TOKEN`
-//! on every `/api/admin/…` route, compared in constant time.
+//! on every `/api/admin/…` route, compared in constant time. After [`LOCKOUT_MAX_FAILURES`] wrong
+//! tokens within [`LOCKOUT_WINDOW`], every admin request is refused for [`LOCKOUT_DURATION`]
+//! (§14.4).
 //!
 //! Every answer is `Cache-Control: no-store` and `X-Robots-Tag: noindex, nofollow` (§14.2).
 //! Every mutation is recorded in `admin_actions` in the transaction that applies it.
@@ -13,7 +15,9 @@
 //! - [`replies`]: rights of reply published under ideas;
 //! - [`settings`]: screening and duplicate thresholds.
 
-use std::sync::Arc;
+use std::collections::VecDeque;
+use std::sync::{Arc, Mutex};
+use std::time::{Duration, Instant};
 
 use axum::Json;
 use axum::Router;
@@ -27,6 +31,7 @@ use utoipa::ToSchema;
 
 use super::AppState;
 use super::error::{ApiError, ErrorBody};
+use super::security::security_event;
 use crate::config::Secret;
 
 pub mod actions;
@@ -143,14 +148,112 @@ pub(crate) fn euros(micro_eur: i64) -> f64 {
     micro_eur as f64 / 1_000_000.0
 }
 
-/// The expected admin token.
+/// Wrong tokens tolerated within [`LOCKOUT_WINDOW`] before the lockout.
+pub const LOCKOUT_MAX_FAILURES: usize = 10;
+/// Sliding window over which wrong tokens are counted.
+pub const LOCKOUT_WINDOW: Duration = Duration::from_secs(5 * 60);
+/// Duration of the lockout: every admin request is refused with `429`, right token included.
+pub const LOCKOUT_DURATION: Duration = Duration::from_secs(5 * 60);
+
+/// Counter of admin authentication failures (§14.4), in memory, for the whole admin port: no
+/// IP address is stored, only the instants of the recent failures.
+#[derive(Debug)]
+pub struct AuthLockout {
+    max_failures: usize,
+    window: Duration,
+    duration: Duration,
+    state: Mutex<LockoutState>,
+}
+
+#[derive(Debug, Default)]
+struct LockoutState {
+    failures: VecDeque<Instant>,
+    locked_until: Option<Instant>,
+}
+
+impl Default for AuthLockout {
+    fn default() -> Self {
+        Self::new(LOCKOUT_MAX_FAILURES, LOCKOUT_WINDOW, LOCKOUT_DURATION)
+    }
+}
+
+impl AuthLockout {
+    pub fn new(max_failures: usize, window: Duration, duration: Duration) -> Self {
+        Self {
+            max_failures,
+            window,
+            duration,
+            state: Mutex::new(LockoutState::default()),
+        }
+    }
+
+    fn state(&self) -> std::sync::MutexGuard<'_, LockoutState> {
+        self.state
+            .lock()
+            .unwrap_or_else(std::sync::PoisonError::into_inner)
+    }
+
+    /// Time left before the end of the lockout at `now`, `None` when not locked.
+    pub fn remaining(&self, now: Instant) -> Option<Duration> {
+        let mut state = self.state();
+        match state.locked_until {
+            Some(until) if until > now => Some(until - now),
+            Some(_) => {
+                state.locked_until = None;
+                None
+            }
+            None => None,
+        }
+    }
+
+    /// Records a failure at `now`; `true` when it starts a lockout.
+    pub fn record_failure(&self, now: Instant) -> bool {
+        let mut state = self.state();
+        while state
+            .failures
+            .front()
+            .is_some_and(|&at| now.saturating_duration_since(at) >= self.window)
+        {
+            state.failures.pop_front();
+        }
+        state.failures.push_back(now);
+        if state.failures.len() >= self.max_failures {
+            state.failures.clear();
+            state.locked_until = Some(now + self.duration);
+            true
+        } else {
+            false
+        }
+    }
+}
+
+/// The expected admin token and the failure counter of the admin port.
 #[derive(Debug, Clone)]
-pub struct AdminToken(Arc<Secret>);
+pub struct AdminToken {
+    secret: Arc<Secret>,
+    lockout: Arc<AuthLockout>,
+}
 
 impl AdminToken {
     pub fn new(secret: Secret) -> Self {
-        Self(Arc::new(secret))
+        Self::with_lockout(secret, AuthLockout::default())
     }
+
+    pub fn with_lockout(secret: Secret, lockout: AuthLockout) -> Self {
+        Self {
+            secret: Arc::new(secret),
+            lockout: Arc::new(lockout),
+        }
+    }
+}
+
+fn locked(remaining: Duration) -> ApiError {
+    ApiError::new(
+        StatusCode::TOO_MANY_REQUESTS,
+        "admin_locked",
+        "Trop d'échecs d'authentification : l'administration est verrouillée quelques minutes.",
+    )
+    .with_retry_after(remaining.as_secs().max(1))
 }
 
 /// Compares two byte strings in time independent of their content.
@@ -178,20 +281,33 @@ fn bearer_token(request: &Request) -> Option<&str> {
         .filter(|t| !t.is_empty())
 }
 
-/// Middleware rejecting requests without the right bearer token.
+/// Middleware rejecting requests without the right bearer token (`401`), and every request
+/// while the port is locked after [`LOCKOUT_MAX_FAILURES`] wrong tokens (`429 admin_locked`).
+/// A missing token is refused without counting (the admin pages probe the session before the
+/// token is typed); a wrong one counts. Failures are security events (§14.6), never with the
+/// token.
 pub async fn require_admin(
     State(expected): State<AdminToken>,
     request: Request,
     next: Next,
 ) -> Response {
-    let authorized = bearer_token(&request)
-        .is_some_and(|token| constant_time_eq(token.as_bytes(), expected.0.expose().as_bytes()));
-    if authorized {
-        next.run(request).await
-    } else {
-        tracing::warn!("admin request rejected: missing or invalid token");
-        ApiError::unauthorized().into_response()
+    let now = Instant::now();
+    if let Some(remaining) = expected.lockout.remaining(now) {
+        security_event("admin_auth_refused", "locked");
+        return locked(remaining).into_response();
     }
+    let Some(token) = bearer_token(&request) else {
+        security_event("admin_auth_failure", "missing_token");
+        return ApiError::unauthorized().into_response();
+    };
+    if constant_time_eq(token.as_bytes(), expected.secret.expose().as_bytes()) {
+        return next.run(request).await;
+    }
+    security_event("admin_auth_failure", "invalid_token");
+    if expected.lockout.record_failure(now) {
+        security_event("admin_auth_lockout", "too_many_failures");
+    }
+    ApiError::unauthorized().into_response()
 }
 
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
@@ -229,6 +345,35 @@ mod tests {
         assert!(!constant_time_eq(b"secret", b"secret2"));
         assert!(!constant_time_eq(b"secret", b""));
         assert!(!constant_time_eq(b"\0", b""));
+    }
+
+    #[test]
+    fn lockout_counts_failures_in_a_sliding_window() {
+        let lockout = AuthLockout::new(3, Duration::from_secs(60), Duration::from_secs(30));
+        let t0 = Instant::now();
+        assert_eq!(lockout.remaining(t0), None);
+        assert!(!lockout.record_failure(t0));
+        assert!(!lockout.record_failure(t0 + Duration::from_secs(10)));
+        // The first failure left the window: still two failures.
+        assert!(!lockout.record_failure(t0 + Duration::from_secs(61)));
+        assert_eq!(lockout.remaining(t0 + Duration::from_secs(61)), None);
+        let t1 = t0 + Duration::from_secs(62);
+        assert!(lockout.record_failure(t1));
+        assert_eq!(lockout.remaining(t1), Some(Duration::from_secs(30)));
+        assert_eq!(
+            lockout.remaining(t1 + Duration::from_secs(29)),
+            Some(Duration::from_secs(1))
+        );
+        assert_eq!(lockout.remaining(t1 + Duration::from_secs(30)), None);
+        // Counting starts again from zero after the lockout.
+        let t2 = t1 + Duration::from_secs(31);
+        assert!(!lockout.record_failure(t2));
+        assert!(!lockout.record_failure(t2));
+        assert!(lockout.record_failure(t2));
+        let error = locked(Duration::from_millis(300));
+        assert_eq!(error.status, StatusCode::TOO_MANY_REQUESTS);
+        assert_eq!(error.code, "admin_locked");
+        assert_eq!(error.retry_after, Some(1));
     }
 
     #[test]

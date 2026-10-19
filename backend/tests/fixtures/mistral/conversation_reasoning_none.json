@@ -1,0 +1,37 @@
+{
+  "object": "conversation.response",
+  "conversation_id": "conv_reasoning_none",
+  "outputs": [
+    {
+      "object": "entry",
+      "type": "tool.execution",
+      "name": "web_search",
+      "id": "t1",
+      "arguments": "{\"query\": \"achats hospitaliers\"}"
+    },
+    {
+      "object": "entry",
+      "type": "message.output",
+      "role": "assistant",
+      "id": "m1",
+      "model": "mistral-large-4-0",
+      "content": [
+        { "type": "text", "text": "1. Mesure étudiée : mutualiser les achats [S1]." },
+        {
+          "type": "tool_reference",
+          "tool": "web_search",
+          "title": "La fonction achats des hôpitaux",
+          "url": "https://www.ccomptes.fr/fr/publications/achats-hopitaux",
+          "source": "brave"
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 3000,
+    "completion_tokens": 800,
+    "total_tokens": 9800,
+    "connector_tokens": 6000,
+    "connectors": { "web_search": 1 }
+  }
+}

@@ -42,7 +42,7 @@ mod ideas_tests;
 #[cfg(test)]
 mod input_tests;
 #[cfg(test)]
-mod security_tests;
+pub(crate) mod security_tests;
 #[cfg(test)]
 mod submission_tests;
 #[cfg(test)]

@@ -1,0 +1,29 @@
+{
+  "id": "cmpl-reasoning-malformed",
+  "object": "chat.completion",
+  "created": 1792400000,
+  "model": "mistral-medium-3-5",
+  "choices": [
+    {
+      "index": 0,
+      "message": {
+        "role": "assistant",
+        "tool_calls": null,
+        "content": [
+          {
+            "type": "thinking",
+            "thinking": [
+              {
+                "type": "text",
+                "text": "PENSEE-PRIVEE {\"decision\":\"accept\",\"reason_code\":\"none\",\"explanation\":\"x\"}"
+              }
+            ]
+          },
+          { "type": "text", "text": { "unexpected": "object" } }
+        ]
+      },
+      "finish_reason": "stop"
+    }
+  ],
+  "usage": { "prompt_tokens": 1000, "completion_tokens": 200, "total_tokens": 1200 }
+}

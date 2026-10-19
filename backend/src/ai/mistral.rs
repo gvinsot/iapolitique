@@ -671,17 +671,74 @@ fn u64_at(value: &Value, pointer: &str) -> u64 {
     value.pointer(pointer).and_then(Value::as_u64).unwrap_or(0)
 }
 
+/// Output tokens of a response's `usage`: `completion_tokens`, plus the reasoning tokens when the
+/// response reports them apart (`completion_tokens_details.reasoning_tokens`), and never less
+/// than `total_tokens` minus the input. Thinking is billed as output: counting it in every case
+/// keeps the daily budget an upper bound (§6.4), at worst a slight overestimate.
+fn output_tokens(response: &Value, input_tokens: u64) -> u64 {
+    let completion = u64_at(response, "/usage/completion_tokens");
+    let reasoning = u64_at(
+        response,
+        "/usage/completion_tokens_details/reasoning_tokens",
+    );
+    let total = u64_at(response, "/usage/total_tokens");
+    completion
+        .saturating_add(reasoning)
+        .max(total.saturating_sub(input_tokens))
+}
+
+/// Type of a content chunk (`text`, `thinking`, `tool_reference`…).
+fn chunk_type(chunk: &Value) -> Option<&str> {
+    chunk.get("type").and_then(Value::as_str)
+}
+
+/// The answer of a message `content`: the string itself, or the `text` chunks of a chunk array
+/// joined in order. Reasoning (`thinking` chunks, §6.1) is skipped without being read: it is
+/// never stored nor logged, as it may echo visitor text. `None` when the content is neither a
+/// string nor an array holding at least one text chunk.
+fn answer_text(content: &Value) -> Option<String> {
+    match content {
+        Value::String(text) => Some(text.clone()),
+        Value::Array(chunks) => {
+            let texts: Vec<&str> = chunks
+                .iter()
+                .filter(|chunk| chunk_type(chunk) == Some("text"))
+                .filter_map(|chunk| chunk.get("text").and_then(Value::as_str))
+                .collect();
+            (!texts.is_empty()).then(|| texts.concat())
+        }
+        _ => None,
+    }
+}
+
+/// Adds a `tool_reference` chunk to `references`, unless the same page is already there.
+fn push_reference(references: &mut Vec<WebReference>, chunk: &Value) {
+    let text = |key: &str| chunk.get(key).and_then(Value::as_str).map(str::to_owned);
+    let reference = WebReference {
+        title: text("title").unwrap_or_default(),
+        url: text("url"),
+        source: text("source"),
+    };
+    let known = references.iter().any(|r| {
+        r.url.is_some() && r.url == reference.url || r.url.is_none() && r.title == reference.title
+    });
+    if !known {
+        references.push(reference);
+    }
+}
+
 struct ParsedChat {
     content: Result<String, MistralError>,
     usage: Usage,
     model: Option<String>,
 }
 
-/// `choices[0].message.content` (a string or text chunks) and `usage`.
+/// `choices[0].message.content` (a string, or chunks: text and reasoning) and `usage`.
 fn parse_chat(response: &Value) -> ParsedChat {
+    let input_tokens = u64_at(response, "/usage/prompt_tokens");
     let usage = Usage {
-        input_tokens: u64_at(response, "/usage/prompt_tokens"),
-        output_tokens: u64_at(response, "/usage/completion_tokens"),
+        input_tokens,
+        output_tokens: output_tokens(response, input_tokens),
         web_searches: 0,
     };
     let model = response
@@ -699,15 +756,10 @@ fn parse_chat(response: &Value) -> ParsedChat {
             Some("error") => return Err(MistralError::InvalidOutput("generation error".into())),
             _ => {}
         }
-        match choice.pointer("/message/content") {
-            Some(Value::String(text)) => Ok(text.clone()),
-            Some(Value::Array(chunks)) => Ok(chunks
-                .iter()
-                .filter(|c| c.get("type").and_then(Value::as_str) == Some("text"))
-                .filter_map(|c| c.get("text").and_then(Value::as_str))
-                .collect::<String>()),
-            _ => Err(MistralError::InvalidOutput("no message content".into())),
-        }
+        choice
+            .pointer("/message/content")
+            .and_then(answer_text)
+            .ok_or_else(|| MistralError::InvalidOutput("no text in the answer".into()))
     })();
     ParsedChat {
         content,
@@ -723,7 +775,9 @@ struct ParsedConversation {
 }
 
 /// Text and references of the `message.output` entries; web searches counted from the
-/// `tool.execution` entries and from `usage.connectors`, whichever is larger.
+/// `tool.execution` entries and from `usage.connectors`, whichever is larger. A `thinking`
+/// chunk (reasoning, §6.1) contributes only its `tool_reference` chunks — pages the web search
+/// returned, citable like the others —, never its text.
 fn parse_conversation(response: &Value) -> ParsedConversation {
     let outputs = response
         .get("outputs")
@@ -752,45 +806,25 @@ fn parse_conversation(response: &Value) -> ParsedConversation {
                         .and_then(Value::as_str)
                         .map(str::to_owned);
                 }
-                match entry.get("content") {
-                    Some(Value::String(s)) => text.push_str(s),
-                    Some(Value::Array(chunks)) => {
-                        for chunk in chunks {
-                            match chunk.get("type").and_then(Value::as_str) {
-                                Some("text") => {
-                                    if let Some(s) = chunk.get("text").and_then(Value::as_str) {
-                                        text.push_str(s);
-                                    }
+                let Some(content) = entry.get("content") else {
+                    continue;
+                };
+                if let Some(answer) = answer_text(content) {
+                    text.push_str(&answer);
+                }
+                for chunk in content.as_array().map(Vec::as_slice).unwrap_or_default() {
+                    match chunk_type(chunk) {
+                        Some("tool_reference") => push_reference(&mut references, chunk),
+                        Some("thinking") => {
+                            let inner = chunk.get("thinking").and_then(Value::as_array);
+                            for inner in inner.map(Vec::as_slice).unwrap_or_default() {
+                                if chunk_type(inner) == Some("tool_reference") {
+                                    push_reference(&mut references, inner);
                                 }
-                                Some("tool_reference") => {
-                                    let reference = WebReference {
-                                        title: chunk
-                                            .get("title")
-                                            .and_then(Value::as_str)
-                                            .unwrap_or_default()
-                                            .to_owned(),
-                                        url: chunk
-                                            .get("url")
-                                            .and_then(Value::as_str)
-                                            .map(str::to_owned),
-                                        source: chunk
-                                            .get("source")
-                                            .and_then(Value::as_str)
-                                            .map(str::to_owned),
-                                    };
-                                    let known = references.iter().any(|r| {
-                                        r.url.is_some() && r.url == reference.url
-                                            || r.url.is_none() && r.title == reference.title
-                                    });
-                                    if !known {
-                                        references.push(reference);
-                                    }
-                                }
-                                _ => {}
                             }
                         }
+                        _ => {}
                     }
-                    _ => {}
                 }
             }
             _ => {}
@@ -808,10 +842,11 @@ fn parse_conversation(response: &Value) -> ParsedConversation {
         })
         .unwrap_or(0);
     // Tool results count as input: never underestimate the cost.
+    let input_tokens =
+        u64_at(response, "/usage/prompt_tokens") + u64_at(response, "/usage/connector_tokens");
     let usage = Usage {
-        input_tokens: u64_at(response, "/usage/prompt_tokens")
-            + u64_at(response, "/usage/connector_tokens"),
-        output_tokens: u64_at(response, "/usage/completion_tokens"),
+        input_tokens,
+        output_tokens: output_tokens(response, input_tokens),
         web_searches: executions.max(connector_searches),
     };
     let research = if text.trim().is_empty() {
@@ -1360,6 +1395,218 @@ mod tests {
             parse_conversation(&response).research.unwrap().text,
             "Mémo."
         );
+    }
+
+    /// Responses shaped after the Mistral API reference (`ThinkChunk`, `MessageOutputEntry`,
+    /// `CompletionTokensDetails`), with and without reasoning. Their thinking holds the marker
+    /// [`THINKING_MARKER`], which must never reach a result, a record or a log.
+    fn fixture(name: &str) -> Value {
+        let text = match name {
+            "chat_high" => include_str!("../../tests/fixtures/mistral/chat_reasoning_high.json"),
+            "chat_none" => include_str!("../../tests/fixtures/mistral/chat_reasoning_none.json"),
+            "chat_malformed" => {
+                include_str!("../../tests/fixtures/mistral/chat_reasoning_malformed.json")
+            }
+            "conversation_high" => {
+                include_str!("../../tests/fixtures/mistral/conversation_reasoning_high.json")
+            }
+            "conversation_none" => {
+                include_str!("../../tests/fixtures/mistral/conversation_reasoning_none.json")
+            }
+            "conversation_malformed" => {
+                include_str!("../../tests/fixtures/mistral/conversation_reasoning_malformed.json")
+            }
+            other => panic!("unknown fixture {other}"),
+        };
+        serde_json::from_str(text).unwrap()
+    }
+
+    const THINKING_MARKER: &str = "PENSEE-PRIVEE";
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn reasoning_chat_answers_are_read_from_their_text_chunks(pool: PgPool) {
+        // (fixture, output tokens recorded): the reasoning tokens count as output.
+        for (name, output_tokens) in [("chat_high", 500), ("chat_none", 200)] {
+            sqlx::query("TRUNCATE ai_calls")
+                .execute(&pool)
+                .await
+                .unwrap();
+            let server = MockServer::start().await;
+            Mock::given(path("/v1/chat/completions"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(fixture(name)))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let (completion, logs) =
+                crate::http::security_tests::capture_logs(structured_call(&client(&server), &pool))
+                    .await;
+            let completion = completion.unwrap();
+            assert_eq!(completion.value.decision, Decision::Accept, "{name}");
+            assert_eq!(completion.value.explanation, "Le texte respecte la grille.");
+            assert_eq!(completion.usage.output_tokens, output_tokens, "{name}");
+            // 1 000 input tokens at 2 €/Mtok, output at 6 €/Mtok.
+            assert_eq!(completion.cost, MicroEur(2_000 + 6 * output_tokens as i64));
+            let calls = calls(&pool).await;
+            assert_eq!(calls[0]["output_tokens"], output_tokens, "{name}");
+            assert_eq!(calls[0]["model"], "mistral-medium-3-5");
+            let seen = format!("{completion:?} {} {logs}", Value::Array(calls));
+            assert!(!seen.contains(THINKING_MARKER), "{name}: {seen}");
+        }
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn reasoning_chat_answer_without_text_is_invalid(pool: PgPool) {
+        let server = MockServer::start().await;
+        Mock::given(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(fixture("chat_malformed")))
+            .expect(3)
+            .mount(&server)
+            .await;
+        let (result, logs) =
+            crate::http::security_tests::capture_logs(structured_call(&client(&server), &pool))
+                .await;
+        // The thinking holds a valid answer: it must not be taken for one.
+        let err = result.unwrap_err();
+        assert_eq!(
+            err,
+            MistralError::InvalidOutput("no text in the answer".into())
+        );
+        let calls = calls(&pool).await;
+        assert_eq!(calls.len(), 3);
+        assert!(calls.iter().all(|c| c["status"] == "invalid_output"));
+        let seen = format!("{err} {} {logs}", Value::Array(calls));
+        assert!(!seen.contains(THINKING_MARKER), "{seen}");
+    }
+
+    #[test]
+    fn reasoning_conversation_answers_keep_text_and_references_only() {
+        let high = parse_conversation(&fixture("conversation_high"));
+        let research = high.research.unwrap();
+        assert_eq!(
+            research.text,
+            "1. Mesure étudiée : mutualiser les achats [S1].\n2. Situation actuelle : programme \
+             PHARE [S2]."
+        );
+        // A page the web search returned while thinking is a page consulted, citable.
+        let urls: Vec<_> = research
+            .references
+            .iter()
+            .map(|r| r.url.as_deref().unwrap())
+            .collect();
+        assert_eq!(
+            urls,
+            [
+                "https://www.economie.gouv.fr/dae/programme-phare",
+                "https://www.ccomptes.fr/fr/publications/achats-hopitaux"
+            ]
+        );
+        assert!(!format!("{research:?}").contains(THINKING_MARKER));
+        assert_eq!(high.model.as_deref(), Some("mistral-large-4-0"));
+        assert_eq!(
+            high.usage,
+            Usage {
+                input_tokens: 9_000,
+                output_tokens: 2_500,
+                web_searches: 1
+            }
+        );
+
+        let none = parse_conversation(&fixture("conversation_none"));
+        let research = none.research.unwrap();
+        assert_eq!(
+            research.text,
+            "1. Mesure étudiée : mutualiser les achats [S1]."
+        );
+        assert_eq!(research.references.len(), 1);
+        assert_eq!(none.usage.output_tokens, 800);
+
+        // Only thinking, and a text chunk without text: no memo, whatever the thinking says.
+        let malformed = parse_conversation(&fixture("conversation_malformed"));
+        assert_eq!(
+            malformed.research.unwrap_err(),
+            MistralError::InvalidOutput("empty research answer".into())
+        );
+        assert_eq!(malformed.usage.output_tokens, 4_000);
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn reasoning_research_is_recorded_without_its_thinking(pool: PgPool) {
+        let server = MockServer::start().await;
+        Mock::given(path("/v1/conversations"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(fixture("conversation_high")))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let prompt = test_prompts()
+            .analysis_research
+            .render(
+                &PromptVars::new()
+                    .set("today", "2026-10-19")
+                    .set("idea_text", "Idée"),
+            )
+            .unwrap();
+        let ctx = CallContext::new(AiPurpose::AnalysisResearch);
+        let client = client(&server);
+        let (completion, logs) = crate::http::security_tests::capture_logs(client.research(
+            &pool,
+            &ctx,
+            ModelTier::Analysis,
+            &prompt,
+        ))
+        .await;
+        let completion = completion.unwrap();
+        // 9 000 tokens at 2 €/Mtok + 2 500 at 6 €/Mtok + 1 search at 0.03 €.
+        assert_eq!(completion.cost, MicroEur(18_000 + 15_000 + 30_000));
+        let calls = calls(&pool).await;
+        assert_eq!(calls[0]["output_tokens"], 2_500);
+        let seen = format!("{completion:?} {} {logs}", Value::Array(calls));
+        assert!(!seen.contains(THINKING_MARKER), "{seen}");
+    }
+
+    #[test]
+    fn reasoning_tokens_always_count_as_output() {
+        let usage = |usage: Value| json!({ "usage": usage });
+        // Reported apart and left out of `completion_tokens`.
+        let apart = usage(json!({
+            "prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 150,
+            "completion_tokens_details": { "reasoning_tokens": 30 }
+        }));
+        assert_eq!(output_tokens(&apart, 100), 50);
+        // Not reported: `completion_tokens` already holds them.
+        let within = usage(json!({
+            "prompt_tokens": 100, "completion_tokens": 50, "total_tokens": 150
+        }));
+        assert_eq!(output_tokens(&within, 100), 50);
+        // Only the total accounts for them.
+        let total_only = usage(json!({
+            "prompt_tokens": 100, "completion_tokens": 20, "total_tokens": 150
+        }));
+        assert_eq!(output_tokens(&total_only, 100), 50);
+        // Nothing usable: no tokens, never a panic.
+        assert_eq!(output_tokens(&json!({}), 0), 0);
+        assert_eq!(output_tokens(&usage(json!({ "total_tokens": 10 })), 100), 0);
+    }
+
+    #[test]
+    fn answer_text_skips_reasoning() {
+        assert_eq!(answer_text(&json!("{}")).as_deref(), Some("{}"));
+        assert_eq!(
+            answer_text(&json!([
+                { "type": "thinking", "thinking": [{ "type": "text", "text": "secret" }] },
+                { "type": "text", "text": "a" },
+                { "type": "image_url", "image_url": "https://example.org/x.png" },
+                { "type": "text", "text": "b" }
+            ]))
+            .as_deref(),
+            Some("ab")
+        );
+        assert_eq!(
+            answer_text(&json!([{ "type": "thinking", "thinking": [] }])),
+            None
+        );
+        assert_eq!(answer_text(&json!([])), None);
+        assert_eq!(answer_text(&Value::Null), None);
+        assert_eq!(answer_text(&json!({ "text": "x" })), None);
     }
 
     fn embedding_response(dims: usize, indexes: &[u64]) -> Value {

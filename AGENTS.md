@@ -375,6 +375,15 @@ version de prompt (l'admin peut relancer manuellement).
   structurée ne sont pas compatibles dans un même appel : étape 1 recherche (texte + sources),
   étape 2 structuration via `response_format` JSON schema. Toute sortie invalide est rejetée et
   réessayée (3 tentatives max, backoff exponentiel), puis `analysis_failed`.
+- Réponses avec raisonnement : le `content` d'un message (chat completions comme sorties
+  `message.output` des Conversations) peut être une chaîne ou une liste de fragments. Seuls les
+  fragments `text` forment la réponse (concaténés dans l'ordre ; le JSON de la sortie structurée
+  n'est lu que là) ; un fragment `thinking` n'est **jamais** lu, stocké ni journalisé (il peut
+  reprendre le texte d'un visiteur), seuls les `tool_reference` qu'il contient comptent parmi les
+  pages consultées par la recherche web. Une réponse sans fragment `text` est une sortie
+  invalide. Les tokens de raisonnement sont des tokens de sortie :
+  `max(completion_tokens + completion_tokens_details.reasoning_tokens, total_tokens − entrée)`,
+  pour que le coût estimé reste un majorant (§6.4).
 - 429 / 5xx : retry avec backoff ; ne jamais boucler sans limite.
 - Mise en œuvre (job `analyze_idea`, `jobs/analysis.rs`, stockage `db/analyses.rs`) :
   - première analyse : `queued_analysis → analyzing → published` (slug tiré du titre, suffixe

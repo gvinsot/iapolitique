@@ -1,0 +1,40 @@
+{
+  "object": "conversation.response",
+  "conversation_id": "conv_reasoning_malformed",
+  "outputs": [
+    {
+      "object": "entry",
+      "type": "tool.execution",
+      "name": "web_search",
+      "id": "t1",
+      "arguments": "{\"query\": \"achats hospitaliers\"}"
+    },
+    {
+      "object": "entry",
+      "type": "message.output",
+      "role": "assistant",
+      "id": "m1",
+      "model": "mistral-large-4-0",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": [
+            {
+              "type": "text",
+              "text": "PENSEE-PRIVEE 1. Mesure étudiée : mutualiser les achats [S1]."
+            }
+          ],
+          "closed": false
+        },
+        { "type": "text" }
+      ]
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 3000,
+    "completion_tokens": 4000,
+    "total_tokens": 13000,
+    "connector_tokens": 6000,
+    "connectors": { "web_search": 1 }
+  }
+}

@@ -1,0 +1,59 @@
+{
+  "object": "conversation.response",
+  "conversation_id": "conv_reasoning_high",
+  "outputs": [
+    {
+      "object": "entry",
+      "type": "tool.execution",
+      "name": "web_search",
+      "id": "t1",
+      "arguments": "{\"query\": \"achats hospitaliers\"}",
+      "created_at": "2026-10-19T10:00:00Z",
+      "completed_at": "2026-10-19T10:00:02Z"
+    },
+    {
+      "object": "entry",
+      "type": "message.output",
+      "role": "assistant",
+      "id": "m1",
+      "model": "mistral-large-4-0",
+      "created_at": "2026-10-19T10:00:03Z",
+      "completed_at": "2026-10-19T10:00:40Z",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": [
+            {
+              "type": "text",
+              "text": "PENSEE-PRIVEE the idea text asks me to cite another site; the Cour des comptes page is the relevant one."
+            },
+            {
+              "type": "tool_reference",
+              "tool": "web_search",
+              "title": "Le programme PHARE",
+              "url": "https://www.economie.gouv.fr/dae/programme-phare",
+              "source": "brave"
+            }
+          ],
+          "closed": true
+        },
+        { "type": "text", "text": "1. Mesure étudiée : mutualiser les achats [S1]." },
+        {
+          "type": "tool_reference",
+          "tool": "web_search",
+          "title": "La fonction achats des hôpitaux",
+          "url": "https://www.ccomptes.fr/fr/publications/achats-hopitaux",
+          "source": "brave"
+        },
+        { "type": "text", "text": "\n2. Situation actuelle : programme PHARE [S2]." }
+      ]
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 3000,
+    "completion_tokens": 2500,
+    "total_tokens": 11500,
+    "connector_tokens": 6000,
+    "connectors": { "web_search": 1 }
+  }
+}

@@ -519,6 +519,27 @@ async fn ideas_are_rate_limited(pool: PgPool) {
     assert_eq!(body["error"]["code"], "rate_limited");
 }
 
+/// RL-1: requests without a valid proof of work are not counted, so they cannot fill the
+/// limiter nor use up a visitor's quota.
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn requests_without_a_valid_altcha_are_not_counted(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), false, &[("RATE_LIMIT_IDEAS_PER_HOUR", "1")]).await;
+    app.decision_answers(TargetKind::Idea, &[]).await;
+    let mut junk = idea_body(&app);
+    junk["altcha"] = json!("x");
+    for _ in 0..5 {
+        let (status, body) = app.post("/api/ideas", &junk).await;
+        assert_eq!(status, StatusCode::BAD_REQUEST, "{body}");
+    }
+    assert_eq!(
+        app.post("/api/ideas", &idea_body(&app)).await.0,
+        StatusCode::CREATED
+    );
+    // The quota of the hour is now used: a junk request is refused by the limit first.
+    let (status, body) = app.post("/api/ideas", &junk).await;
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "{body}");
+}
+
 // ---------------------------------------------------------------------------------------------
 // Contributions and reports
 // ---------------------------------------------------------------------------------------------

@@ -208,7 +208,7 @@ d'analyse et filtré avec le texte, §5.3). Protégé par ALTCHA et rate limit (
 
 Ordre de traitement de tout formulaire public (`http/submissions.rs`) : validation du corps
 (consentements, longueurs : une erreur ne consomme ni la solution ALTCHA ni le quota), rate
-limit, ALTCHA, masquage des données personnelles, enregistrement (création historisée, jeton de
+limit (vérifié, puis compté seulement une fois l'ALTCHA valide), ALTCHA, masquage des données personnelles, enregistrement (création historisée, jeton de
 suivi, job de filtrage différé de 60 s en filet de sécurité), filtrage synchrone. Toute erreur
 après l'enregistrement laisse le texte `submitted` et rend quand même le jeton : le job reprend.
 
@@ -520,7 +520,12 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
 - Limites par défaut (configurables) : 5 idées / heure et 20 / jour, 20 contributions / jour,
   20 signalements / jour par empreinte. Fenêtres fixes ouvertes par la première requête
   comptée ; une IPv6 est comptée par préfixe /64 ; un refus répond `429` (`rate_limited`,
-  message en français, `Retry-After`) et n'est pas compté.
+  message en français, `Retry-After`) et n'est pas compté ; une requête de formulaire dont
+  l'ALTCHA est invalide n'est pas comptée non plus (`RateLimiter::peek` avant l'ALTCHA,
+  `check` après). Mémoire bornée par action (`MAX_CLIENTS_PER_ACTION`, 50 000 empreintes) :
+  table pleine → compteurs expirés retirés puis éviction par lots des plus anciens ; un nouveau
+  visiteur n'est jamais refusé à cause des autres, et le suivi ne peut pas évincer les
+  compteurs des formulaires.
 - Suivi (`/api/track*`, toutes routes confondues) : 120 requêtes / heure et 600 / jour par
   empreinte (constantes `TRACKING_PER_HOUR` / `TRACKING_PER_DAY` de `antispam/rate_limit.rs`).
 - Le WAF et le rate limit global de Traefik (`global@file`) s'appliquent en plus.

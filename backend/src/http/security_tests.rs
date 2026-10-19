@@ -622,8 +622,13 @@ async fn abuse_refusals_are_security_events_without_ip_nor_text(pool: PgPool) {
         "accept_publication": true,
         "altcha": "bm90LWEtc29sdXRpb24",
     });
+    let mut valid = body.clone();
+    valid["altcha"] = json!(app.altcha());
     let ((first, second), logs) = capture_logs(async {
         let first = app.post("/api/ideas", &body).await;
+        // A request without a valid proof of work is not counted (RL-1): a valid one uses the
+        // quota, then the next one is limited.
+        app.post("/api/ideas", &valid).await;
         let second = app.post("/api/ideas", &body).await;
         (first, second)
     })

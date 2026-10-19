@@ -225,21 +225,28 @@ pub(crate) fn masked(text: &str, limits: TextLimits) -> Result<String, TextError
     }
 }
 
-/// Anti-abuse checks, once the body is valid: rate limit, then proof of work.
+/// Anti-abuse checks, once the body is valid: rate limit, then proof of work. The request is
+/// only counted once its proof of work is valid, so that requests without one reserve nothing
+/// in the limiter (RL-1).
 pub(crate) fn check_abuse(
     state: &AppState,
     ip: ClientIp,
     action: RateAction,
     altcha: &str,
 ) -> Result<(), ApiError> {
+    let limited = |_: &_| security_event("rate_limited", action.as_str());
     state
         .rate_limiter
-        .check(ip.ip(), action)
-        .inspect_err(|_| security_event("rate_limited", action.as_str()))?;
+        .peek(ip.ip(), action)
+        .inspect_err(limited)?;
     state
         .altcha
         .verify(altcha)
         .inspect_err(|err| security_event("altcha_refused", err.code()))?;
+    state
+        .rate_limiter
+        .check(ip.ip(), action)
+        .inspect_err(limited)?;
     Ok(())
 }
 

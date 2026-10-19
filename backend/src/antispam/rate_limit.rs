@@ -7,6 +7,13 @@
 //! applies per replica (accepted by §7.2).
 //!
 //! Windows are fixed: the hour (or day) starts with the first counted request of the client.
+//!
+//! Memory is bounded per action ([`MAX_CLIENTS_PER_ACTION`]): a flood of tracking requests
+//! cannot crowd out the counters of the forms. When an action's table is full, its expired
+//! counters are dropped, then the oldest ones (by start of their day window) are evicted in a
+//! batch: a new visitor is never refused because of other clients, and the cost of a check
+//! stays constant on average (RL-1). The forms only count a request once its proof of work is
+//! valid ([`RateLimiter::peek`] before ALTCHA, [`RateLimiter::check`] after).
 
 use std::collections::HashMap;
 use std::net::IpAddr;
@@ -25,9 +32,11 @@ const DAY: Duration = Duration::from_secs(86_400);
 pub const SALT_TTL: Duration = DAY;
 /// Period of the removal of expired counters.
 const PURGE_INTERVAL: Duration = Duration::from_secs(600);
-/// Tracked clients beyond which new clients are refused for a minute (memory bound under a
-/// flood of distinct addresses).
-const MAX_CLIENTS: usize = 200_000;
+/// Tracked clients per action (memory bound under a flood of distinct addresses: four tables
+/// of about 100 bytes per entry).
+pub const MAX_CLIENTS_PER_ACTION: usize = 50_000;
+/// Share of a full table evicted at once (amortizes the eviction over the next insertions).
+const EVICTION_DIVISOR: usize = 10;
 
 /// Tracking requests (`/api/track*`) per hour and per fingerprint: generous for an author who
 /// reloads the page, low enough to make token guessing and database flooding pointless.
@@ -46,6 +55,18 @@ pub enum RateAction {
 }
 
 impl RateAction {
+    #[cfg(test)]
+    const ALL: [Self; 4] = [Self::Idea, Self::Contribution, Self::Report, Self::Tracking];
+
+    const fn index(self) -> usize {
+        match self {
+            Self::Idea => 0,
+            Self::Contribution => 1,
+            Self::Report => 2,
+            Self::Tracking => 3,
+        }
+    }
+
     /// Fixed label (logs, security events).
     pub const fn as_str(self) -> &'static str {
         match self {
@@ -100,8 +121,7 @@ pub enum RatePeriod {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct RateLimited {
     pub action: RateAction,
-    /// `None` when the server tracks too many clients.
-    pub period: Option<RatePeriod>,
+    pub period: RatePeriod,
     pub limit: u32,
     pub retry_after: Duration,
 }
@@ -121,9 +141,6 @@ impl RateLimited {
     /// French message shown to the visitor.
     pub fn message(&self) -> String {
         let wait = french_delay(self.retry_after);
-        let Some(period) = self.period else {
-            return format!("Service très sollicité : veuillez réessayer dans {wait}.");
-        };
         let plural = if self.limit > 1 { "s" } else { "" };
         let what = match self.action {
             RateAction::Idea => format!("idée{plural}"),
@@ -131,7 +148,7 @@ impl RateLimited {
             RateAction::Report => format!("signalement{plural}"),
             RateAction::Tracking => format!("opération{plural} de suivi"),
         };
-        let per = match period {
+        let per = match self.period {
             RatePeriod::Hour => "par heure",
             RatePeriod::Day => "par jour",
         };
@@ -192,11 +209,16 @@ impl Counter {
     }
 }
 
+type Counters = HashMap<[u8; 32], Counter>;
+
 struct State {
     salt: [u8; 32],
     salt_created: Instant,
-    counters: HashMap<([u8; 32], RateAction), Counter>,
+    /// One table per action ([`RateAction::index`]).
+    counters: [Counters; 4],
     last_purge: Instant,
+    /// Batches of evictions since the salt was created (tests).
+    evictions: usize,
 }
 
 impl State {
@@ -204,10 +226,41 @@ impl State {
         Self {
             salt: new_salt(),
             salt_created: now,
-            counters: HashMap::new(),
+            counters: Default::default(),
             last_purge: now,
+            evictions: 0,
         }
     }
+
+    fn purge_expired(&mut self, now: Instant) {
+        for table in &mut self.counters {
+            table.retain(|_, counter| !counter.expired(now));
+        }
+        self.last_purge = now;
+    }
+}
+
+/// Makes room in a full table: evicts the oldest tenth of its counters (by start of their day
+/// window), so that the next insertions find room without scanning the table again.
+fn evict_oldest(table: &mut Counters, capacity: usize) {
+    if table.is_empty() {
+        return;
+    }
+    let batch = (capacity / EVICTION_DIVISOR)
+        .max(table.len() + 1 - capacity.min(table.len() + 1))
+        .clamp(1, table.len());
+    let mut starts: Vec<Instant> = table.values().map(|c| c.day.start).collect();
+    let (_, cutoff, _) = starts.select_nth_unstable(batch - 1);
+    let cutoff = *cutoff;
+    let mut left = batch;
+    table.retain(|_, counter| {
+        if left > 0 && counter.day.start <= cutoff {
+            left -= 1;
+            false
+        } else {
+            true
+        }
+    });
 }
 
 fn new_salt() -> [u8; 32] {
@@ -219,6 +272,8 @@ fn new_salt() -> [u8; 32] {
 /// In-memory rate limiter.
 pub struct RateLimiter {
     limits: RateLimits,
+    /// Counters per action ([`MAX_CLIENTS_PER_ACTION`]).
+    capacity: usize,
     state: Mutex<State>,
 }
 
@@ -251,6 +306,7 @@ impl RateLimiter {
     pub fn new(limits: RateLimits) -> Self {
         Self {
             limits,
+            capacity: MAX_CLIENTS_PER_ACTION,
             state: Mutex::new(State::new(Instant::now())),
         }
     }
@@ -258,40 +314,43 @@ impl RateLimiter {
     /// Counts a request of `ip` for `action`, or refuses it when a limit is reached (a refused
     /// request is not counted).
     pub fn check(&self, ip: IpAddr, action: RateAction) -> Result<(), RateLimited> {
-        self.check_at(ip, action, Instant::now())
+        self.check_at(ip, action, Instant::now(), true)
     }
 
-    fn check_at(&self, ip: IpAddr, action: RateAction, now: Instant) -> Result<(), RateLimited> {
+    /// Whether a request of `ip` for `action` would be accepted, without counting it nor
+    /// tracking the client: the forms call it before verifying the proof of work, and
+    /// [`Self::check`] once it is valid, so that requests without a valid ALTCHA reserve
+    /// nothing (RL-1).
+    pub fn peek(&self, ip: IpAddr, action: RateAction) -> Result<(), RateLimited> {
+        self.check_at(ip, action, Instant::now(), false)
+    }
+
+    fn check_at(
+        &self,
+        ip: IpAddr,
+        action: RateAction,
+        now: Instant,
+        count: bool,
+    ) -> Result<(), RateLimited> {
         let mut state = self.state.lock().unwrap_or_else(|e| e.into_inner());
         if now.duration_since(state.salt_created) >= SALT_TTL {
             // The old salt and every fingerprint computed with it are destroyed.
             *state = State::new(now);
         }
-        if now.duration_since(state.last_purge) >= PURGE_INTERVAL
-            || state.counters.len() >= MAX_CLIENTS
-        {
-            state.counters.retain(|_, counter| !counter.expired(now));
-            state.last_purge = now;
+        if now.duration_since(state.last_purge) >= PURGE_INTERVAL {
+            state.purge_expired(now);
         }
         let until_new_salt = (state.salt_created + SALT_TTL).saturating_duration_since(now);
-        let key = (fingerprint(&state.salt, ip), action);
-        if !state.counters.contains_key(&key) && state.counters.len() >= MAX_CLIENTS {
-            tracing::warn!("rate limiter full: new clients refused for a minute");
-            return Err(RateLimited {
-                action,
-                period: None,
-                limit: 0,
-                retry_after: Duration::from_secs(60),
-            });
-        }
-        let counter = state.counters.entry(key).or_insert(Counter {
+        let key = fingerprint(&state.salt, ip);
+        let (hourly, daily) = self.limits.of(action);
+        let known = state.counters[action.index()].get(&key).copied();
+        let mut counter = known.unwrap_or(Counter {
             hour: Window::new(now),
             day: Window::new(now),
         });
         counter.hour.refresh(now, HOUR);
         counter.day.refresh(now, DAY);
 
-        let (hourly, daily) = self.limits.of(action);
         let refused = if counter.day.count >= daily {
             Some((RatePeriod::Day, daily, counter.day.remaining(now, DAY)))
         } else {
@@ -302,19 +361,44 @@ impl RateLimiter {
         if let Some((period, limit, remaining)) = refused {
             return Err(RateLimited {
                 action,
-                period: Some(period),
+                period,
                 limit,
                 retry_after: remaining.min(until_new_salt),
             });
         }
+        if !count {
+            return Ok(());
+        }
         counter.hour.count += 1;
         counter.day.count += 1;
+        if known.is_none() && state.counters[action.index()].len() >= self.capacity {
+            // Never refuse a new client because of the others: evict the oldest counters.
+            evict_oldest(&mut state.counters[action.index()], self.capacity);
+            state.evictions += 1;
+            tracing::warn!(
+                action = action.as_str(),
+                "rate limiter full: oldest counters evicted"
+            );
+        }
+        state.counters[action.index()].insert(key, counter);
         Ok(())
     }
 
     #[cfg(test)]
+    fn with_capacity(limits: RateLimits, capacity: usize) -> Self {
+        Self {
+            capacity,
+            ..Self::new(limits)
+        }
+    }
+
+    #[cfg(test)]
     fn tracked(&self) -> usize {
-        self.state.lock().unwrap().counters.len()
+        let state = self.state.lock().unwrap();
+        RateAction::ALL
+            .iter()
+            .map(|a| state.counters[a.index()].len())
+            .sum()
     }
 }
 
@@ -344,44 +428,60 @@ mod tests {
         let (limiter, t0) = limiter();
         let client = ip("198.51.100.20");
         for _ in 0..TRACKING_PER_HOUR {
-            limiter.check_at(client, RateAction::Tracking, t0).unwrap();
+            limiter
+                .check_at(client, RateAction::Tracking, t0, true)
+                .unwrap();
         }
         let refused = limiter
-            .check_at(client, RateAction::Tracking, t0)
+            .check_at(client, RateAction::Tracking, t0, true)
             .unwrap_err();
-        assert_eq!(refused.period, Some(RatePeriod::Hour));
+        assert_eq!(refused.period, RatePeriod::Hour);
         assert!(
             refused
                 .message()
                 .contains("120 opérations de suivi par heure")
         );
         // Other forms are counted apart.
-        limiter.check_at(client, RateAction::Idea, t0).unwrap();
+        limiter
+            .check_at(client, RateAction::Idea, t0, true)
+            .unwrap();
     }
 
     #[test]
     fn hourly_and_daily_idea_limits() {
         let (limiter, t0) = limiter();
         let client = ip("203.0.113.7");
-        limiter.check_at(client, RateAction::Idea, t0).unwrap();
         limiter
-            .check_at(client, RateAction::Idea, t0 + Duration::from_secs(60))
+            .check_at(client, RateAction::Idea, t0, true)
+            .unwrap();
+        limiter
+            .check_at(client, RateAction::Idea, t0 + Duration::from_secs(60), true)
             .unwrap();
         let refused = limiter
-            .check_at(client, RateAction::Idea, t0 + Duration::from_secs(600))
+            .check_at(
+                client,
+                RateAction::Idea,
+                t0 + Duration::from_secs(600),
+                true,
+            )
             .unwrap_err();
-        assert_eq!(refused.period, Some(RatePeriod::Hour));
+        assert_eq!(refused.period, RatePeriod::Hour);
         assert_eq!(refused.limit, 2);
         assert_eq!(refused.retry_after, Duration::from_secs(3_000));
         // Refused requests are not counted: the next hour accepts one more, then the day is
         // full.
         limiter
-            .check_at(client, RateAction::Idea, t0 + HOUR)
+            .check_at(client, RateAction::Idea, t0 + HOUR, true)
             .unwrap();
         let refused = limiter
-            .check_at(client, RateAction::Idea, t0 + HOUR + Duration::from_secs(1))
+            .check_at(
+                client,
+                RateAction::Idea,
+                t0 + HOUR + Duration::from_secs(1),
+                true,
+            )
             .unwrap_err();
-        assert_eq!(refused.period, Some(RatePeriod::Day));
+        assert_eq!(refused.period, RatePeriod::Day);
         assert_eq!(refused.limit, 3);
         assert_eq!(refused.retry_after, DAY - HOUR - Duration::from_secs(1));
     }
@@ -391,39 +491,43 @@ mod tests {
         let (limiter, t0) = limiter();
         let a = ip("203.0.113.7");
         let b = ip("198.51.100.1");
-        limiter.check_at(a, RateAction::Report, t0).unwrap();
-        assert!(limiter.check_at(a, RateAction::Report, t0).is_err());
-        limiter.check_at(b, RateAction::Report, t0).unwrap();
-        limiter.check_at(a, RateAction::Contribution, t0).unwrap();
-        limiter.check_at(a, RateAction::Contribution, t0).unwrap();
+        limiter.check_at(a, RateAction::Report, t0, true).unwrap();
+        assert!(limiter.check_at(a, RateAction::Report, t0, true).is_err());
+        limiter.check_at(b, RateAction::Report, t0, true).unwrap();
+        limiter
+            .check_at(a, RateAction::Contribution, t0, true)
+            .unwrap();
+        limiter
+            .check_at(a, RateAction::Contribution, t0, true)
+            .unwrap();
         let refused = limiter
-            .check_at(a, RateAction::Contribution, t0)
+            .check_at(a, RateAction::Contribution, t0, true)
             .unwrap_err();
-        assert_eq!(refused.period, Some(RatePeriod::Day));
-        limiter.check_at(a, RateAction::Idea, t0).unwrap();
+        assert_eq!(refused.period, RatePeriod::Day);
+        limiter.check_at(a, RateAction::Idea, t0, true).unwrap();
     }
 
     #[test]
     fn ipv6_clients_are_grouped_by_64_prefix() {
         let (limiter, t0) = limiter();
         limiter
-            .check_at(ip("2001:db8:1:2::1"), RateAction::Report, t0)
+            .check_at(ip("2001:db8:1:2::1"), RateAction::Report, t0, true)
             .unwrap();
         assert!(
             limiter
-                .check_at(ip("2001:db8:1:2:ffff::9"), RateAction::Report, t0)
+                .check_at(ip("2001:db8:1:2:ffff::9"), RateAction::Report, t0, true)
                 .is_err()
         );
         limiter
-            .check_at(ip("2001:db8:1:3::1"), RateAction::Report, t0)
+            .check_at(ip("2001:db8:1:3::1"), RateAction::Report, t0, true)
             .unwrap();
         // An IPv4-mapped address is the IPv4 client.
         limiter
-            .check_at(ip("192.0.2.1"), RateAction::Report, t0)
+            .check_at(ip("192.0.2.1"), RateAction::Report, t0, true)
             .unwrap();
         assert!(
             limiter
-                .check_at(ip("::ffff:192.0.2.1"), RateAction::Report, t0)
+                .check_at(ip("::ffff:192.0.2.1"), RateAction::Report, t0, true)
                 .is_err()
         );
     }
@@ -434,14 +538,16 @@ mod tests {
         let client = ip("203.0.113.7");
         let salt = limiter.state.lock().unwrap().salt;
         let before = fingerprint(&salt, client);
-        limiter.check_at(client, RateAction::Report, t0).unwrap();
+        limiter
+            .check_at(client, RateAction::Report, t0, true)
+            .unwrap();
         let refused = limiter
-            .check_at(client, RateAction::Report, t0 + DAY - HOUR)
+            .check_at(client, RateAction::Report, t0 + DAY - HOUR, true)
             .unwrap_err();
         // The retry never goes beyond the end of the salt.
         assert_eq!(refused.retry_after, HOUR);
         limiter
-            .check_at(client, RateAction::Report, t0 + DAY)
+            .check_at(client, RateAction::Report, t0 + DAY, true)
             .unwrap();
         let new_salt = limiter.state.lock().unwrap().salt;
         assert_ne!(new_salt, salt);
@@ -454,13 +560,13 @@ mod tests {
         let (limiter, t0) = limiter();
         for i in 0..10u8 {
             limiter
-                .check_at(IpAddr::from([10, 0, 0, i]), RateAction::Report, t0)
+                .check_at(IpAddr::from([10, 0, 0, i]), RateAction::Report, t0, true)
                 .unwrap();
         }
         assert_eq!(limiter.tracked(), 10);
         // Hour windows are over but day windows are not: kept.
         limiter
-            .check_at(ip("10.0.1.1"), RateAction::Report, t0 + 2 * HOUR)
+            .check_at(ip("10.0.1.1"), RateAction::Report, t0 + 2 * HOUR, true)
             .unwrap();
         assert_eq!(limiter.tracked(), 11);
     }
@@ -483,7 +589,7 @@ mod tests {
     fn refusals_become_429_with_french_messages() {
         let refused = RateLimited {
             action: RateAction::Idea,
-            period: Some(RatePeriod::Hour),
+            period: RatePeriod::Hour,
             limit: 5,
             retry_after: Duration::from_secs(1_381),
         };
@@ -498,7 +604,7 @@ mod tests {
         );
         let refused = RateLimited {
             action: RateAction::Report,
-            period: Some(RatePeriod::Day),
+            period: RatePeriod::Day,
             limit: 20,
             retry_after: Duration::from_secs(5 * 3_600 + 1),
         };
@@ -515,23 +621,74 @@ mod tests {
         assert!(refused.message().ends_with("dans 6 heures."));
         assert_eq!(french_delay(Duration::from_secs(1)), "1 minute");
         assert_eq!(french_delay(Duration::from_secs(3_600)), "1 heure");
-        let full = RateLimited {
-            action: RateAction::Contribution,
-            period: None,
-            limit: 0,
-            retry_after: Duration::from_secs(60),
-        };
-        assert_eq!(
-            full.message(),
-            "Service très sollicité : veuillez réessayer dans 1 minute."
-        );
+    }
+
+    /// RL-1: a peek neither counts nor tracks the client.
+    #[test]
+    fn peeking_reserves_nothing() {
+        let (limiter, t0) = limiter();
+        for i in 0..100u8 {
+            limiter
+                .check_at(IpAddr::from([10, 1, 0, i]), RateAction::Idea, t0, false)
+                .unwrap();
+        }
+        assert_eq!(limiter.tracked(), 0);
+        let client = ip("203.0.113.7");
+        limiter
+            .check_at(client, RateAction::Report, t0, true)
+            .unwrap();
+        let refused = limiter
+            .check_at(client, RateAction::Report, t0, false)
+            .unwrap_err();
+        assert_eq!(refused.period, RatePeriod::Day);
+    }
+
+    /// RL-1: a full table evicts its oldest counters instead of refusing new clients, and the
+    /// eviction is amortized (one batch per tenth of the capacity).
+    #[test]
+    fn a_full_table_evicts_instead_of_refusing() {
+        let limiter = RateLimiter::with_capacity(LIMITS, 1_000);
+        let t0 = limiter.state.lock().unwrap().salt_created;
+        for i in 0..1_000u32 {
+            limiter
+                .check_at(
+                    IpAddr::from(i.to_be_bytes()),
+                    RateAction::Tracking,
+                    t0,
+                    true,
+                )
+                .unwrap();
+        }
+        assert_eq!(limiter.tracked(), 1_000);
+        // Tracking floods do not touch the forms' table.
+        let victim = ip("198.51.100.77");
+        let later = t0 + Duration::from_secs(60);
+        limiter
+            .check_at(victim, RateAction::Idea, later, true)
+            .unwrap();
+        // A new tracking client 23 hours later is accepted too.
+        for i in 0..1_000u32 {
+            limiter
+                .check_at(
+                    IpAddr::from((i + 50_000).to_be_bytes()),
+                    RateAction::Tracking,
+                    t0 + 23 * HOUR,
+                    true,
+                )
+                .unwrap();
+        }
+        let state = limiter.state.lock().unwrap();
+        assert!(state.counters[RateAction::Tracking.index()].len() <= 1_000);
+        assert_eq!(state.counters[RateAction::Idea.index()].len(), 1);
+        // 1 000 insertions into a full table: about 10 batches, not 1 000 scans.
+        assert!(state.evictions <= 11, "{}", state.evictions);
     }
 
     #[test]
     fn debug_output_hides_the_salt() {
         let (limiter, t0) = limiter();
         limiter
-            .check_at(ip("203.0.113.7"), RateAction::Idea, t0)
+            .check_at(ip("203.0.113.7"), RateAction::Idea, t0, true)
             .unwrap();
         let debug = format!("{limiter:?}");
         assert!(!debug.contains("salt"));

@@ -265,6 +265,11 @@ bundle (pas de `package-lock.json` dans l'image) ; ils sont couverts en CI par `
 - **Bots qui résolvent ALTCHA et font tourner leurs IP (ALT-1, COST-1)** : ALTCHA ralentit les
   navigateurs, pas un script ; les limites par empreinte et le plafond journalier bornent le coût,
   mais une campagne distribuée peut retarder les analyses légitimes jusqu'au lendemain.
+- **Exports régénérés en différé** : un masquage (signalement `contenu_problematique`, admin) ou
+  un retrait par l'auteur retire aussitôt l'idée du site et de l'API, mais les fichiers d'export
+  ne sont régénérés que 2 minutes plus tard (job `generate_exports` regroupé, AGENTS.md §6.1) :
+  pendant cette fenêtre, la version précédente des exports, qui contient encore l'idée, reste
+  téléchargeable (vérifié par `e2e.sh`, qui attend la régénération).
 - **Contenu généré par l'IA (INJ-8)** : publié après contrôles structurels et sémantiques, sans
   modération du fond ; une injection indirecte réussie produirait une analyse fausse ou
   diffamatoire jusqu'à un signalement. Les signalements `contenu_problematique` masquent aussitôt.
@@ -323,6 +328,13 @@ docker compose -f docker-compose.swarm.yml --env-file <copie de .env.example> bu
 devops/dev/e2e.sh                     # parcours fonctionnel complet + navigateurs + journaux
 devops/dev/security/run.sh            # campagne de sécurité (15 à 20 minutes)
 ```
+
+`e2e.sh` couvre aussi les décisions du 2026-10-19 : retrait par son auteur d'une idée publiée
+portant la contribution d'un autre visiteur (D2 : 404, absente de la liste et des exports, suivi du
+contributeur « retirée par son auteur », idée visible de l'admin), suppression d'une idée escaladée
+dont la copie scellée reste lisible par l'admin avec lecture journalisée (D3), et clé Mistral
+refusée (401) puis rétablie : jobs en attente sans tentative consommée, un seul appel de contrôle
+par période, une seule ERROR journalisée, puis publication complète.
 
 `run.sh` démarre la pile (`E2E_STACK_ONLY=1 devops/dev/e2e.sh`) et un Traefik local
 (`devops/dev/traefik-dynamic.yml`), puis enchaîne :

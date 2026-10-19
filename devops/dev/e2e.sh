@@ -9,9 +9,10 @@
 # The containers run with the hardening of devops/docker-compose.swarm.yml (read-only root file
 # system, tmpfs, capabilities, init). devops/check_frontend_headers.sh checks the nginx headers,
 # then devops/dev/e2e_scenario.py drives the pipeline, devops/dev/browser_check.sh browses every
-# route in Chromium and Firefox (CSP violations, ALTCHA, admin; E2E_BROWSER=0 skips it), a second
-# phase restarts the api and the worker with a tiny daily budget, and the container logs are
-# checked for client IPs, tracking tokens and visitor texts (AGENTS.md §7.1).
+# route in Chromium and Firefox (CSP violations, ALTCHA, admin; E2E_BROWSER=0 skips it), the
+# `auth-*` phases make the mock refuse the API key (HTTP 401) then accept it again, a last phase
+# restarts the api and the worker with a tiny daily budget, and the container logs are checked
+# for client IPs, tracking tokens and visitor texts (AGENTS.md §7.1).
 #
 # Build the images first (from devops/, with a copy of .env.example):
 #   docker compose -f docker-compose.swarm.yml --env-file <copy> build api frontend
@@ -33,6 +34,7 @@ front_image="${E2E_FRONT_IMAGE:-registry.methodinfo.fr/iapolitique-frontend:late
 public_port="${E2E_PUBLIC_PORT:-18080}"
 admin_port="${E2E_ADMIN_PORT:-18081}"
 front_port="${E2E_FRONT_PORT:-18000}"
+mock_port="${E2E_MOCK_PORT:-18090}"
 net=iapolitique-e2e
 # The first interpreter that really runs (on Windows, python3 may be a Store alias stub).
 python=""
@@ -70,8 +72,9 @@ psql "$pg_url/postgres" -c "DROP DATABASE IF EXISTS $db WITH (FORCE)" -c "CREATE
 docker network create "$net" >/dev/null 2>&1 || true
 
 echo "== mock Mistral"
-docker create --name e2e-mock-mistral --network "$net" python:3.13-alpine \
-    python /mock_mistral.py --port 8090 >/dev/null
+# Published on the loopback only: the scenario switches its key refusal (POST /control).
+docker create --name e2e-mock-mistral --network "$net" -p "127.0.0.1:$mock_port:8090" \
+    python:3.13-alpine python /mock_mistral.py --port 8090 >/dev/null
 docker cp "$here/mock_mistral.py" e2e-mock-mistral:/mock_mistral.py >/dev/null
 docker start e2e-mock-mistral >/dev/null
 
@@ -158,6 +161,25 @@ if [[ "${E2E_BROWSER:-1}" != 0 ]]; then
     echo "regrouper les achats de papier des écoles" >>"$secrets_file"
 fi
 
+echo "== scenario: Mistral refuses the API key"
+"$python" "$here/e2e_scenario.py" --public "http://127.0.0.1:$public_port" \
+    --admin "http://127.0.0.1:$admin_port" --admin-token "$token" --phase auth-refused \
+    --mock "http://127.0.0.1:$mock_port" --state "$(native_dir "$work")/auth.json" \
+    --secrets-out "$secrets_file"
+# The key is accepted again: instead of waiting the 15 minutes of the retry delay, the clock of
+# the alert and of the waiting jobs moves forward. The jobs are due a few seconds apart, so that
+# the first one checks the key (it is the only one allowed to while the alert lasts) and closes
+# the alert before the others run.
+psql "$pg_url/$db" -c "UPDATE provider_alerts SET probed_at = probed_at - interval '2 hours'" \
+    -c "UPDATE jobs j SET run_after = now() + (o.n - 1) * interval '5 seconds'
+        FROM (SELECT id, row_number() OVER (ORDER BY run_after, id) AS n FROM jobs
+              WHERE status = 'queued' AND run_after > now()
+                AND kind IN ('second_opinion', 'dedup_idea', 'analyze_idea', 'review_reports')) o
+        WHERE j.id = o.id"
+"$python" "$here/e2e_scenario.py" --public "http://127.0.0.1:$public_port" \
+    --admin "http://127.0.0.1:$admin_port" --admin-token "$token" --phase auth-restored \
+    --state "$(native_dir "$work")/auth.json" --secrets-out "$secrets_file"
+
 echo "== scenario: budget exhausted"
 docker logs e2e-api >"$work/api-1.log" 2>&1
 docker logs e2e-worker >"$work/worker-1.log" 2>&1
@@ -177,7 +199,17 @@ if grep -F -f "$secrets_file" "$work"/*.log; then
     echo "FAIL  the logs above contain an IP, a token, a secret or a visitor text" >&2
     exit 1
 fi
-if grep -h '"level":"ERROR"' "$work"/api-*.log "$work"/worker-*.log; then
+# The refused key of the `auth-*` phases is logged as an ERROR once per period (one hour), never
+# once per job (AGENTS.md §6.4): exactly one such line, and no other error.
+key_error='Mistral refused the API key'
+key_errors="$(cat "$work"/api-*.log "$work"/worker-*.log | grep '"level":"ERROR"' |
+    grep -c "$key_error" || true)"
+if [[ "$key_errors" != 1 ]]; then
+    echo "FAIL  $key_errors refused-key errors logged, 1 expected" >&2
+    exit 1
+fi
+echo "ok    refused key logged once"
+if grep -h '"level":"ERROR"' "$work"/api-*.log "$work"/worker-*.log | grep -v "$key_error"; then
     echo "FAIL  errors logged" >&2
     exit 1
 fi

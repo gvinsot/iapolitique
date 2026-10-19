@@ -38,7 +38,12 @@ Then point the api and the worker to it:
   MISTRAL_API_BASE_URL=http://<host>:8090  MISTRAL_API_KEY=<any non-empty value>
 
 Logs show the method, path and status only: never a prompt (prompts carry visitor texts).
-GET /stats returns the number of calls per endpoint (for test scripts).
+GET /stats returns the number of calls per endpoint (for test scripts); calls refused by the
+key switch below are counted under `refused_auth`.
+
+Key switch (devops/dev/e2e_scenario.py, phases `auth-*`): POST /control {"auth_status": 401}
+(or 403) makes every /v1 call answer that status, as Mistral does with a revoked or wrong key;
+{"auth_status": null} accepts the key again. Development only, like the whole mock.
 """
 
 from __future__ import annotations
@@ -64,6 +69,8 @@ STOP_WORDS = frozenset(
 )
 
 STATS: dict[str, int] = {}
+# Status answered to every /v1 call while the key is "refused" (POST /control), None otherwise.
+AUTH_REFUSAL: dict[str, int | None] = {"status": None}
 
 # Text of the mock's thinking chunks: checked absent from the API, the exports and the logs.
 THINKING_MARKER = "PENSEE-PRIVEE-MOCK"
@@ -441,13 +448,38 @@ class Handler(BaseHTTPRequestHandler):
         else:
             self.send_json(404, {"object": "error", "message": "not found"})
 
+    def control(self) -> None:
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            body = None
+        status = body.get("auth_status") if isinstance(body, dict) else 0
+        if status not in (None, 401, 403):
+            self.send_json(400, {"object": "error", "message": "auth_status: 401, 403 or null"})
+            return
+        with STATS_LOCK:
+            AUTH_REFUSAL["status"] = status
+        self.send_json(200, {"auth_status": status})
+
     def do_POST(self) -> None:  # noqa: N802 - stdlib naming
+        if self.path == "/control":
+            self.control()
+            return
         route = ROUTES.get(self.path)
         if route is None:
             self.send_json(404, {"object": "error", "message": "not found"})
             return
         if not self.headers.get("Authorization", "").startswith("Bearer "):
             self.send_json(401, {"object": "error", "message": "missing bearer key"})
+            return
+        with STATS_LOCK:
+            refusal = AUTH_REFUSAL["status"]
+            if refusal is not None:
+                STATS["refused_auth"] = STATS.get("refused_auth", 0) + 1
+        if refusal is not None:
+            # Mistral's answer to a wrong or revoked key.
+            self.send_json(refusal, {"message": "Unauthorized", "request_id": "mock"})
             return
         try:
             length = int(self.headers.get("Content-Length", "0"))

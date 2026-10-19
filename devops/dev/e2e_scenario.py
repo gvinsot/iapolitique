@@ -12,7 +12,16 @@ Phases (`--phase`, default `main`):
   main    legitimate idea -> accepted -> dedup -> analysis -> published; insulting idea ->
           rejected with a statement; near duplicate -> merged; contribution -> re-analysis;
           exports downloadable with LICENSE; report `contenu_problematique` -> hidden +
-          escalation; tracking and deletion; admin endpoints.
+          escalation; tracking and deletion; withdrawal by its author of a published idea
+          that carries another visitor's contribution (D2) and of the escalated idea, whose
+          sealed copy stays readable by the admin (D3); admin endpoints.
+  auth-refused   the mock refuses the API key (401, `--mock`): the Mistral jobs of new ideas
+          wait (rescheduled 15 min later, attempts untouched), only one job per period calls
+          Mistral, the dashboard shows the alert; then the key is accepted again. Writes the
+          ideas to `--state`.
+  auth-restored  once the retry delay has passed (e2e.sh moves the clock of the queue between
+          the two phases), the waiting jobs run, the alert closes, the ideas are published and
+          each job used a single attempt.
   budget  with the worker restarted on a tiny MISTRAL_DAILY_BUDGET_EUR: a new accepted idea
           leaves its Mistral job queued until the next Paris midnight, attempts untouched.
 
@@ -29,6 +38,7 @@ import json
 import sys
 import time
 import urllib.error
+import urllib.parse
 import urllib.request
 from typing import Any
 
@@ -115,6 +125,21 @@ CONTRIBUTION = (
     "locales grâce à un allotissement adapté des marchés."
 )
 REPORT_DETAILS = "Cette fiche contient des accusations graves et diffamatoires envers des agents."
+OTHER_CONTRIBUTION = (
+    "Il faudrait prévoir une période de double usage des logiciels pendant la formation des "
+    "agents, pour ne pas interrompre le service rendu aux usagers."
+)
+# Ideas of the `auth-*` phases: unrelated to each other and to the others (no merge).
+AUTH_IDEAS = (
+    "Dématérialiser entièrement les convocations et notifications adressées par les tribunaux "
+    "aux justiciables qui l'acceptent, afin de réduire les frais d'affranchissement et "
+    "d'impression des juridictions et d'accélérer le traitement des dossiers.",
+    "Regrouper les contrats de maintenance des ascenseurs et des installations techniques des "
+    "lycées d'une même académie dans un marché unique, pour obtenir des prix plus bas et "
+    "réduire le temps passé par les établissements à gérer ces contrats.",
+)
+# Kinds of the jobs that call Mistral (AGENTS.md §13.1).
+MISTRAL_KINDS = ("second_opinion", "dedup_idea", "analyze_idea", "review_reports")
 
 
 class Api:
@@ -295,6 +320,7 @@ def main_phase(api: Api) -> None:
     merged = wait_for("near duplicate merged",
                       track_status(api, answer["tracking_token"], "merged"), timeout=180)
     expect(merged["idea"]["slug"] == slug_a, "merged tracking points to the parent idea")
+    merged_token = answer["tracking_token"]
     wait_for("parent counts two proposals",
              lambda: api.get(f"/api/ideas/{slug_a}")[1]["proposal_count"] == 2, timeout=60)
 
@@ -313,13 +339,39 @@ def main_phase(api: Api) -> None:
            and any(c["kind"] == "amelioration" for c in detail["contributions"]),
            "re-analysis integrates the contribution")
 
-    # 5. Another published idea, deleted by its author.
+    # 5. Another published idea, with another visitor's contribution, withdrawn by its author
+    #    (D2): gone from the public site, kept for the admin, the contributor is told why.
     token_b, slug_b = submit_published(api, OTHER_IDEA)
+    body = {"kind": "amelioration", "text": OTHER_CONTRIBUTION, "accept_licence": True,
+            "accept_publication": True, "altcha": api.altcha()}
+    SECRETS.append(OTHER_CONTRIBUTION[:60])
+    status, answer = api.post(f"/api/ideas/{slug_b}/contributions", body, ip=api.next_ip())
+    expect(status == 201 and answer["status"] != "rejected",
+           f"contribution on the idea to withdraw accepted ({status}, {answer.get('status')})")
+    token_contrib_b = answer["tracking_token"]
+    SECRETS.append(token_contrib_b)
+    wait_for("contribution on the idea to withdraw integrated",
+             track_status(api, token_contrib_b, "integrated"), timeout=240)
     status, body = api.post("/api/track/delete", {"token": token_b})
     expect(status == 200 and body == {"status": "deleted"}, "author deletes a published idea")
-    expect(api.track(token_b)["status"] == "deleted", "tracking shows the tombstone")
+    expect(api.track(token_b)["status"] == "deleted", "author's tracking shows the deletion done")
     status, _ = api.get(f"/api/ideas/{slug_b}")
-    expect(status == 404, "deleted idea leaves the site")
+    expect(status == 404, "withdrawn idea leaves the site")
+    status, ideas = api.get("/api/ideas")
+    expect(status == 200 and all(i["slug"] != slug_b for i in ideas["items"]),
+           "withdrawn idea absent from GET /api/ideas")
+    contrib = api.track(token_contrib_b)
+    expect(contrib["idea_withdrawn"] is True and contrib.get("idea") is None,
+           "contributor's tracking says the idea was withdrawn by its author")
+    status, body = api.post(f"/api/ideas/{slug_b}/contributions",
+                            {"kind": "amelioration", "text": CONTRIBUTION, "accept_licence": True,
+                             "accept_publication": True, "altcha": api.altcha()},
+                            ip=api.next_ip())
+    expect(status == 404, f"no contribution to a withdrawn idea ({status})")
+    status, page = api.admin_call("GET", f"/ideas?status=withdrawn&q={slug_b}")
+    expect(status == 200 and any(i["slug"] == slug_b and i["status"] == "withdrawn"
+                                 and i.get("withdrawn_at") for i in page["items"]),
+           "admin still sees the withdrawn idea, marked withdrawn")
     status, body = api.post("/api/track/delete", {"token": token_b})
     expect(status == 200, "deletion is idempotent")
     status, body = api.post("/api/track", {"token": "x" * 43})
@@ -367,6 +419,7 @@ def main_phase(api: Api) -> None:
     expect(status == 201 and answer["status"] != "rejected",
            f"report accepted ({status}, {answer.get('status')})")
     SECRETS.append(answer["tracking_token"])
+    token_report_a = answer["tracking_token"]
     wait_for("report reviewed", track_status(api, answer["tracking_token"], "reviewed"),
              timeout=180)
     expect(api.track(answer["tracking_token"])["report_outcome"] == "hide",
@@ -382,6 +435,34 @@ def main_phase(api: Api) -> None:
     status, _ = api.admin_call("POST", f"/escalations/{eid}/handle",
                                {"outcome": "transmitted", "note": "Transmis à PHAROS."})
     expect(status == 200, "admin closes the escalation")
+
+    # 8b. The author deletes the escalated idea (D2 + D3): withdrawn, and the sealed copy of the
+    #     escalation stays readable by the admin, each read journaled.
+    status, body = api.post("/api/track/delete", {"token": token_a})
+    expect(status == 200 and body == {"status": "deleted"}, "author deletes the escalated idea")
+    expect(api.track(token_a)["status"] == "deleted", "author's tracking shows the deletion done")
+    expect(api.track(token_report_a)["idea_withdrawn"] is True,
+           "reporter's tracking says the idea was withdrawn by its author")
+    expect(api.track(merged_token)["idea_withdrawn"] is True,
+           "merged duplicate's tracking says the idea was withdrawn by its author")
+    status, page = api.admin_call("GET", "/escalation-seals")
+    expect(status == 200 and any(s["escalation_id"] == eid and s["idea_status"] == "withdrawn"
+                                 for s in page["items"]),
+           "escalation seal listed, its idea withdrawn")
+    status, seal = api.admin_call("GET", f"/escalations/{eid}/seal")
+    expect(status == 200 and seal["content"]["idea"]["slug"] == slug_a
+           and LEGIT_IDEA[:60] in (seal["content"]["idea"]["original_text"] or "")
+           and any(r["reason"] == "contenu_problematique" for r in seal["content"]["reports"])
+           and seal["content"]["review"]["escalate"] is True,
+           "admin reads the sealed copy of the withdrawn escalated idea")
+    status, page = api.admin_call("GET", f"/actions?action=escalation.seal_read&target_id={eid}")
+    expect(status == 200 and page["total"] >= 1, "sealed copy read journaled")
+    # Exports are regenerated 2 minutes after a change (EXPORTS_DEBOUNCE, AGENTS.md §7.4).
+    def export_without_a() -> Any:
+        status, _, raw = api.request("GET", api.public + "/api/exports/ideas.json")
+        return status == 200 and slug_a.encode() not in raw
+    wait_for("withdrawn escalated idea absent from the exports", export_without_a,
+             timeout=400, interval=10)
 
     # 9. Other admin endpoints.
     status, dash = api.admin_call("GET", "/dashboard")
@@ -403,6 +484,114 @@ def main_phase(api: Api) -> None:
     expect(status == 200, "admin resets the dedup threshold")
     status, page = api.admin_call("GET", "/actions")
     expect(page["total"] >= 5, "admin actions journaled")
+
+
+def mistral_jobs(api: Api, idea_ids: set[str], status: str) -> list[dict]:
+    """Jobs of the given ideas that call Mistral, in the given status."""
+    jobs = []
+    for kind in MISTRAL_KINDS:
+        code, page = api.admin_call("GET", f"/jobs?kind={kind}&status={status}&per_page=50")
+        if code != 200:
+            expect(False, f"admin lists {status} {kind} jobs ({code})")
+        jobs += [j for j in page["items"] if str(j["payload"].get("idea_id")) in idea_ids]
+    return jobs
+
+
+def mock_auth(mock: str, auth_status: int | None) -> None:
+    req = urllib.request.Request(mock.rstrip("/") + "/control", method="POST",
+                                 data=json.dumps({"auth_status": auth_status}).encode(),
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        expect(resp.status == 200, f"mock Mistral answers {auth_status or 200} to the key")
+
+
+def mock_refused(mock: str) -> int:
+    with urllib.request.urlopen(mock.rstrip("/") + "/stats", timeout=10) as resp:
+        return json.loads(resp.read()).get("refused_auth", 0)
+
+
+def idea_id(api: Api, text: str) -> str:
+    """Admin id of an idea, found by a fragment of its text."""
+    status, page = api.admin_call("GET", "/ideas?q=" + urllib.parse.quote(text[:40]))
+    expect(status == 200 and len(page["items"]) == 1, "admin finds the idea by its text")
+    return str(page["items"][0]["id"])
+
+
+def auth_refused_phase(api: Api, mock: str, state_path: str) -> None:
+    status, dash = api.admin_call("GET", "/dashboard")
+    expect(status == 200 and dash["alerts"] == [], "no alert while Mistral accepts the key")
+    mock_auth(mock, 401)
+    refused_before = mock_refused(mock)
+
+    # First idea: its first Mistral call is refused, the alert opens, the job waits.
+    status, answer = api.submit_idea(AUTH_IDEAS[0])
+    expect(status == 201 and answer["status"] != "rejected",
+           f"idea accepted while Mistral refuses the key ({answer['status']})")
+    tokens = [answer["tracking_token"]]
+
+    def alert() -> Any:
+        _, dash = api.admin_call("GET", "/dashboard")
+        return next((a for a in dash.get("alerts", []) if a["code"] == "mistral_auth"), None)
+    found = wait_for("dashboard shows the refused Mistral key", alert, timeout=120)
+    expect(found["http_status"] == 401 and "Clé Mistral refusée" in found["message"],
+           "alert carries the HTTP status and the French message")
+    ids = {idea_id(api, AUTH_IDEAS[0])}
+
+    def waiting(count: int) -> Any:
+        def probe() -> Any:
+            jobs = mistral_jobs(api, ids, "queued")
+            return jobs if len(jobs) >= count and all(
+                j["attempts"] == 0 and parse_ts(j["run_after"]) > time.time() + 14 * 60
+                for j in jobs) else None
+        return probe
+    wait_for("refused job rescheduled about 15 min later, no attempt used", waiting(1),
+             timeout=120)
+    expect(not mistral_jobs(api, ids, "dead"), "no job died of the refused key")
+    refused = mock_refused(mock)
+    expect(refused > refused_before, f"Mistral was called and refused the key ({refused})")
+
+    # Second idea: while the alert lasts, its job waits without calling Mistral.
+    status, answer = api.submit_idea(AUTH_IDEAS[1])
+    expect(status == 201 and answer["status"] != "rejected",
+           f"second idea accepted during the alert ({answer['status']})")
+    tokens.append(answer["tracking_token"])
+    ids.add(idea_id(api, AUTH_IDEAS[1]))
+    jobs = wait_for("second idea's job postponed without calling Mistral", waiting(2),
+                    timeout=120)
+    expect(mock_refused(mock) == refused, "no Mistral call while the alert lasts")
+    for token in tokens:
+        step = api.track(token)["status"]
+        expect(step in ("accepted", "second_opinion", "dedup"),
+               f"idea waits for Mistral in its current step ({step})")
+
+    # The operator fixes the key: nothing runs before the retry delay.
+    mock_auth(mock, None)
+    time.sleep(5)
+    expect(len(mistral_jobs(api, ids, "queued")) == len(jobs), "jobs still wait their delay")
+    with open(state_path, "w", encoding="utf-8") as out:
+        json.dump({"tokens": tokens, "ids": sorted(ids)}, out)
+
+
+def auth_restored_phase(api: Api, state_path: str) -> None:
+    with open(state_path, encoding="utf-8") as src:
+        state = json.load(src)
+    ids = set(state["ids"])
+    for token in state["tokens"]:
+        wait_for("waiting idea published once the key works",
+                 track_status(api, token, "published"), timeout=300)
+    status, dash = api.admin_call("GET", "/dashboard")
+    expect(status == 200 and dash["alerts"] == [], "alert closed by the first accepted call")
+    done = mistral_jobs(api, ids, "succeeded")
+    expect({j["kind"] for j in done} >= {"dedup_idea", "analyze_idea"},
+           f"dedup and analysis ran ({sorted(j['kind'] for j in done)})")
+    expect(all(j["attempts"] == 1 for j in done),
+           "each job used a single attempt " + str([(j["kind"], j["attempts"]) for j in done]))
+    expect(not mistral_jobs(api, ids, "dead"), "no dead job")
+    for token in state["tokens"]:
+        item = api.track(token)
+        status, detail = api.get(f"/api/ideas/{item['idea']['slug']}")
+        expect(status == 200 and len(detail["analysis"]["sources"]) == 2,
+               "complete analysis, no step skipped")
 
 
 def budget_phase(api: Api) -> None:
@@ -439,14 +628,26 @@ def main() -> None:
     parser.add_argument("--public", default="http://127.0.0.1:18080")
     parser.add_argument("--admin", default="http://127.0.0.1:18081")
     parser.add_argument("--admin-token", required=True)
-    parser.add_argument("--phase", choices=("main", "budget"), default="main")
+    parser.add_argument("--phase", choices=("main", "auth-refused", "auth-restored", "budget"),
+                        default="main")
+    parser.add_argument("--mock", default="http://127.0.0.1:18090",
+                        help="mock Mistral (phase auth-refused)")
+    parser.add_argument("--state", help="state file shared by the auth-* phases")
     parser.add_argument("--secrets-out")
     args = parser.parse_args()
+    if args.phase.startswith("auth-") and not args.state:
+        parser.error("--state is required by the auth-* phases")
     api = Api(args.public, args.admin, args.admin_token)
-    if args.phase == "budget":
-        api.ip_counter = 200
+    api.ip_counter = {"main": 10, "auth-refused": 150, "auth-restored": 170, "budget": 200}[
+        args.phase]
+    phases = {
+        "main": lambda: main_phase(api),
+        "auth-refused": lambda: auth_refused_phase(api, args.mock, args.state),
+        "auth-restored": lambda: auth_restored_phase(api, args.state),
+        "budget": lambda: budget_phase(api),
+    }
     try:
-        (main_phase if args.phase == "main" else budget_phase)(api)
+        phases[args.phase]()
     finally:
         if args.secrets_out:
             with open(args.secrets_out, "a", encoding="utf-8") as out:

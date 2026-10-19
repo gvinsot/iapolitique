@@ -300,6 +300,19 @@ services:
         - "traefik.http.routers.iapolitique-www-http.middlewares=iapolitique-www-to-apex"
         - "traefik.http.routers.iapolitique-www-http.service=noop@internal"
 
+        # /admin on the public host -> https://ADMIN_HOST/admin... (AGENTS.md §8): the admin pages
+        # never run on the Internet origin, so no admin token is typed or stored there. Above the
+        # public site's router; /api/admin stays on the api routers (PathRegexp needs /admin first).
+        - "traefik.http.middlewares.iapolitique-admin-redirect.redirectregex.regex=^https?://[^/]+/(?i:admin)(.*)"
+        - "traefik.http.middlewares.iapolitique-admin-redirect.redirectregex.replacement=https://${ADMIN_HOST}/admin$${1}"
+        - "traefik.http.middlewares.iapolitique-admin-redirect.redirectregex.permanent=false"
+        - "traefik.http.routers.iapolitique-admin-redirect.rule=Host(`${TRAEFIK_HOST}`) && PathRegexp(`(?i)^/admin(/|$$)`)"
+        - "traefik.http.routers.iapolitique-admin-redirect.priority=50"
+        - "traefik.http.routers.iapolitique-admin-redirect.entrypoints=websecure"
+        - "traefik.http.routers.iapolitique-admin-redirect.tls.certresolver=letsencrypt"
+        - "traefik.http.routers.iapolitique-admin-redirect.middlewares=global@file,iapolitique-admin-redirect"
+        - "traefik.http.routers.iapolitique-admin-redirect.service=noop@internal"
+
         # Admin site (same files, /admin pages), LAN only.
         - "traefik.http.routers.iapolitique-admin-front.rule=Host(`${ADMIN_HOST}`)"
         - "traefik.http.routers.iapolitique-admin-front.priority=10"

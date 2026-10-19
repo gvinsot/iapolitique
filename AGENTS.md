@@ -404,7 +404,7 @@ version de prompt (l'admin peut relancer manuellement).
 | `assumptions` | Hypothèses de calcul, explicites |
 | `pros`, `cons`, `risks` | Listes courtes et factuelles |
 | `impacts` | Pour **chaque** public de `taxonomy.yaml` (ménages modestes, classes moyennes, ménages aisés, entreprises, agents publics, usagers des services publics, territoires ruraux, territoires urbains, environnement) : `positive` / `neutral` / `negative` / `uncertain` + explication |
-| `sources` | `{ id, title, publisher, url, used_for }` ; au moins une source pour tout chiffre clé, citée `[S1]`, `[S2]`… dans les textes |
+| `sources` | `{ id, title, publisher, url, used_for }` ; au moins une source pour tout chiffre clé, citée `[S1]`, `[S2]`… dans les textes ; `url` doit être une page renvoyée par la recherche web de l'analyse (`tool_reference`) ou une source de l'analyse remplacée (comparaison sans schéma, port par défaut, fragment, `/` final ni paramètres `utm_*` ; refusées : identifiants, port explicite, adresse IP, plus de 2 048 caractères). Une recherche qui ne renvoie aucune page fait échouer l'analyse (`analysis_failed`) sans appel de structuration |
 | `existing_situation` | Droit et pratique actuels, mesures proches déjà en vigueur (le gain chiffré est le gain **supplémentaire**) |
 | `confidence_explanation` | Justification du niveau de confiance |
 | `contributions_considered` | Pour chaque contribution intégrée : `{ contribution_id, summary, taken_into_account, response }` (résumé neutre affiché sur le portail, §5.5) |
@@ -663,7 +663,10 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
   (`401`, ou `429` si verrouillée). Sur le host public, le port public répond `404` : aucun
   formulaire, aucun jeton envoyé, un jeton déjà stocké est effacé, et la page indique que
   l'administration n'est disponible que sur l'adresse du réseau local
-  (`frontend/src/hooks/use-admin-session.ts`).
+  (`frontend/src/hooks/use-admin-session.ts`). En amont, Traefik redirige (302) `/admin` et
+  `/admin/…` du host public vers `https://ADMIN_HOST/admin…` (routeur
+  `iapolitique-admin-redirect`, priorité 50, `global@file`, `noop@internal`) : les pages admin ne
+  s'exécutent pas sur l'origine publique.
 - Fonctions : tableau de bord (file de jobs, taux d'acceptation, coûts IA du jour/mois), idées
   masquées et signalements, masquer/republier, relancer une analyse, consulter les scores bruts
   du modèle de décision, **étiqueter** des décisions (accepter/refuser à raison) pour calibrer
@@ -713,7 +716,8 @@ décidée par l'humain.
 - Traefik : routeurs HTTPS avec `global@file` **obligatoire** sur tout ce qui est public ;
   redirection HTTP→HTTPS ; `PathPrefix(/api)` vers l'api **sans** strip prefix (le backend
   sert ses routes sous `/api`, voir [§13](#13-contrats-techniques)) ; routeur admin sur `ADMIN_HOST`
-  avec `dashboard-allowlist@file`. Hosts lus depuis `TRAEFIK_HOST` et `ADMIN_HOST` (le préfixe
+  avec `dashboard-allowlist@file` ; `/admin` du host public redirigé vers `ADMIN_HOST` (§8).
+  Hosts lus depuis `TRAEFIK_HOST` et `ADMIN_HOST` (le préfixe
   `qa.` est ajouté automatiquement en QA).
 - Domaine : `TRAEFIK_HOST=iapolitique.fr`, `ADMIN_HOST=admin.iapolitique.fr`. `www.iapolitique.fr`
   redirige (301) vers `iapolitique.fr`. QA : `qa.iapolitique.fr` et `qa.admin.iapolitique.fr`.
@@ -933,7 +937,7 @@ au démarrage (un fichier invalide empêche le démarrage).
 | `screening.yaml` | `version` + trois sections `idea`, `contribution`, `report`. Chaque section : liste ordonnée de critères `{ key, type: noul\|score, instructions, criteria?, pass_when (true/false pour noul, niveau minimal pour score), reject_below, accept_above, reason_code, reason_message }`. Les seuils portent sur la probabilité de **réussir** le critère (`noul` ou `1 − noul` selon `pass_when` ; pour `score`, somme des probabilités des niveaux d'indice ≥ `pass_when`) ; entre `reject_below` et `accept_above` = zone grise. `state` envoyé : texte brut (idea, précédé de `Territoire indiqué par l'auteur : <territoire>` et d'une ligne vide si l'auteur en a indiqué un), objet `{ idee, type, contribution }` (contribution), objet `{ idee, motif, precision }` (report), où `idee` est le résumé neutre de l'idée publiée. Calibration : `docs/calibration/`. |
 | `analysis_research.md`, `analysis.md`, `second_opinion.md`, `report_review.md` | En-tête YAML entre deux lignes `---` : `version`, `model_hint`, `tools` (`[web_search]` ou `[]`), `output_schema` (fichier de schéma ou `null`), `variables` (map nom → description ; toutes doivent être substituées ; une valeur absente ou vide prend la valeur citée dans la description après « ou » — « (aucune) », « non précisé »… —, une chaîne vide si la description dit « chaîne vide », « (aucun) » sinon). Corps en français découpé par la ligne `<!-- user -->` : avant = instructions système (seule variable admise : `{{today}}`, pour garder le cache de prompt), après = message utilisateur avec les variables `{{nom}}`. Les textes de visiteurs sont insérés entre balises (`<idee_originale>`…) : le backend met chaque valeur substituée en forme NFKC (`＜`, `﹤` deviennent `<`, lettres et accents combinants recomposés) puis remplace tout chevron (`<`, `>`, `〈`, `〉`, `⟨`, `⟩`, `❮`, `❯`…) par `‹` ou `›` : ni balise à attributs, ni balise auto-fermante, ni variante Unicode ne peut fermer un cadre (`PromptTemplate::neutralize`). |
 | Analyse en deux étapes | Étape 1 `analysis_research.md` (Conversations API avec `web_search`) → mémo sourcé en texte ; étape 2 `analysis.md` (`response_format` json_schema strict, sans outil) avec `{{research}}` = le mémo. Si la recherche web et la sortie structurée sont compatibles dans un même appel, `analysis.md` seul suffit avec `{{research}}` vide et l'outil `web_search` activé. Les versions des deux fichiers sont stockées avec l'analyse. |
-| `analysis.schema.json` | JSON Schema (draft 2020-12, sous-ensemble compatible avec le mode strict de Mistral : `type`, `properties`, `required` = toutes les propriétés, `additionalProperties: false`, `items`, `enum`, `description`, `title`) de la sortie d'analyse (§6.2), utilisé tel quel en `response_format` (`{"type": "json_schema", "json_schema": {"name": "analysis", "schema": …, "strict": true}}`) et pour valider la réponse. Le backend vérifie en plus : low ≤ median ≤ high, montants et délai ≥ 0, catégorie compatible avec `admin_level`, références `[Sx]` présentes dans `sources`, au moins une source. |
+| `analysis.schema.json` | JSON Schema (draft 2020-12, sous-ensemble compatible avec le mode strict de Mistral : `type`, `properties`, `required` = toutes les propriétés, `additionalProperties: false`, `items`, `enum`, `description`, `title`) de la sortie d'analyse (§6.2), utilisé tel quel en `response_format` (`{"type": "json_schema", "json_schema": {"name": "analysis", "schema": …, "strict": true}}`) et pour valider la réponse. Le backend vérifie en plus : low ≤ median ≤ high, montants et délai ≥ 0, catégorie compatible avec `admin_level`, références `[Sx]` présentes dans `sources`, au moins une source, URL de chaque source parmi les pages consultées par la recherche web ou les sources de l'analyse remplacée (§6.2, `ai::outputs::AllowedSources`). |
 | `second_opinion.schema.json`, `report_review.schema.json` | Idem pour le second avis (`decision: accept\|reject`, `reason_code` = `none` ou un `reason_code` de `screening.yaml`, `explanation`) et la revue de signalement (`outcome: maintain\|update\|hide`, `escalate` : booléen, `true` pour un contenu grave — diffamation, menace, haine, terrorisme, pédocriminalité — avec alors `outcome = hide` : le backend masque immédiatement et place l'idée dans la file d'escalade, §7.5 ; `explanation`, `corrections` : consignes passées en `{{report}}` à la ré-analyse si `update`, vide sinon). |
 | Contrôle | `python docs/calibration/check_prompts.py` vérifie formats, variables, mode strict et synchronisation des énumérations avec `taxonomy.yaml` et `screening.yaml` (à lancer après toute modification de `prompts/`). |
 | `taxonomy.yaml` | `version`, `admin_levels` (`{ key, label, description, category_groups }`), `categories` (map groupe → liste `{ key, label, description }` ; groupes `etat`, `securite_sociale`, `collectivites`, `transverse` ; clé de catégorie unique dans tout le fichier ; un niveau n'accepte que les catégories de ses `category_groups`), `impact_publics`, `impact_effects`, `idea_kinds`, `confidence_levels`, `legal_vehicles`, `report_reasons`, `contribution_kinds` (listes `{ key, label, description? }`), libellés français. |
@@ -1159,7 +1163,7 @@ aucune valeur de la requête ne peut y figurer.
   autre matcher : la structure est vérifiée, pas une sous-chaîne) ; `global@file` sur tout
   routeur HTTPS public, `dashboard-allowlist@file` sur `ADMIN_HOST` ; les routeurs HTTP ne font que
   rediriger ; le port admin 8081 n'est servi que par `Host(ADMIN_HOST) && PathPrefix(/api/admin)`,
-  derrière `dashboard-allowlist@file` (§14.4).
+  derrière `dashboard-allowlist@file` (§14.4) ; `/admin` du host public redirige vers `ADMIN_HOST`.
 - CI (`devops/Dockerfile.test`) : `cargo deny check advisories bans` (ou `cargo audit`) et
   `npm audit --omit=dev --audit-level=high` bloquants ; `Cargo.lock` et `package-lock.json`
   committés ; `npm ci` uniquement. Réalisation : `npm audit` en tête du stage `frontend-check` ;

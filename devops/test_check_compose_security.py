@@ -157,6 +157,27 @@ class ComposeSecurityTest(unittest.TestCase):
             "admin port must only serve /api/admin",
         )
 
+    def test_public_admin_path_redirects_to_the_admin_host(self) -> None:
+        # FE-5: the admin pages must never run on the public origin.
+        redirect = "traefik.http.routers.iapolitique-admin-redirect"
+        self.assert_reported(
+            lambda c: labels(c, "frontend").remove(f"{redirect}.service=noop@internal"),
+            "no HTTPS router redirecting",
+        )
+        self.assert_reported(
+            lambda c: set_label(
+                c,
+                "frontend",
+                "traefik.http.middlewares.iapolitique-admin-redirect.redirectregex.replacement",
+                "https://${TRAEFIK_HOST}/",
+            ),
+            "no HTTPS router redirecting",
+        )
+        self.assert_reported(
+            lambda c: set_label(c, "frontend", f"{redirect}.middlewares", "iapolitique-admin-redirect"),
+            "public router without global@file",
+        )
+
     def test_public_routers_keep_global_middleware(self) -> None:
         self.assert_reported(
             lambda c: set_label(

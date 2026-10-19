@@ -15,8 +15,8 @@ broken invariant:
   on TRAEFIK_HOST or ADMIN_HOST, optionally AND one PathPrefix/PathRegexp (no OR, negation, group
   or other matcher); HTTPS routers on TRAEFIK_HOST carry `global@file`, those on ADMIN_HOST
   `dashboard-allowlist@file`; HTTP routers only redirect; the admin port 8081 is reachable only
-  through `Host(ADMIN_HOST) && PathPrefix(/api/admin)` behind `dashboard-allowlist@file`, and the
-  worker has no label.
+  through `Host(ADMIN_HOST) && PathPrefix(/api/admin)` behind `dashboard-allowlist@file`; /admin
+  on TRAEFIK_HOST redirects to ADMIN_HOST; the worker has no label.
 """
 
 from __future__ import annotations
@@ -53,6 +53,10 @@ HOST_RULE = re.compile(r"Host\(`([^`]+)`\)")
 FORBIDDEN_RULE = re.compile(r"\|\||!|HostRegexp|HostSNI|ClientIP|Header|Query|Method|\(\s*(Host|Path)")
 RULE_SHAPE = re.compile(r"Host\(`[^`]+`\)(\s*&&\s*(PathPrefix|PathRegexp)\(`[^`]+`\))?")
 ADMIN_API_RULE = f"Host(`{ADMIN_HOST}`) && PathPrefix(`/api/admin`)"
+# The SPA (and its /admin pages) is served on both hosts. On the public host, /admin redirects to
+# ADMIN_HOST at Traefik level, so the admin pages never run on the Internet origin (FE-5).
+ADMIN_REDIRECT_RULE = f"Host(`{PUBLIC_HOST}`) && PathRegexp(`(?i)^/admin(/|$$)`)"
+ADMIN_REDIRECT_TARGET = f"https://{ADMIN_HOST}/"
 
 
 def service_networks(service: dict) -> set[str]:
@@ -120,6 +124,7 @@ def check_traefik(services: dict, errors: list[str]) -> None:
         errors.append(f"worker: must carry no Traefik label, found {sorted(worker_labels)}")
 
     admin_services: set[str] = set()
+    admin_redirect = False
     for name, service in services.items():
         labels = labels_of(service)
         if not any(key.startswith("traefik.") for key in labels):
@@ -134,10 +139,14 @@ def check_traefik(services: dict, errors: list[str]) -> None:
                 admin_services.add(match.group(1))
 
         routers: dict[str, dict[str, str]] = {}
+        middleware_settings: dict[str, dict[str, str]] = {}
         for key, value in labels.items():
             match = re.fullmatch(r"traefik\.http\.routers\.([^.]+)\.(.+)", key)
             if match:
                 routers.setdefault(match.group(1), {})[match.group(2)] = value
+            match = re.fullmatch(r"traefik\.http\.middlewares\.([^.]+)\.(.+)", key)
+            if match:
+                middleware_settings.setdefault(match.group(1), {})[match.group(2)] = value
 
         for router, settings in routers.items():
             where = f"{name}: router {router}"
@@ -179,9 +188,27 @@ def check_traefik(services: dict, errors: list[str]) -> None:
                     errors.append(f"{where}: admin port {ADMIN_PORT} routed outside ADMIN_HOST")
                 if entrypoint != "websecure" or rule.strip() != ADMIN_API_RULE:
                     errors.append(f"{where}: admin port must only serve /api/admin over HTTPS")
+            if (
+                name == "frontend"
+                and entrypoint == "websecure"
+                and rule.strip() == ADMIN_REDIRECT_RULE
+                and target == "noop@internal"
+                and any(
+                    middleware_settings.get(m, {}).get("redirectregex.replacement", "").startswith(
+                        ADMIN_REDIRECT_TARGET
+                    )
+                    for m in middlewares
+                )
+            ):
+                admin_redirect = True
 
     if not admin_services:
         errors.append("api: no Traefik service on the admin port 8081 (AGENTS.md §8)")
+    if not admin_redirect:
+        errors.append(
+            f"frontend: no HTTPS router redirecting {PUBLIC_HOST}/admin to {ADMIN_REDIRECT_TARGET} "
+            "(noop@internal + redirectregex, AGENTS.md §8)"
+        )
 
 
 def check(compose: dict) -> list[str]:

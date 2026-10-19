@@ -150,6 +150,9 @@ describe("moderation tables", () => {
       }),
     );
     expect(onReanalyze).toHaveBeenCalledWith(ideasFixture[0]?.id);
+    // The score reads on 1000, never as an amount of euros.
+    expect(screen.getByText(/score 385\/1000/)).toBeInTheDocument();
+    expect(screen.queryByText(/score .*€/)).toBeNull();
     expect(
       screen.getByRole("link", { name: "Droits de réponse de « Créer une taxe sur un exemple »" }),
     ).toHaveAttribute("href", `/admin/idees/${ideasFixture[0]?.id}/reponses`);

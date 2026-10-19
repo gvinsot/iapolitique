@@ -69,6 +69,10 @@ pub struct AdminIdea {
     pub contribution_count: i32,
     #[schema(required = true)]
     pub score_eur: Option<i64>,
+    /// The score on the fixed scale of 1 000 (§6.3), `null` without an analysis. Declared
+    /// optional for older clients.
+    #[schema(required = false, maximum = 1000)]
+    pub points: Option<u16>,
     /// Accepted reports waiting for their review.
     pub reports_pending: i64,
     pub review_request_pending: bool,
@@ -101,6 +105,7 @@ impl TryFrom<AdminIdeaRow> for AdminIdea {
             parent_idea_id: row.parent_idea_id,
             proposal_count: row.proposal_count,
             contribution_count: row.contribution_count,
+            points: row.score_eur.map(crate::domain::scoring::points),
             score_eur: row.score_eur,
             reports_pending: row.reports_pending,
             review_request_pending: row.review_request_pending,

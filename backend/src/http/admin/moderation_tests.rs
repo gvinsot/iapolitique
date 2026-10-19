@@ -764,6 +764,14 @@ async fn corrects_the_text_of_a_refused_idea_before_accepting_it(pool: PgPool) {
     assert!(body["text_edited_at"].is_string());
     let (_, list) = admin_get(&app, "/api/admin/ideas?status=rejected").await;
     assert_eq!(list["items"][0]["text"], text);
+    // The score is shown on 1000 in the admin too, never as an amount of euros.
+    sqlx::query("UPDATE ideas SET score_eur = 524000000 WHERE id = $1")
+        .bind(idea)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (_, list) = admin_get(&app, "/api/admin/ideas?status=rejected").await;
+    assert_eq!(list["items"][0]["points"], 715);
 
     let (status, _) = post(&app, &format!("/api/admin/ideas/{idea}/accept"), None).await;
     assert_eq!(status, StatusCode::OK);

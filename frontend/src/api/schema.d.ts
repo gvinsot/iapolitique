@@ -1215,6 +1215,12 @@ export interface components {
             /** Format: int64 */
             score_eur: number | null;
             /**
+             * Format: int32
+             * @description The score on the fixed scale of 1 000 (§6.3), `null` without an analysis. Declared
+             *     optional for older clients.
+             */
+            points?: number | null;
+            /**
              * Format: int64
              * @description Accepted reports waiting for their review.
              */

@@ -39,7 +39,7 @@ import {
   targetKindLabels,
 } from "@/lib/admin-model";
 import { mailtoHref } from "@/lib/email";
-import { formatDateTime, formatEuros, formatInteger } from "@/lib/format";
+import { formatDateTime, formatInteger, formatPoints } from "@/lib/format";
 import { PHAROS_URL } from "@/lib/legal";
 import { labelOf } from "@/lib/taxonomy-labels";
 
@@ -371,7 +371,7 @@ export function IdeasTable({
               <AdminIdeaLink idea={row} markWithdrawn={false} />
               <p className="mt-1 text-xs text-muted-foreground">
                 Reçue le {formatDateTime(row.created_at)} · proposée {row.proposal_count} fois
-                {row.score_eur !== null ? ` · score ${formatEuros(row.score_eur)}` : null}
+                {row.points != null ? ` · score ${formatPoints(row.points)}` : null}
               </p>
             </td>
             <td className={cellClass}>

@@ -13,6 +13,8 @@
 //!   are deleted (with their tracking tokens) and the duplicates merged into them are purged too.
 //! - Withdrawn ideas (deleted by their author after publication, §7.1): the same purge, 12 months
 //!   after the withdrawal (`withdrawn → purged`).
+//! - Sealed copies of escalated content (owner decision D3) are deleted one year after the
+//!   escalation, whatever the purges above did to the idea meanwhile.
 //! - Handled review requests are deleted one year after their handling.
 //! - Reports: the optional name and e-mail of the reporter are erased 6 months after the report;
 //!   reviewed reports lose their details and their tracking token 6 months after the review;
@@ -77,6 +79,8 @@ pub struct PurgeReport {
     pub expired_tracking_tokens: i64,
     /// Review requests of purged texts and handled requests past their retention.
     pub review_requests: i64,
+    /// Sealed copies of escalated content, one year after the escalation.
+    pub escalation_seals: i64,
     pub rate_limit_salts: i64,
     pub rate_limit_counters: i64,
     pub jobs: i64,
@@ -274,6 +278,8 @@ pub async fn run(pool: &PgPool) -> Result<PurgeReport, sqlx::Error> {
     .await?;
     report.stale_reports = stale;
     report.tracking_tokens += tokens;
+
+    report.escalation_seals = crate::db::escalation_seals::purge(&mut tx).await?;
 
     report.review_requests += sqlx::query(
         "DELETE FROM review_requests
@@ -531,6 +537,7 @@ impl JobHandler for PurgeHandler {
                 tracking_tokens = report.tracking_tokens,
                 expired_tracking_tokens = report.expired_tracking_tokens,
                 review_requests = report.review_requests,
+                escalation_seals = report.escalation_seals,
                 rate_limit_salts = report.rate_limit_salts,
                 rate_limit_counters = report.rate_limit_counters,
                 jobs = report.jobs,

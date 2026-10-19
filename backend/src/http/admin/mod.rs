@@ -51,6 +51,8 @@ mod calibration_tests;
 mod moderation_tests;
 #[cfg(test)]
 mod replies_tests;
+#[cfg(test)]
+mod seal_tests;
 
 /// Routes of the admin API, relative to `/api/admin` (token checked by the caller).
 pub fn routes() -> Router<AppState> {
@@ -70,6 +72,8 @@ pub fn routes() -> Router<AppState> {
             "/escalations/{id}/handle",
             post(moderation::handle_escalation),
         )
+        .route("/escalations/{id}/seal", get(moderation::escalation_seal))
+        .route("/escalation-seals", get(moderation::escalation_seals))
         .route("/review-requests", get(moderation::review_requests))
         .route(
             "/review-requests/{id}/resolve",

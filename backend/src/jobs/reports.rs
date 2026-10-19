@@ -29,8 +29,8 @@ use super::{Job, JobError, JobKind, JobOutcome, queue};
 use crate::ai::mistral::{CallContext, ModelTier};
 use crate::ai::outputs::ReportReviewOutput;
 use crate::ai::prompts::{PromptVars, Taxonomy};
-use crate::db::ideas;
 use crate::db::status::{self, Change, StatusError};
+use crate::db::{escalation_seals, ideas};
 use crate::domain::status::{IdeaStatus, ReportStatus};
 use crate::domain::types::{
     Actor, AiPurpose, AnalysisTrigger, HiddenReason, ReportReason, ReviewOutcome,
@@ -314,14 +314,19 @@ async fn apply(
         }
     }
     if review.escalate {
-        sqlx::query(
+        let escalation: Option<Uuid> = sqlx::query_scalar(
             "INSERT INTO escalations (idea_id, review_id) VALUES ($1, $2)
-             ON CONFLICT (idea_id) WHERE status = 'pending' DO NOTHING",
+             ON CONFLICT (idea_id) WHERE status = 'pending' DO NOTHING
+             RETURNING id",
         )
         .bind(idea_id)
         .bind(review_id)
-        .execute(&mut *tx)
+        .fetch_optional(&mut *tx)
         .await?;
+        // Sealed copy, kept one year whatever happens to the idea (owner decision D3, §7.5).
+        if let Some(escalation) = escalation {
+            escalation_seals::seal(&mut tx, escalation).await?;
+        }
     }
     sqlx::query("UPDATE ideas SET last_report_review_at = now() WHERE id = $1")
         .bind(idea_id)

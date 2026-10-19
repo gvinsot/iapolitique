@@ -611,6 +611,9 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
 - Contribution supprimée par son auteur : effacement immédiat (§7.1) ; idée publiée ou masquée
   supprimée par son auteur : retrait (ci-dessus).
 - Demandes de réexamen humain : supprimées avec leur texte, et un an après leur traitement.
+- Copies scellées des contenus escaladés (§7.5, décision D3) : supprimées **un an après
+  l'escalade** par la purge quotidienne (`escalation_seals.purge_after`), et jamais avant, même
+  si l'idée a été retirée ou supprimée par son auteur ou purgée entre-temps.
 - Job de purge quotidien dans le worker, testé.
 - Sauvegardes de la base : **30 jours** au plus (mémo juridique) ; aucune n'est automatisée à ce
   jour, procédure et script dans `docs/ops.md` §5.3. Journaux d'accès de Traefik : IP tronquée,
@@ -710,6 +713,19 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
   (`transmitted` ou `dismissed`) et une note facultative ; l'idée reste masquée (republication
   séparée). Si l'auteur supprime l'idée avant la clôture, elle est retirée (§5.2) et l'entrée
   reste dans la file admin jusqu'à sa clôture.
+- **Copie scellée** (décision du propriétaire D3, 2026-10-19) : à la création de l'escalade, dans
+  la même transaction (`db::escalation_seals::seal`), une copie de ce qui est escaladé est
+  scellée dans `escalation_seals` : texte original masqué, territoire, titre, résumé, slug,
+  dates de dépôt, de publication et de masquage, contenu de l'analyse courante, revue
+  (`outcome`, `escalate`, explication, modèle, version de prompt) et signalements qui l'ont
+  déclenchée (motif et précision masquée ; **jamais** les coordonnées du signalant). Une copie par
+  escalade, sans clé étrangère : elle survit au retrait ou à la suppression de l'idée par son
+  auteur et à la purge de 12 mois, et est supprimée un an après l'escalade (§7.3). Base légale
+  (à mentionner dans `/confidentialite`) : RGPD art. 17(3)(e) (constatation, exercice ou défense
+  de droits en justice) et obligations de la LCEN. Réservée à l'admin : lue par
+  `GET /api/admin/escalations/{id}/seal`, chaque lecture journalisée dans `admin_actions`
+  (`escalation.seal_read`) ; jamais publique, jamais exportée. La migration `0016` a scellé les
+  escalades de l'année précédente à partir de ce qui restait (`backfilled: true`).
 - **Droit de réponse** (LCEN art. 1-1 III) : l'admin peut publier une réponse attachée à une
   idée (insertion sous 3 jours) : table `rights_of_reply` (`author_label`, `body` en texte
   brut, `requested_on`), affichée par `GET /api/ideas/{slug}`, retirée du site avec l'idée
@@ -944,7 +960,8 @@ API publique (port 8080) :
 API admin (port 8081, `Authorization: Bearer $ADMIN_API_TOKEN`), sous `/api/admin/…`
 (`http/admin/`). Toute réponse porte `Cache-Control: no-store` et
 `X-Robots-Tag: noindex, nofollow` ; toute mutation est journalisée dans `admin_actions` (nom
-d'action pointé, cible, détails sans texte de visiteur) dans la transaction qui l'applique ;
+d'action pointé, cible, détails sans texte de visiteur) dans la transaction qui l'applique, de
+même que toute lecture d'une copie scellée (§7.5) ;
 les listes sont paginées (`page`, `per_page` ≤ 50 → `{ items, page, per_page, total,
 total_pages }`) et refusent les paramètres inconnus (`400 invalid_query`).
 
@@ -962,6 +979,8 @@ total_pages }`) et refusent les paramètres inconnus (`400 invalid_query`).
 | GET | `/api/admin/reports` | signalements (filtres `status`, `reason`, `idea_id`) avec idée, précision masquée, coordonnées facultatives du signalant et revue (`outcome`, `escalate`, `explanation`, `corrections`) |
 | GET | `/api/admin/escalations` | file d'escalade (filtre `status` `pending`/`done`, en attente d'abord, plus anciennes d'abord) avec `due_at` (cible 24 h) et explication de la revue |
 | POST | `/api/admin/escalations/{id}/handle` | `{ outcome: transmitted\|dismissed, note? }` (2 000 caractères) → `200` ; `404 escalation_not_found`, `409 escalation_already_handled` ; action `escalation.handle` |
+| GET | `/api/admin/escalations/{id}/seal` | copie scellée de l'escalade (§7.5, D3) → `200 { escalation_id, idea_id, escalated_at, purge_after, sealed_at, content: { idea: { status, slug, title, summary, original_text, submitted_territory, submitted_admin_level, submitted_at, published_at, hidden_at, hidden_reason }, analysis, review: { outcome, escalate, explanation, model, prompt_version, reviewed_at }, reports: [{ reason, details, reported_at }], backfilled? } }` (texte brut, jamais rendu en HTML) ; `404 seal_not_found` (aucune copie, ou purgée un an après l'escalade) ; **chaque lecture** est journalisée (action `escalation.seal_read`, cible l'escalade, détails `seal_id`, `idea_id`) dans la transaction qui lit |
+| GET | `/api/admin/escalation-seals` | copies scellées encore conservées, sans leur contenu (pas de journalisation), escalade la plus récente d'abord : `{ escalation_id, idea_id, escalated_at, purge_after, sealed_at, escalation_status (pending\|done\|null si l'escalade a disparu), idea_status (null si l'idée a disparu) }` |
 | GET | `/api/admin/review-requests` | demandes de réexamen (filtre `status`, en attente d'abord) avec texte masqué concerné, message, décision en vigueur (`{ measure: rejected\|hidden, reason_code }`) |
 | POST | `/api/admin/review-requests/{id}/resolve` | `{ resolution: confirmed\|overturned, note? }` (§7.1) → `200` ; `404 review_request_not_found`, `409 review_request_already_resolved` / `decision_not_overturnable` (texte ni refusé ni masqué) ; action `review_request.resolve` |
 | GET | `/api/admin/screenings` | décisions de filtrage (filtres `kind`, `outcome`, `labeled` (`true` : étiquetées, `false` : décidées et non étiquetées), `reason_code`), plus récentes d'abord : version de grille, issue, motif, erreur, latence, `criteria: [{ key, probability, reject_below, accept_above, verdict }]` dans l'ordre de la grille, second avis, décision finale, étiquette `{ label: correct\|incorrect, expected: accept\|reject, note, labeled_at }`, début du texte masqué (`null` après purge) |

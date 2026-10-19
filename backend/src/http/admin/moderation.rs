@@ -1,5 +1,6 @@
 //! Human moderation queues (AGENTS.md §5.6, §7.1, §7.5, §8): reports, escalations of serious
-//! content (forwarded to PHAROS by hand, 24-hour target) and human review requests of
+//! content (forwarded to PHAROS by hand, 24-hour target) with their sealed copies (owner
+//! decision D3: read by the admin only, every read logged) and human review requests of
 //! automated decisions.
 
 use axum::Json;
@@ -16,6 +17,7 @@ use crate::db::admin_actions::{self, NewAdminAction};
 use crate::db::admin_moderation::{
     self, CloseError, EscalationRow, ReportFilter, ReportRow, ReviewRequestRow,
 };
+use crate::db::escalation_seals;
 use crate::db::ideas;
 use crate::db::status::Change;
 use crate::domain::status::ReportStatus;
@@ -271,6 +273,142 @@ pub async fn escalations(
         .map(AdminEscalation::try_from)
         .collect::<Result<_, _>>()?;
     Ok(Json(AdminEscalationPage::new(items, pages, total)))
+}
+
+/// A sealed copy of escalated content, without its content (owner decision D3, §7.5).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct AdminEscalationSealSummary {
+    pub escalation_id: Uuid,
+    pub idea_id: Uuid,
+    pub escalated_at: DateTime<Utc>,
+    /// One year after the escalation: the daily purge deletes the copy after this instant.
+    pub purge_after: DateTime<Utc>,
+    pub sealed_at: DateTime<Utc>,
+    /// `pending` or `done`; `null` once the escalation itself is gone.
+    #[schema(required = true)]
+    pub escalation_status: Option<String>,
+    /// Current status of the idea (`hidden`, `withdrawn`, `purged`…); `null` once it is gone.
+    #[schema(required = true)]
+    pub idea_status: Option<String>,
+}
+
+page_type!(
+    /// A page of sealed copies, most recent escalation first.
+    AdminEscalationSealPage,
+    AdminEscalationSealSummary
+);
+
+/// Pagination of the sealed copies.
+#[derive(Debug, Default, Deserialize, IntoParams)]
+#[serde(deny_unknown_fields)]
+#[into_params(parameter_in = Query)]
+pub struct AdminSealQuery {
+    #[serde(default)]
+    #[param(minimum = 1, maximum = 10000)]
+    pub page: Option<u32>,
+    #[serde(default)]
+    #[param(minimum = 1, maximum = 50)]
+    pub per_page: Option<u32>,
+}
+
+/// The sealed copies still kept, without their content (no log: nothing sealed is shown).
+#[utoipa::path(
+    get,
+    path = "/api/admin/escalation-seals",
+    tag = "admin",
+    operation_id = "listAdminEscalationSeals",
+    security(("admin_token" = [])),
+    params(AdminSealQuery),
+    responses(
+        (status = 200, description = "Une page de copies scellées.", body = AdminEscalationSealPage),
+        (status = 400, description = "Paramètre invalide.", body = ErrorBody),
+        (status = 401, description = "Jeton absent ou invalide.", body = ErrorBody)
+    )
+)]
+pub async fn escalation_seals(
+    State(state): State<AppState>,
+    ApiQuery(query): ApiQuery<AdminSealQuery>,
+) -> Result<Json<AdminEscalationSealPage>, ApiError> {
+    let pages = PageRequest::parse(query.page, query.per_page)?;
+    let (rows, total) = escalation_seals::list(&state.pool, pages.limit(), pages.offset()).await?;
+    let items = rows
+        .into_iter()
+        .map(|row| AdminEscalationSealSummary {
+            escalation_id: row.escalation_id,
+            idea_id: row.idea_id,
+            escalated_at: row.escalated_at,
+            purge_after: row.purge_after,
+            sealed_at: row.sealed_at,
+            escalation_status: row.escalation_status,
+            idea_status: row.idea_status,
+        })
+        .collect();
+    Ok(Json(AdminEscalationSealPage::new(items, pages, total)))
+}
+
+/// A sealed copy of escalated content with what was sealed.
+#[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
+pub struct AdminEscalationSeal {
+    pub escalation_id: Uuid,
+    pub idea_id: Uuid,
+    pub escalated_at: DateTime<Utc>,
+    pub purge_after: DateTime<Utc>,
+    pub sealed_at: DateTime<Utc>,
+    /// What was sealed at the escalation: `idea` (`status`, `slug`, `title`, `summary`,
+    /// `original_text` masked, `submitted_territory`, `submitted_admin_level`, `submitted_at`,
+    /// `published_at`, `hidden_at`, `hidden_reason`), `analysis` (content of the current
+    /// analysis, or `null`), `review` (`outcome`, `escalate`, `explanation`, `model`,
+    /// `prompt_version`, `reviewed_at`) and `reports` (`reason`, masked `details`,
+    /// `reported_at`; never the reporter's contact); `backfilled: true` for an escalation
+    /// sealed by the migration. Plain text only: never render it as HTML.
+    #[schema(value_type = Object)]
+    pub content: serde_json::Value,
+}
+
+/// Reads the sealed copy of an escalation (owner decision D3, §7.5). Every read is logged in
+/// `admin_actions` (`escalation.seal_read`) in the same transaction.
+#[utoipa::path(
+    get,
+    path = "/api/admin/escalations/{id}/seal",
+    tag = "admin",
+    operation_id = "readAdminEscalationSeal",
+    security(("admin_token" = [])),
+    params(("id" = Uuid, Path, description = "Identifiant de l'escalade")),
+    responses(
+        (status = 200, description = "Copie scellée (lecture journalisée).", body = AdminEscalationSeal),
+        (status = 401, description = "Jeton absent ou invalide.", body = ErrorBody),
+        (status = 404, description = "Aucune copie scellée pour cette escalade, ou copie purgée \
+            un an après l'escalade (`seal_not_found`).", body = ErrorBody)
+    )
+)]
+pub async fn escalation_seal(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<Uuid>,
+) -> Result<Json<AdminEscalationSeal>, ApiError> {
+    let mut tx = state.pool.begin().await?;
+    let seal = escalation_seals::get(&mut tx, id).await?.ok_or_else(|| {
+        not_found(
+            "seal_not_found",
+            "Aucune copie scellée n'est conservée pour cette escalade.",
+        )
+    })?;
+    admin_actions::record(
+        &mut tx,
+        &NewAdminAction::new("escalation.seal_read")
+            .target("escalation", id)
+            .details(json!({ "seal_id": seal.id, "idea_id": seal.idea_id })),
+    )
+    .await?;
+    tx.commit().await?;
+    tracing::info!(escalation_id = %id, "sealed copy of an escalation read by the admin");
+    Ok(Json(AdminEscalationSeal {
+        escalation_id: seal.escalation_id,
+        idea_id: seal.idea_id,
+        escalated_at: seal.escalated_at,
+        purge_after: seal.purge_after,
+        sealed_at: seal.sealed_at,
+        content: seal.content,
+    }))
 }
 
 /// How an escalation was handled.

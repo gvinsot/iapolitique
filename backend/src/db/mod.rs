@@ -18,6 +18,7 @@ pub mod ai_calls;
 pub mod analyses;
 pub mod dashboard;
 pub mod embeddings;
+pub mod escalation_seals;
 pub mod exports;
 pub mod ideas;
 pub mod portal;

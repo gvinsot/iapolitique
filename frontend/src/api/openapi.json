@@ -133,6 +133,76 @@
         ]
       }
     },
+    "/api/admin/escalation-seals": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "The sealed copies still kept, without their content (no log: nothing sealed is shown).",
+        "operationId": "listAdminEscalationSeals",
+        "parameters": [
+          {
+            "name": "page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 10000,
+              "minimum": 1
+            }
+          },
+          {
+            "name": "per_page",
+            "in": "query",
+            "required": false,
+            "schema": {
+              "type": "integer",
+              "format": "int32",
+              "maximum": 50,
+              "minimum": 1
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Une page de copies scellées.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminEscalationSealPage"
+                }
+              }
+            }
+          },
+          "400": {
+            "description": "Paramètre invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
     "/api/admin/escalations": {
       "get": {
         "tags": [
@@ -284,6 +354,64 @@
           },
           "422": {
             "description": "Corps invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
+    "/api/admin/escalations/{id}/seal": {
+      "get": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Reads the sealed copy of an escalation (owner decision D3, §7.5). Every read is logged in\n`admin_actions` (`escalation.seal_read`) in the same transaction.",
+        "operationId": "readAdminEscalationSeal",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de l'escalade",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Copie scellée (lecture journalisée).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminEscalationSeal"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Aucune copie scellée pour cette escalade, ou copie purgée un an après l'escalade (`seal_not_found`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -3273,6 +3401,134 @@
             "type": "integer",
             "format": "int32",
             "minimum": 0
+          }
+        }
+      },
+      "AdminEscalationSeal": {
+        "type": "object",
+        "description": "A sealed copy of escalated content with what was sealed.",
+        "required": [
+          "escalation_id",
+          "idea_id",
+          "escalated_at",
+          "purge_after",
+          "sealed_at",
+          "content"
+        ],
+        "properties": {
+          "escalation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "idea_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "escalated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "purge_after": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "sealed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "content": {
+            "type": "object",
+            "description": "What was sealed at the escalation: `idea` (`status`, `slug`, `title`, `summary`,\n`original_text` masked, `submitted_territory`, `submitted_admin_level`, `submitted_at`,\n`published_at`, `hidden_at`, `hidden_reason`), `analysis` (content of the current\nanalysis, or `null`), `review` (`outcome`, `escalate`, `explanation`, `model`,\n`prompt_version`, `reviewed_at`) and `reports` (`reason`, masked `details`,\n`reported_at`; never the reporter's contact); `backfilled: true` for an escalation\nsealed by the migration. Plain text only: never render it as HTML."
+          }
+        }
+      },
+      "AdminEscalationSealPage": {
+        "type": "object",
+        "description": "A page of sealed copies, most recent escalation first.",
+        "required": [
+          "items",
+          "page",
+          "per_page",
+          "total",
+          "total_pages"
+        ],
+        "properties": {
+          "items": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminEscalationSealSummary"
+            }
+          },
+          "page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "per_page": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          },
+          "total": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Items matching the filters, all pages included.",
+            "minimum": 0
+          },
+          "total_pages": {
+            "type": "integer",
+            "format": "int32",
+            "minimum": 0
+          }
+        }
+      },
+      "AdminEscalationSealSummary": {
+        "type": "object",
+        "description": "A sealed copy of escalated content, without its content (owner decision D3, §7.5).",
+        "required": [
+          "escalation_id",
+          "idea_id",
+          "escalated_at",
+          "purge_after",
+          "sealed_at",
+          "escalation_status",
+          "idea_status"
+        ],
+        "properties": {
+          "escalation_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "idea_id": {
+            "type": "string",
+            "format": "uuid"
+          },
+          "escalated_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "purge_after": {
+            "type": "string",
+            "format": "date-time",
+            "description": "One year after the escalation: the daily purge deletes the copy after this instant."
+          },
+          "sealed_at": {
+            "type": "string",
+            "format": "date-time"
+          },
+          "escalation_status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "`pending` or `done`; `null` once the escalation itself is gone."
+          },
+          "idea_status": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Current status of the idea (`hidden`, `withdrawn`, `purged`…); `null` once it is gone."
           }
         }
       },

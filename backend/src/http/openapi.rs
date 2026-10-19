@@ -22,7 +22,8 @@ use super::admin::ideas::{
 use super::admin::jobs::{self as admin_jobs, AdminJob, AdminJobPage};
 use super::admin::moderation::{
     self as admin_moderation, AdminEscalation, AdminEscalationHandling, AdminEscalationPage,
-    AdminReport, AdminReportPage, AdminReportReview, AdminReviewRequest, AdminReviewRequestPage,
+    AdminEscalationSeal, AdminEscalationSealPage, AdminEscalationSealSummary, AdminReport,
+    AdminReportPage, AdminReportReview, AdminReviewRequest, AdminReviewRequestPage,
     AdminReviewResolution, AdminReviewedDecision,
 };
 use super::admin::replies::{self as admin_replies, AdminReply, AdminReplyContent};
@@ -116,6 +117,8 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         admin_moderation::reports,
         admin_moderation::escalations,
         admin_moderation::handle_escalation,
+        admin_moderation::escalation_seal,
+        admin_moderation::escalation_seals,
         admin_moderation::review_requests,
         admin_moderation::resolve_review_request,
         admin_screenings::list,
@@ -202,6 +205,9 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         AdminDashboard,
         AdminAlert,
         AdminBulkReanalysis,
+        AdminEscalationSeal,
+        AdminEscalationSealSummary,
+        AdminEscalationSealPage,
         AdminJobSummary,
         AdminJobCount,
         AdminScreeningRates,
@@ -442,6 +448,8 @@ mod tests {
             "/api/admin/reports",
             "/api/admin/escalations",
             "/api/admin/escalations/{id}/handle",
+            "/api/admin/escalations/{id}/seal",
+            "/api/admin/escalation-seals",
             "/api/admin/review-requests",
             "/api/admin/review-requests/{id}/resolve",
             "/api/admin/screenings",

@@ -38,6 +38,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/escalation-seals": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** The sealed copies still kept, without their content (no log: nothing sealed is shown). */
+        get: operations["listAdminEscalationSeals"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/escalations": {
         parameters: {
             query?: never;
@@ -66,6 +83,26 @@ export interface paths {
         put?: never;
         /** Closes an escalation (the idea stays hidden; republish it separately if needed). */
         post: operations["handleAdminEscalation"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/escalations/{id}/seal": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /**
+         * Reads the sealed copy of an escalation (owner decision D3, §7.5). Every read is logged in
+         *     `admin_actions` (`escalation.seal_read`) in the same transaction.
+         */
+        get: operations["readAdminEscalationSeal"];
+        put?: never;
+        post?: never;
         delete?: never;
         options?: never;
         head?: never;
@@ -978,6 +1015,64 @@ export interface components {
             total: number;
             /** Format: int32 */
             total_pages: number;
+        };
+        /** @description A sealed copy of escalated content with what was sealed. */
+        AdminEscalationSeal: {
+            /** Format: uuid */
+            escalation_id: string;
+            /** Format: uuid */
+            idea_id: string;
+            /** Format: date-time */
+            escalated_at: string;
+            /** Format: date-time */
+            purge_after: string;
+            /** Format: date-time */
+            sealed_at: string;
+            /**
+             * @description What was sealed at the escalation: `idea` (`status`, `slug`, `title`, `summary`,
+             *     `original_text` masked, `submitted_territory`, `submitted_admin_level`, `submitted_at`,
+             *     `published_at`, `hidden_at`, `hidden_reason`), `analysis` (content of the current
+             *     analysis, or `null`), `review` (`outcome`, `escalate`, `explanation`, `model`,
+             *     `prompt_version`, `reviewed_at`) and `reports` (`reason`, masked `details`,
+             *     `reported_at`; never the reporter's contact); `backfilled: true` for an escalation
+             *     sealed by the migration. Plain text only: never render it as HTML.
+             */
+            content: Record<string, never>;
+        };
+        /** @description A page of sealed copies, most recent escalation first. */
+        AdminEscalationSealPage: {
+            items: components["schemas"]["AdminEscalationSealSummary"][];
+            /** Format: int32 */
+            page: number;
+            /** Format: int32 */
+            per_page: number;
+            /**
+             * Format: int64
+             * @description Items matching the filters, all pages included.
+             */
+            total: number;
+            /** Format: int32 */
+            total_pages: number;
+        };
+        /** @description A sealed copy of escalated content, without its content (owner decision D3, §7.5). */
+        AdminEscalationSealSummary: {
+            /** Format: uuid */
+            escalation_id: string;
+            /** Format: uuid */
+            idea_id: string;
+            /** Format: date-time */
+            escalated_at: string;
+            /**
+             * Format: date-time
+             * @description One year after the escalation: the daily purge deletes the copy after this instant.
+             */
+            purge_after: string;
+            /** Format: date-time */
+            sealed_at: string;
+            /** @description `pending` or `done`; `null` once the escalation itself is gone. */
+            escalation_status: string | null;
+            /** @description Current status of the idea (`hidden`, `withdrawn`, `purged`…); `null` once it is gone. */
+            idea_status: string | null;
         };
         /** @description An idea, whatever its status. */
         AdminIdea: {
@@ -2303,6 +2398,9 @@ export type SchemaAdminDedupUpdate = components['schemas']['AdminDedupUpdate'];
 export type SchemaAdminEscalation = components['schemas']['AdminEscalation'];
 export type SchemaAdminEscalationHandling = components['schemas']['AdminEscalationHandling'];
 export type SchemaAdminEscalationPage = components['schemas']['AdminEscalationPage'];
+export type SchemaAdminEscalationSeal = components['schemas']['AdminEscalationSeal'];
+export type SchemaAdminEscalationSealPage = components['schemas']['AdminEscalationSealPage'];
+export type SchemaAdminEscalationSealSummary = components['schemas']['AdminEscalationSealSummary'];
 export type SchemaAdminIdea = components['schemas']['AdminIdea'];
 export type SchemaAdminIdeaPage = components['schemas']['AdminIdeaPage'];
 export type SchemaAdminIdeaRef = components['schemas']['AdminIdeaRef'];
@@ -2487,6 +2585,47 @@ export interface operations {
             };
         };
     };
+    listAdminEscalationSeals: {
+        parameters: {
+            query?: {
+                page?: number;
+                per_page?: number;
+            };
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Une page de copies scellées. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminEscalationSealPage"];
+                };
+            };
+            /** @description Paramètre invalide. */
+            400: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     listAdminEscalations: {
         parameters: {
             query?: {
@@ -2584,6 +2723,47 @@ export interface operations {
             };
             /** @description Corps invalide. */
             422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    readAdminEscalationSeal: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant de l'escalade */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Copie scellée (lecture journalisée). */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminEscalationSeal"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Aucune copie scellée pour cette escalade, ou copie purgée un an après l'escalade (`seal_not_found`). */
+            404: {
                 headers: {
                     [name: string]: unknown;
                 };

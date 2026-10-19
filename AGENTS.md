@@ -256,6 +256,10 @@ n'appeler que `/v1/systemone`.
     (religion, origine, orientation…), ou promeut ou dénigre un candidat ou un parti ;
   - `personal_data` (`noul`) : désigne un particulier identifiable (nom, fonction précise dans
     un service nommé…) ou lui impute des faits (§7.5) ;
+  - `contact_data` (`noul`, motif `personal_data`) : nom ou prénom d'un particulier, auteur
+    compris (présentation, signature), ou coordonnées (téléphone, e-mail, adresse postale,
+    réseau social, IBAN), même écrits de façon détournée : le filet des motifs du masquage
+    (§7.5) ;
   - `on_topic` (`noul`) : propose une mesure qui réduit les dépenses ou augmente les recettes
     d'une administration publique française ;
   - `lawful` (`noul`) : compatible avec les droits fondamentaux ;
@@ -600,8 +604,9 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
 - **Données personnelles dans les textes** : avant tout appel à Mistral et avant publication,
   masquage déterministe (e-mails, téléphones, IBAN, NIR, adresses postales, URL nominatives →
   `[donnée masquée]`), appliqué dès la réception : le texte non masqué n'est **jamais**
-  conservé ni transmis, le filtrage d3-mini porte lui aussi sur la version masquée ; et critère de filtrage `personal_data` (§5.3) qui refuse un texte
-  désignant un particulier identifiable, avec invitation à reformuler. Les élus et ministres
+  conservé ni transmis, le filtrage d3-mini porte lui aussi sur la version masquée ; et critères de filtrage `personal_data` et `contact_data` (§5.3) qui refusent un texte
+  désignant un particulier identifiable ou portant un nom ou une coordonnée que le masquage a
+  manqués (auteur compris), avec invitation à reformuler. Les élus et ministres
   agissant dans leur fonction ne sont pas des particuliers, mais le critère `targeted` refuse
   toute attaque ou promotion d'un parti, d'un candidat ou d'un élu. Le texte « original »
   affiché est la version masquée, avec la mention « données personnelles masquées ».

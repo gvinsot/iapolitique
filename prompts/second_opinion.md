@@ -1,5 +1,5 @@
 ---
-version: "1.1.0"
+version: "1.2.0"
 model_hint: mistral-large-latest
 tools: []
 output_schema: second_opinion.schema.json
@@ -57,7 +57,14 @@ elle-même : l'auteur peut redéposer la même mesure sans nom ni consigne de vo
   Y »), surtout s'il lui reproche des faits. Une fonction en général (« les directeurs
   d'hôpital »), un service ou une ville sans personne désignée (« les agents d'accueil de la
   mairie de Lyon ») ou une personne impossible à reconnaître (« mon médecin », « le maire de ma
-  commune ») ne sont pas visés. → refus
+  commune ») ne sont pas visés. Le même code couvre aussi l'auteur lui-même et les coordonnées :
+  un texte où l'auteur se présente par son nom ou signe (« Je m'appelle Karim Benali »,
+  « Marie, infirmière à Vierzon »), ou qui contient un numéro de téléphone, une adresse e-mail
+  ou postale, un compte ou lien de réseau social ou un IBAN, même écrits de façon détournée
+  (« arobase », « point com », chiffres en lettres), est refusé : le texte est publié. Parler du
+  téléphone, des adresses ou des comptes bancaires en général (« une adresse e-mail unique par
+  commune »), se décrire sans nom (« je suis infirmière depuis vingt ans ») ou la mention
+  « [donnée masquée] » ne sont pas visés. → refus
 - **off_topic** (idées) : pas de mesure précise qui réduirait une dépense ou augmenterait une
   recette d'une administration publique française. Une question, une plainte personnelle, une
   publicité, une remarque générale sans mesure ou une hausse de dépense sont hors sujet. Une

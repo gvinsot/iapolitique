@@ -110,8 +110,9 @@ def check_screening() -> dict | None:
     if not SEMVER.match(str(grid.get("version", ""))):
         err("screening.yaml", "version must be a quoted semver string")
     # AGENTS.md §5.3: the refusal reason is the first failing criterion in this order.
-    order = {"idea": ["injection", "respectful", "targeted", "personal_data", "on_topic", "lawful", "realism"],
-             "contribution": ["injection", "respectful", "targeted", "personal_data", "relevant"],
+    order = {"idea": ["injection", "respectful", "targeted", "personal_data", "contact_data", "on_topic", "lawful",
+                      "realism"],
+             "contribution": ["injection", "respectful", "targeted", "personal_data", "contact_data", "relevant"],
              "report": ["injection", "respectful", "relevant"]}
     for section, keys in order.items():
         crits = grid.get(section)

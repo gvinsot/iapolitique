@@ -22,7 +22,7 @@
 #                   "contribution": <texte de la contribution>} ;
 # - report       : {"idee": <résumé neutre de l'idée publiée>, "motif": <libellé du motif de
 #                   taxonomy.yaml>, "precision": <texte facultatif du signalement>}.
-version: "1.1.0"
+version: "1.2.0"
 
 idea:
   - key: injection
@@ -69,6 +69,17 @@ idea:
     accept_above: 0.7
     reason_code: personal_data
     reason_message: "Votre texte permet de reconnaître une personne (nom, prénom, signature ou poste précis dans un service nommé) ou lui reproche des faits. Pour protéger les personnes concernées, retirez les noms et les détails qui permettent de les identifier, ne signez pas votre texte, et décrivez plutôt le dispositif ou la dépense en cause."
+  - key: contact_data
+    type: noul
+    instructions: "Ce texte contient-il le nom ou le prénom d'un particulier (y compris l'auteur qui se présente ou qui signe) ou des coordonnées : numéro de téléphone, adresse e-mail, adresse postale, compte ou lien de réseau social, IBAN, même écrits de façon détournée (arobase, point, espaces, chiffres en lettres) ?"
+    criteria:
+      "true": "oui : nom, prénom ou signature d'un particulier, présentation de l'auteur par son nom, ou coordonnées permettant de joindre quelqu'un, même déguisées"
+      "false": "non : aucun nom de particulier ni coordonnée ; parler du téléphone, des adresses, des courriels ou des comptes bancaires en général, d'un service, d'une fonction ou d'une institution ne compte pas, ni la mention « [donnée masquée] »"
+    pass_when: false
+    reject_below: 0.4
+    accept_above: 0.8
+    reason_code: personal_data
+    reason_message: "Votre texte contient un nom de personne ou des coordonnées (téléphone, adresse e-mail ou postale, réseau social, compte bancaire). Le texte est publié : ne signez pas, ne vous présentez pas par votre nom et ne laissez aucune coordonnée, puis déposez de nouveau votre idée."
   - key: on_topic
     type: noul
     instructions: "Ce texte propose-t-il une mesure précise qui réduirait une dépense ou augmenterait une recette d'une administration publique française (État, sécurité sociale, collectivité) ?"
@@ -150,6 +161,17 @@ contribution:
     accept_above: 0.7
     reason_code: personal_data
     reason_message: "Votre contribution permet de reconnaître une personne (nom, prénom, signature ou poste précis dans un service nommé) ou lui reproche des faits. Pour protéger les personnes concernées, retirez les noms et les détails qui permettent de les identifier, et parlez plutôt du dispositif en cause."
+  - key: contact_data
+    type: noul
+    instructions: "La contribution contient-elle le nom ou le prénom d'un particulier (y compris l'auteur qui se présente ou qui signe) ou des coordonnées : numéro de téléphone, adresse e-mail, adresse postale, compte ou lien de réseau social, IBAN, même écrits de façon détournée (arobase, point, espaces, chiffres en lettres) ?"
+    criteria:
+      "true": "oui : nom, prénom ou signature d'un particulier, présentation de l'auteur par son nom, ou coordonnées permettant de joindre quelqu'un, même déguisées"
+      "false": "non : aucun nom de particulier ni coordonnée ; parler du téléphone, des adresses, des courriels ou des comptes bancaires en général, d'un service, d'une fonction ou d'une institution ne compte pas, ni la mention « [donnée masquée] »"
+    pass_when: false
+    reject_below: 0.4
+    accept_above: 0.8
+    reason_code: personal_data
+    reason_message: "Votre contribution contient un nom de personne ou des coordonnées (téléphone, adresse e-mail ou postale, réseau social, compte bancaire). Le texte est publié : ne signez pas, ne vous présentez pas par votre nom et ne laissez aucune coordonnée."
   - key: relevant
     type: noul
     instructions: "La contribution porte-t-elle sur l'idée : la précise, la complète, la corrige ou lui oppose un argument ?"

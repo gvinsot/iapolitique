@@ -1,11 +1,27 @@
-# Calibration de la grille de filtrage (screening 1.1.0)
+# Calibration de la grille de filtrage (screening 1.2.0)
 
 Ce document explique comment ont été choisis les libellés et les seuils de
-[`prompts/screening.yaml`](../../prompts/screening.yaml) (version `1.1.0`). Il présente les
+[`prompts/screening.yaml`](../../prompts/screening.yaml) (version `1.2.0`). Il présente les
 résultats sur le modèle de décision réel et décrit la procédure de recalibrage.
 
-Date des mesures : 2026-10-18. Service : `vllm-sr/d3-mini` Q8_0 servi par
+Date des mesures : 2026-10-18 (1.1.0) et 2026-10-19 (1.2.0, sections `idea` et `contribution`
+relancées en entier). Service : `vllm-sr/d3-mini` Q8_0 servi par
 `llamacpp-decision-service` (server-y), `POST /v1/systemone`.
+
+**Changements de la version 1.2.0** (revue de sécurité, constat PRIV-3, AGENTS.md §7.5) :
+
+- nouveau critère `contact_data` dans les sections `idea` et `contribution`, placé juste après
+  `personal_data`, avec le même `reason_code` (`personal_data`, donc la même règle 4.4 de
+  `/regles`) et son propre message. `personal_data` demande si le texte **vise** une personne :
+  le modèle le comprend comme un tiers, si bien qu'un auteur qui se présente (« Je m'appelle
+  Karim Benali et j'habite Tourcoing », p_pass 0.55 à 0.87 selon le texte) ou qui laisse ses
+  coordonnées (« appelez-moi au +33 06 12 34 56 78 », 0.97) passait, alors que les CGU disent
+  « Ne signez pas ». `contact_data` sert de filet aux motifs du masquage déterministe : nom ou
+  prénom d'un particulier, auteur compris, téléphone, e-mail, adresse postale, réseau social ou
+  IBAN, même écrits de façon détournée ;
+- seuils `contact_data` : 0.4 / 0.8 (§4) ;
+- le second avis (`second_opinion.md` 1.2.0) reçoit la même consigne sous `personal_data` ;
+- les autres libellés et tous les autres seuils sont inchangés.
 
 **Changements de la version 1.1.0** (conformité juridique, AGENTS.md §5.3 et §7.5) :
 
@@ -44,14 +60,26 @@ franche.
 
 ### 2.1 Jeu d'exemples
 
-[`screening_samples.jsonl`](screening_samples.jsonl) contient **348 exemples étiquetés en
+[`screening_samples.jsonl`](screening_samples.jsonl) contient **387 exemples étiquetés en
 français** :
 
 | Section | Réglage (`tune`) | Contrôle (`holdout`) | Total |
 |---|---|---|---|
-| `idea` | 196 (106 à accepter, 90 à refuser) | 74 (42 / 32) | 270 |
-| `contribution` | 33 (17 / 16) | 12 (6 / 6) | 45 |
+| `idea` | 219 (117 à accepter, 102 à refuser) | 84 (46 / 38) | 303 |
+| `contribution` | 37 (19 / 18) | 14 (7 / 7) | 51 |
 | `report` | 24 (14 / 10) | 9 (5 / 4) | 33 |
+
+La version 1.2.0 a ajouté 39 exemples : 27 de réglage (`idea-241` à `idea-263`,
+`contribution-108` à `-111`) et 12 de contrôle (`holdout-idea-075` à `-084`,
+`holdout-contribution-013` et `-014`). Les refus portent sur l'auteur qui se présente ou signe
+et sur des coordonnées en clair ou déguisées (téléphone avec barres ou en lettres, « arobase »,
+« [at] », adresse postale, pseudonyme Instagram ou X, profil LinkedIn, IBAN). Les contre-exemples
+parlent de téléphone, d'adresses, de courriels ou de comptes bancaires comme **sujet** de la
+mesure (lignes fixes, adresse e-mail unique par commune, IBAN vérifié avant une aide, 112,
+adresse d'un immeuble de l'État), d'un auteur qui se décrit sans nom (« je suis infirmière
+depuis vingt ans ») et d'un texte déjà masqué (« [donnée masquée] », `gray_ok`). Trois exemples
+plus anciens portent aussi `contact_data` dans `fails` : une publicité avec un numéro
+(`idea-116`, `contribution-010`) et une signature (`idea-206`).
 
 La version 1.1.0 a ajouté 91 exemples : 51 de réglage (`idea-201` à `idea-240`,
 `contribution-101` à `-107`, `report-101` à `-104`) et 40 de contrôle (`holdout-idea-045` à
@@ -109,7 +137,9 @@ Ces choix appliquent AGENTS.md §5.3 et §7.5 et le mémo juridique (section 4, 
 | Proposition d'une personnalité ou d'un parti **nommé**, décrite neutrement | refus | `targeted` | « Comme le propose le Rassemblement national… » (`idea-222`), « Gabriel Attal propose…, appliquons-la » (`idea-229`), « une proposition portée par François Ruffin » (`holdout-idea-054`) |
 | Surnom partisan, dénigrement d'un parti | refus | `targeted` | « les macronistes » (`idea-230`) ; « les écolos » (`holdout-idea-053`, zone grise acceptée) |
 | Appel ou intention de vote, même sans candidat nommé | refus (zone grise acceptée si aucun candidat n'est désigné) | `targeted` | « Votez pour le candidat écologiste » (`idea-225`), « je voterai pour le candidat qui… » (`idea-233`), « Ne réélisez pas les partis de gouvernement » (`idea-227`) |
-| Nom ou prénom d'un particulier, signature, poste tenu par une seule personne dans un lieu nommé | refus (zone grise acceptée pour une signature) | `personal_data` | `idea-201` à `-210`, `holdout-idea-045` à `-050` |
+| Nom ou prénom d'un particulier, signature, poste tenu par une seule personne dans un lieu nommé | refus | `personal_data` (signature : `contact_data` depuis 1.2.0) | `idea-201` à `-210`, `holdout-idea-045` à `-050` |
+| L'auteur se présente par son nom, ou laisse un téléphone, un e-mail, une adresse, un réseau social ou un IBAN, même déguisés (1.2.0) | refus (zone grise acceptée pour une adresse postale) | `contact_data` (motif `personal_data`) | `idea-241` à `-252`, `holdout-idea-075` à `-080` |
+| Téléphone, adresses, courriels ou comptes bancaires comme sujet de la mesure ; auteur qui se décrit sans nom ; « [donnée masquée] » | accepté | — | `idea-253` à `-263`, `holdout-idea-081` à `-084` |
 | Proposition d'une institution (Cour des comptes, rapport parlementaire, inspection) | accepté | — | `idea-216`, `idea-239`, `holdout-idea-073` |
 | Ministère, administration, ville ou service nommés, sans personne désignée | accepté | — | « les agents d'accueil de la mairie de Lyon » (`idea-212`), `idea-219`, `holdout-idea-064` |
 | Fonction en général, y compris politique | accepté | — | « le président de la République » (`idea-235`), « les ministres » (`holdout-idea-066`), « le président du Sénat » (`holdout-idea-058`), « les directeurs d'hôpital » (`holdout-idea-062`) |
@@ -181,6 +211,14 @@ doit échouer) :
 | `relevant` (signalement) | **retenu** : ajout de « données personnelles » et de « (y compris un nom de personne, une accusation ou une propagande électorale) » | **0.71** | 0.94 | Ces signalements montent à 0.71–0.88. Contrepartie : un slogan seul (« Votez Mélenchon en 2027 ! », motif « Autre ») passe de 0.10 à 0.76 (voir §5) |
 | `relevant` (signalement) | « dans l'idée ou son analyse » + « consigne de vote » dans le non | 0.52 | 0.92 | Le slogan descend à 0.54 seulement, et un signalement de promotion d'un candidat tombe à 0.52 : écarté |
 
+**Version 1.2.0** — un seul libellé testé pour `contact_data`, retenu tel quel : la question
+nomme l'auteur (« y compris l'auteur qui se présente ou qui signe ») et les procédés de
+déguisement (« arobase, point, espaces, chiffres en lettres ») ; la description du non exclut les
+coordonnées comme sujet de la mesure, les services, fonctions et institutions, et la mention
+« [donnée masquée] ». Sur le réglage, AUC 1.000 : réussite min 0.81, échec max 0.51 (une adresse
+postale). Les autres critères de la section ne bougent pas (le d3-mini traite chaque question
+séparément : écart ≤ 0.004 avec 1.1.0).
+
 Ce qui a été écarté :
 
 - **`lawful` en négatif** (« viole-t-elle… », « manifestement contraire… ») : moins bonne
@@ -207,13 +245,14 @@ devaient échouer et dépassent `accept_above`.
 
 | Critère | Réussir / échouer | AUC | Réussite min | Échec max | Seuils (rejet / accept.) | Faux refus | Échecs détectés | Auto-OK | Fuites |
 |---|---|---|---|---|---|---|---|---|---|
-| `injection` | 148 / 11 | 1.000 | 0.45 | 0.02 | 0.2 / 0.5 | 0 | 11/11 | 99 % | 0 |
-| `respectful` | 148 / 24 | 1.000 | 0.76 | 0.58 | 0.35 / 0.7 | 0 | 20/24 | 100 % | 0 |
-| `targeted` | 148 / 39 | 1.000 | 0.71 | 0.60 | 0.35 / 0.8 | 0 | 35/39 | 99 % | 0 |
-| `personal_data` | 148 / 16 | 1.000 | 0.83 | 0.45 | 0.35 / 0.7 | 0 | 15/16 | 100 % | 0 |
-| `on_topic` | 148 / 32 | 1.000 | 0.57 | 0.57 | 0.25 / 0.6 | 0 | 30/32 | 99 % | 0 |
-| `lawful` | 148 / 26 | 0.999 | 0.13 | 0.30 | 0.1 / 0.5 | 0 | 19/26 | 98 % | 0 |
-| `realism` | 148 / 13 | 1.000 | 0.37 | 0.33 | 0.3 / 0.5 | 0 | 12/13 | 99 % | 0 |
+| `injection` | 163 / 11 | 1.000 | 0.47 | 0.02 | 0.2 / 0.5 | 0 | 11/11 | 99 % | 0 |
+| `respectful` | 163 / 24 | 1.000 | 0.76 | 0.58 | 0.35 / 0.7 | 0 | 20/24 | 100 % | 0 |
+| `targeted` | 163 / 39 | 1.000 | 0.71 | 0.60 | 0.35 / 0.8 | 0 | 35/39 | 99 % | 0 |
+| `personal_data` | 163 / 22 | 1.000 | 0.83 | 0.64 | 0.35 / 0.7 | 0 | 16/22 | 100 % | 0 |
+| `contact_data` | 163 / 18 | 1.000 | 0.81 | 0.62 | 0.4 / 0.8 | 0 | 16/18 | 100 % | 0 |
+| `on_topic` | 163 / 32 | 1.000 | 0.57 | 0.56 | 0.25 / 0.6 | 0 | 30/32 | 99 % | 0 |
+| `lawful` | 163 / 26 | 0.999 | 0.13 | 0.30 | 0.1 / 0.5 | 0 | 19/26 | 98 % | 0 |
+| `realism` | 163 / 13 | 1.000 | 0.36 | 0.33 | 0.3 / 0.5 | 0 | 12/13 | 99 % | 0 |
 
 Les échecs qui ne sont pas détectés par un critère le sont en général par un autre. Par exemple,
 « Réserver les logements sociaux aux Français de souche » échappe à `respectful` (0.58) et reste
@@ -222,15 +261,23 @@ en zone grise sur `targeted` (0.42), mais il est refusé par `on_topic` (0.23) e
 refusées par `on_topic` ou `lawful`, et deux campagnes indirectes laissées volontairement en zone
 grise (« Ne réélisez pas les partis de gouvernement » 0.60, « les écolos » 0.49).
 
+Sur `personal_data`, les six échecs non détectés sont des textes où l'auteur se présente ou
+signe (0.36 à 0.64) : `contact_data` les refuse tous (0.02 à 0.17). Sur `contact_data`, les deux
+échecs non détectés sont des adresses postales (`idea-247` 0.51, `holdout-idea-075` 0.62), qui
+partent en zone grise ; le masquage déterministe retire déjà les adresses de forme courante.
+Les contre-exemples les plus proches restent loin du seuil de rejet : « fusionner les numéros
+d'urgence dans le 112 » 0.92, « exiger un IBAN vérifié » 0.93, « [donnée masquée] » 0.96.
+
 **Contributions et signalements**
 
 | Section | Critère | Réussir / échouer | AUC | Réussite min | Échec max | Seuils | Faux refus |
 |---|---|---|---|---|---|---|---|
-| contribution | `injection` | 23 / 3 | 1.000 | 0.99 | 0.00 | 0.2 / 0.5 | 0 |
-| contribution | `respectful` | 23 / 6 | 1.000 | 0.87 | 0.25 | 0.35 / 0.7 | 0 |
-| contribution | `targeted` | 23 / 7 | 1.000 | 0.99 | 0.14 | 0.35 / 0.8 | 0 |
-| contribution | `personal_data` | 23 / 3 | 1.000 | 0.91 | 0.10 | 0.35 / 0.7 | 0 |
-| contribution | `relevant` | 23 / 10 | 1.000 | 0.31 | 0.25 | 0.2 / 0.6 | 0 |
+| contribution | `injection` | 26 / 3 | 1.000 | 0.99 | 0.00 | 0.2 / 0.5 | 0 |
+| contribution | `respectful` | 26 / 6 | 1.000 | 0.87 | 0.25 | 0.35 / 0.7 | 0 |
+| contribution | `targeted` | 26 / 7 | 1.000 | 0.99 | 0.13 | 0.35 / 0.8 | 0 |
+| contribution | `personal_data` | 26 / 4 | 1.000 | 0.91 | 0.30 | 0.35 / 0.7 | 0 |
+| contribution | `contact_data` | 26 / 3 | 1.000 | 0.92 | 0.07 | 0.4 / 0.8 | 0 |
+| contribution | `relevant` | 26 / 10 | 1.000 | 0.31 | 0.25 | 0.2 / 0.6 | 0 |
 | signalement | `injection` | 19 / 3 | 1.000 | 0.98 | 0.05 | 0.2 / 0.5 | 0 |
 | signalement | `respectful` | 19 / 4 | 1.000 | 0.90 | 0.32 | 0.35 / 0.7 | 0 |
 | signalement | `relevant` | 19 / 11 | 0.919 | 0.71 | 0.94 | 0.3 / 0.6 | 0 |
@@ -244,15 +291,18 @@ fausse acceptation du banc (§5).
 
 | Section | Jeu | Exemples | Faux refus | Fausses acceptations | Zone grise | Exactitude des décisions franches |
 |---|---|---|---|---|---|---|
-| idea | tune | 196 | 0 (0 %) | 0 (0 %) | 15 (7.7 %) | 100 % |
-| idea | holdout | 74 | 0 (0 %) | 0 (0 %) | 3 (4.1 %) | 100 % |
-| contribution | tune | 33 | 0 | 0 | 0 | 100 % |
-| contribution | holdout | 12 | 0 | 0 | 1 (8.3 %) | 100 % |
+| idea | tune | 219 | 0 (0 %) | 0 (0 %) | 15 (6.8 %) | 100 % |
+| idea | holdout | 84 | 0 (0 %) | 0 (0 %) | 4 (4.8 %) | 100 % |
+| contribution | tune | 37 | 0 | 0 | 0 | 100 % |
+| contribution | holdout | 14 | 0 | 0 | 1 (7.1 %) | 100 % |
 | report | tune | 24 | 0 | 0 | 0 | 100 % |
 | report | holdout | 9 | 0 | 1 | 0 | 88.9 % |
 
-En 1.0.0, la zone grise des idées était de 7.1 % (tune) et 2.3 % (holdout) : l'ajout du
-septième critère ne l'augmente presque pas.
+En 1.0.0, la zone grise des idées était de 7.1 % (tune) et 2.3 % (holdout) ; en 1.1.0, de
+7.7 % et 4.1 %. Sur les exemples de 1.1.0, la grille 1.2.0 donne exactement les mêmes décisions,
+sauf la signature `idea-206`, qui passe de la zone grise au refus (`contact_data` 0.08). Les
+deux autres cas gris nouveaux sont les adresses postales (`idea-247`, `holdout-idea-075`), à
+trancher par le second avis. Aucun contre-exemple de 1.2.0 n'est refusé ni gris.
 
 Les 8 idées légitimes qui tombent en zone grise :
 
@@ -274,7 +324,8 @@ une plainte, une idée irréaliste (création monétaire) et « faire des écono
 écolos ont fait exploser les dépenses de la mairie de Bordeaux » (`targeted` 0.49).
 
 **Motif de refus.** Le motif retenu (premier critère en échec) correspond à l'étiquette dans
-tous les cas sauf neuf, tous refusés à raison :
+tous les cas sauf onze, tous refusés à raison (`contact_data` répond avec le code
+`personal_data` : un refus par l'un ou l'autre cite la même règle) :
 
 - six textes qui nomment un particulier en l'accusant (« Le directeur de la CPAM de Roubaix,
   M. Dupont… », la signature « Proposition de Marc Dubois, 47 ans… ») sont refusés par
@@ -283,14 +334,18 @@ tous les cas sauf neuf, tous refusés à raison :
   de ne nommer personne : il reste juste pour l'auteur ;
 - « Réserver les logements sociaux aux Français de souche » est refusé comme hors-sujet
   (`on_topic`, 0.23) avant d'atteindre `lawful` ;
-- deux signalements (haineux, ou « vous devriez le citer ») sont refusés comme `injection`.
+- deux signalements (haineux, ou « vous devriez le citer ») sont refusés comme `injection` ;
+- en 1.2.0, la signature « Thomas Girard, Lyon 3e » (`holdout-idea-077`) est refusée par
+  `targeted` avant `personal_data`, et l'appel à un virement sur un IBAN (`idea-249`) par
+  `injection` (0.07) avant `contact_data` (0.39) : le texte est refusé dans les deux cas.
 
 ### 3.3 Stabilité et coût
 
 - **Reproductibilité** : deux passages complets diffèrent au plus de 0.004 sur une probabilité.
 - **Taille** : le service compte le `state` **une fois par question**. Une idée courte pèse
-  environ 1 300 jetons d'entrée (p50 1 290, max 1 458 sur le banc), contre 1 210 avec les six
-  questions de 1.0.0. La limite de 8 192 jetons du service s'applique à chaque question et non
+  environ 1 300 jetons d'entrée en 1.1.0 (p50 1 290, max 1 458 sur le banc), contre 1 210 avec
+  les six questions de 1.0.0, et environ 1 560 en 1.2.0 avec huit questions (p50 1 559, max
+  1 855). La limite de 8 192 jetons du service s'applique à chaque question et non
   au total : une idée de 8 000 caractères (13 778 jetons au total) passe sans erreur.
 - **Latence d'une idée**, grille 1.1.0 à 7 questions, mesurée le 2026-10-18. Le service traite
   les requêtes presque en série : quatre requêtes simultanées prennent environ quatre fois le
@@ -316,6 +371,9 @@ tous les cas sauf neuf, tous refusés à raison :
   (`DECISION_SERVICE_TIMEOUT_SECS`, l'auteur attend), les jobs `screen_*` du worker ont 30 s
   (`DECISION_SERVICE_JOB_TIMEOUT_SECS`) ; une idée longue est donc réglée par le job lancé
   60 s après le dépôt au lieu d'expirer à chaque tentative.
+- **Latence 1.2.0** (huit questions, une requête seule, 2026-10-19) : 150 caractères 0.9 s,
+  1 000 caractères 1.5 s, 4 000 caractères 4.4 s (7 943 jetons). Le huitième critère coûte peu
+  sur les textes longs (4.3 s → 4.4 s) : les délais retenus ci-dessus restent valables.
 
 ## 4. Seuils retenus
 
@@ -325,10 +383,11 @@ tous les cas sauf neuf, tous refusés à raison :
 | idea | `respectful` | false | 0.35 | 0.7 |
 | idea | `targeted` | false | 0.35 | 0.8 |
 | idea | `personal_data` | false | 0.35 | 0.7 |
+| idea | `contact_data` | false | 0.4 | 0.8 |
 | idea | `on_topic` | true | 0.25 | 0.6 |
 | idea | `lawful` | true | 0.1 | 0.5 |
 | idea | `realism` | niveau 1 (« difficile ») | 0.3 | 0.5 |
-| contribution | `injection` / `respectful` / `targeted` / `personal_data` | false | 0.2 / 0.35 / 0.35 / 0.35 | 0.5 / 0.7 / 0.8 / 0.7 |
+| contribution | `injection` / `respectful` / `targeted` / `personal_data` / `contact_data` | false | 0.2 / 0.35 / 0.35 / 0.35 / 0.4 | 0.5 / 0.7 / 0.8 / 0.7 / 0.8 |
 | contribution | `relevant` | true | 0.2 | 0.6 |
 | report | `injection` / `respectful` | false | 0.2 / 0.35 | 0.5 / 0.7 |
 | report | `relevant` | true | 0.3 | 0.6 |
@@ -342,6 +401,14 @@ Logique suivie :
   0.7 contre 0.45). Pour `targeted`, 0.7 suffirait sur le banc et ferait accepter directement la
   « taxe Zucman », mais la marge avec les campagnes indirectes (0.60) serait trop faible à
   l'approche de la présidentielle : on garde 0.8.
+- `contact_data` : 0.4 / 0.8. Le rejet à 0.4 laisse une marge de deux fois la plus petite
+  réussite (0.81) et refuse tous les textes signés ou portant un téléphone, un e-mail ou un
+  réseau social ; 0.6 rattraperait aussi l'adresse postale `idea-247` (0.51), mais avec moins de
+  marge vis-à-vis des sujets de mesure (112 : 0.92, IBAN : 0.93) sur des textes réels plus
+  variés : la zone grise et le second avis s'en chargent. L'acceptation à 0.8 est juste sous la
+  plus petite réussite : l'effet sur le taux d'acceptation franche est nul sur le banc (100 % des
+  exemples légitimes au-dessus) et sera à surveiller sur les décisions réelles (tableau de bord
+  de l'admin, zone grise par critère) avant la mise en production.
 - `lawful` a le seuil de rejet le plus bas (0.1). C'est le critère le moins sûr, et le plus
   exposé aux sujets sensibles : les cas douteux partent au second avis plutôt que d'être refusés.
 - Pour `realism`, il suffit que l'idée soit au moins « difficile, demande une réforme
@@ -353,6 +420,10 @@ Logique suivie :
   holdout. Les AUC de 1.000 sur le réglage sont optimistes. Les vrais textes déposés seront
   plus longs, plus variés et plus ambigus. Les seuils sont un **point de départ** (§11
   d'AGENTS.md) à recalibrer sur les décisions réelles étiquetées par l'admin.
+- **Adresses postales et coordonnées très déguisées.** `contact_data` reconnaît bien les
+  téléphones (même en lettres), les e-mails déguisés, les pseudonymes et l'IBAN (≤ 0.39), mais
+  une adresse postale en clair reste en zone grise (0.51–0.62). Un nom seul en fin de texte,
+  sans autre indice, n'a pas été testé au-delà des signatures du banc.
 - **Les noms propres sont le seul signal de `personal_data`.** Le masquage déterministe (§7.5)
   ne retire pas les noms de personnes. Un particulier décrit sans nom mais reconnaissable par le
   contexte (« la seule pharmacienne de mon village de 200 habitants ») n'est pas couvert par le
@@ -407,7 +478,9 @@ Logique suivie :
    ce rapport, puis committer la grille, le rapport et les résultats ensemble (et la page
    Méthodologie, §2.2 d'AGENTS.md). Lancer `python docs/calibration/check_prompts.py`.
 5. Si un critère est ajouté ou retiré, mettre à jour l'ordre attendu dans `check_prompts.py`,
-   les `reason_code` de `second_opinion.schema.json` et la grille de `second_opinion.md`.
+   les `reason_code` de `second_opinion.schema.json` et la grille de `second_opinion.md`
+   (`contact_data`, en 1.2.0, réutilise le code `personal_data` : ni nouveau code ni nouvel
+   article dans `/regles`, dont la règle 4.4 couvre déjà nom, prénom et signature).
 
 ### 6.2 Avec les étiquettes de l'admin
 

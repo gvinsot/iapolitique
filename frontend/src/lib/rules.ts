@@ -4,7 +4,9 @@
  *
  * Keys and reason codes mirror prompts/screening.yaml (criteria `key` and `reason_code`, in the
  * order the decision model applies them, AGENTS.md §5.3). The exact refusal message shown to an
- * author comes from the API (`reason_message` of screening.yaml), not from here.
+ * author comes from the API (`reason_message` of screening.yaml), not from here. The criterion
+ * `contact_data` (grid 1.2.0: the author's own name, contact details) has no article of its own:
+ * it refuses with the reason code `personal_data`, so rule 4.4 is the one cited.
  */
 
 export type RuleTarget = "idea" | "contribution" | "report";

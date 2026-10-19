@@ -120,7 +120,7 @@ function DeleteContribution({
       <p className="text-sm text-muted-foreground">
         {texts.intro}{" "}
         {withdraws ? (
-          <Link to={`${paths.privacy}#traitements`} className={linkClass}>
+          <Link to={`${paths.privacy}#conservation`} className={linkClass}>
             Durées de conservation
           </Link>
         ) : null}

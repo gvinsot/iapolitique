@@ -168,7 +168,7 @@ describe("TrackingActions", () => {
     expect(screen.getByText(/retire immédiatement votre idée du site/)).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Durées de conservation" })).toHaveAttribute(
       "href",
-      "/confidentialite#traitements",
+      "/confidentialite#conservation",
     );
     await user.click(screen.getByRole("button", { name: "Supprimer ma contribution" }));
     const dialog = screen.getByRole("dialog", { name: "Retirer définitivement votre idée ?" });

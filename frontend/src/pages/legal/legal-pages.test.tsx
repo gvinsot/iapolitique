@@ -79,12 +79,63 @@ describe("legal pages", () => {
     expect(screen.getByText(/sous-traitant au sens de l’article 28/)).toBeInTheDocument();
   });
 
+  it("states the retention of withdrawn ideas and of sealed copies, with their legal basis", async () => {
+    stubFetch(legalApi());
+    renderRoute("/confidentialite");
+    await screen.findByRole("heading", { level: 1, name: "Politique de confidentialité" });
+
+    const sealed = screen.getByRole("region", { name: "Copies scellées des contenus escaladés" });
+    expect(sealed).toHaveTextContent("article 17, 3, e du RGPD");
+    expect(sealed).toHaveTextContent("loi pour la confiance dans l’économie numérique (LCEN)");
+    expect(sealed).toHaveTextContent("1 an après l’escalade");
+    expect(sealed).toHaveTextContent("Jamais le nom ni l’adresse e-mail des signalants");
+
+    const table = screen.getByRole("table", { name: "Durées de conservation des données" });
+    const withdrawn = within(table).getByRole("rowheader", {
+      name: "Idée publiée ou masquée supprimée par son auteur (retirée)",
+    }).parentElement;
+    expect(withdrawn).toHaveTextContent(
+      "visible de l’éditeur seul ; supprimée 12 mois après le retrait",
+    );
+    expect(
+      within(table).getByRole("rowheader", { name: "Copie scellée d’un contenu escaladé" })
+        .parentElement,
+    ).toHaveTextContent("1 an après l’escalade");
+    expect(document.getElementById("conservation")).toBeInTheDocument();
+    expect(screen.getByText(/retirés par leur auteur ou en attente/)).toBeInTheDocument();
+  });
+
+  it("keeps the date of the shipped text of each page when the API fails", async () => {
+    stubFetch(legalApi({ error: { code: "server_error", message: "Erreur." } }, 500));
+    renderRoute("/confidentialite");
+    expect(await screen.findByText("19 octobre 2026")).toHaveAttribute("datetime", "2026-10-19");
+  });
+
+  it("refuses to name a party or an elected official, even neutrally, and explains withdrawal (D1, D2)", async () => {
+    stubFetch(legalApi());
+    renderRoute("/regles");
+    await screen.findByRole("heading", { level: 1, name: "Règles du site" });
+
+    expect(document.getElementById("critere-ciblage")).toHaveTextContent(
+      "même de façon neutre ou élogieuse",
+    );
+    expect(screen.getByText(/est refusé, même s’il le fait de façon neutre/)).toBeInTheDocument();
+    const measures = document.getElementById("mesures")!.nextElementSibling!;
+    expect(measures).toHaveTextContent("Retrait par l’auteur");
+    expect(measures).toHaveTextContent("supprimée 12 mois après le retrait");
+    expect(measures).toHaveTextContent("ni l’auteur ni l’éditeur ne peuvent la republier");
+    expect(measures).toHaveTextContent("idée retirée par son auteur");
+    expect(
+      within(measures as HTMLElement).getByRole("link", { name: "politique de confidentialité" }),
+    ).toHaveAttribute("href", "/confidentialite#conservation");
+  });
+
   it("publishes the numbered criteria, the score parameters and the licence clause", async () => {
     stubFetch(legalApi());
     renderRoute("/regles");
     await screen.findByRole("heading", { level: 1, name: "Règles du site" });
 
-    expect(await screen.findByText("1.0")).toBeInTheDocument();
+    expect(await screen.findByText("1.1")).toBeInTheDocument();
     expect(screen.getByText("20 octobre 2026")).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { level: 3, name: "4.4. Aucun particulier identifiable" }),

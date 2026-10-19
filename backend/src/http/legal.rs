@@ -86,6 +86,7 @@ pub async fn legal(State(state): State<AppState>) -> Result<Response, ApiError> 
 
 #[cfg(test)]
 mod tests {
+    use crate::domain::rules::LEGAL_PAGES_UPDATED_ON;
     use crate::test_support::{TestApp, get_json};
     use axum::http::{StatusCode, header};
     use serde_json::{Value, json};
@@ -120,10 +121,10 @@ mod tests {
                 "privacy_email": "rgpd@example.org",
                 "cgu_version": crate::domain::rules::CGU_VERSION,
                 "pages": {
-                    "mentions_legales": "2026-10-18",
-                    "confidentialite": "2026-10-18",
-                    "regles": "2026-10-18",
-                    "licence": "2026-10-18",
+                    "mentions_legales": LEGAL_PAGES_UPDATED_ON.mentions_legales,
+                    "confidentialite": LEGAL_PAGES_UPDATED_ON.confidentialite,
+                    "regles": LEGAL_PAGES_UPDATED_ON.regles,
+                    "licence": LEGAL_PAGES_UPDATED_ON.licence,
                 },
             })
         );

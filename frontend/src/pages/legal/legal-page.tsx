@@ -6,7 +6,7 @@ import { Container } from "@/components/layout/container";
 import { useDocumentTitle } from "@/hooks/use-document-title";
 import { usePageDescription } from "@/hooks/use-page-meta";
 import { type LegalDetails } from "@/hooks/use-legal-info";
-import { formatLegalDate, LEGAL_TEXTS_DATE, type LegalPageKey } from "@/lib/legal";
+import { formatLegalDate, LEGAL_TEXTS_DATES, type LegalPageKey } from "@/lib/legal";
 
 export interface TocEntry {
   anchor: string;
@@ -30,7 +30,7 @@ interface LegalPageProps {
 export function LegalPage({ title, description, pageKey, details, toc, children }: LegalPageProps) {
   useDocumentTitle(title);
   usePageDescription(description);
-  const updatedAt = details.info?.pages[pageKey] ?? LEGAL_TEXTS_DATE;
+  const updatedAt = details.info?.pages[pageKey] ?? LEGAL_TEXTS_DATES[pageKey];
 
   return (
     <>

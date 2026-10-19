@@ -48,12 +48,28 @@ const processings: readonly Processing[] = [
       </>
     ),
     retention: (
-      <ul>
-        <li>texte refusé : supprimé 30 jours après le refus, avec son lien de suivi ;</li>
-        <li>texte publié : conservé pendant toute la durée de vie du site ;</li>
-        <li>texte masqué après un signalement : supprimé 12 mois après le masquage ;</li>
-        <li>texte supprimé par son auteur : effacé immédiatement.</li>
-      </ul>
+      <>
+        <ul>
+          <li>texte refusé : supprimé 30 jours après le refus, avec son lien de suivi ;</li>
+          <li>texte publié : conservé pendant toute la durée de vie du site ;</li>
+          <li>texte masqué après un signalement : supprimé 12 mois après le masquage ;</li>
+          <li>
+            idée publiée (ou masquée) supprimée par son auteur : retirée immédiatement du site, de
+            l’API publique et des exports suivants, avec son analyse, ses contributions, ses
+            signalements et ses droits de réponse ; elle n’est plus accessible qu’à l’éditeur,
+            marquée « retirée par son auteur », puis supprimée 12 mois après le retrait ;
+          </li>
+          <li>
+            autre texte supprimé par son auteur (texte non publié, refusé ou en cours d’examen,
+            amélioration, objection) : effacé immédiatement.
+          </li>
+        </ul>
+        <p>
+          La conservation d’une idée retirée pendant 12 mois repose sur l’intérêt légitime de
+          l’éditeur à pouvoir répondre d’un contenu qu’il a publié (réclamation, droit de réponse,
+          demande d’une autorité), comme pour un contenu masqué.
+        </p>
+      </>
     ),
   },
   {
@@ -62,7 +78,8 @@ const processings: readonly Processing[] = [
     purpose:
       "Vous permettre de suivre votre envoi, de le supprimer ou de demander un réexamen, sans compte.",
     legalBasis: "Intérêt légitime (article 6, 1, f du RGPD).",
-    retention: "Supprimée en même temps que le texte auquel elle se rapporte.",
+    retention:
+      "Supprimée en même temps que le texte auquel elle se rapporte. Après une suppression à votre demande, elle sert seulement, pendant 30 jours, à afficher que la suppression est faite.",
   },
   {
     title: "Signalements",
@@ -71,14 +88,33 @@ const processings: readonly Processing[] = [
       "Examiner le signalement, corriger ou masquer le contenu en cause et, pour les contenus graves, les transmettre aux autorités.",
     legalBasis:
       "Intérêt légitime à modérer le site et respect des obligations de la loi pour la confiance dans l’économie numérique (article 6, 1, c et f du RGPD).",
-    retention: "Supprimés 6 mois après leur traitement, coordonnées facultatives comprises.",
+    retention:
+      "Supprimés 6 mois après leur traitement, coordonnées facultatives comprises (ou avec l’idée signalée, si elle est supprimée avant). Le motif et la précision d’un signalement à l’origine d’une escalade figurent aussi dans la copie scellée décrite ci-dessous, jamais vos nom et adresse e-mail.",
+  },
+  {
+    title: "Copies scellées des contenus escaladés",
+    data: "Pour un contenu jugé grave à l’examen d’un signalement (diffamation, menace, haine, terrorisme, atteinte aux mineurs) : une copie du texte original masqué, du titre, du résumé, du territoire, des dates de dépôt, de publication et de masquage, de l’analyse, de l’avis rendu sur les signalements, et du motif et de la précision des signalements qui l’ont déclenché. Jamais le nom ni l’adresse e-mail des signalants, ni aucune donnée d’identification de l’auteur.",
+    purpose:
+      "Garder la preuve d’un contenu grave masqué et, le cas échéant, transmis aux autorités (plateforme PHAROS), même si son auteur le supprime ensuite, pour répondre aux réquisitions et pour la constatation, l’exercice ou la défense de droits en justice.",
+    legalBasis: (
+      <>
+        Respect des obligations de la loi pour la confiance dans l’économie numérique (LCEN) et
+        intérêt légitime de l’éditeur à la constatation, à l’exercice ou à la défense de droits en
+        justice (article 6, 1, c et f du RGPD). Pendant cette durée, le droit à l’effacement ne
+        s’applique pas à la copie (article 17, 3, e du RGPD) : la suppression d’un contenu escaladé
+        par son auteur le retire du site, mais pas de la copie scellée.
+      </>
+    ),
+    retention:
+      "1 an après l’escalade, puis suppression automatique. La copie n’est accessible qu’à l’éditeur, chaque consultation est journalisée, et elle n’est jamais publiée ni exportée.",
   },
   {
     title: "Demandes de réexamen humain",
     data: "Le message facultatif que vous joignez à votre demande.",
     purpose: "Faire réexaminer par un humain une décision prise automatiquement.",
     legalBasis: "Intérêt légitime (article 6, 1, f du RGPD).",
-    retention: "Conservé avec le texte concerné et supprimé en même temps que lui.",
+    retention:
+      "Conservé avec le texte concerné, supprimé en même temps que lui et au plus tard 1 an après le traitement de la demande.",
   },
   {
     title: "Protection contre les abus",
@@ -109,6 +145,31 @@ const processings: readonly Processing[] = [
     legalBasis: "Obligation légale (article 6, 1, c du RGPD).",
     retention: "1 an après la réponse.",
   },
+];
+
+/** Summary of the retention periods of section 3 (AGENTS.md §7.3), data → retention. */
+const retentionRows: readonly (readonly [string, string])[] = [
+  ["Texte refusé et son lien de suivi", "30 jours après le refus"],
+  ["Idée publiée et son analyse", "Durée de vie du site"],
+  ["Idée masquée (signalement ou éditeur)", "12 mois après le masquage"],
+  [
+    "Idée publiée ou masquée supprimée par son auteur (retirée)",
+    "Retirée aussitôt du site, de l’API et des exports ; visible de l’éditeur seul ; supprimée 12 mois après le retrait",
+  ],
+  [
+    "Texte non publié, amélioration ou objection supprimés par leur auteur",
+    "Effacés immédiatement",
+  ],
+  [
+    "Copie scellée d’un contenu escaladé",
+    "1 an après l’escalade, éditeur seul (RGPD art. 17, 3, e ; LCEN)",
+  ],
+  ["Nom et e-mail facultatifs d’un signalant", "6 mois après le signalement"],
+  ["Précision d’un signalement", "6 mois après son traitement"],
+  ["Demande de réexamen humain", "Avec le texte, et 1 an au plus après son traitement"],
+  ["Empreinte anti-abus de l’adresse IP", "24 heures, en mémoire uniquement"],
+  ["Journaux techniques", "7 jours au plus"],
+  ["Sauvegardes de la base", "30 jours au plus"],
 ];
 
 /** Politique de confidentialité (RGPD art. 13, plan of docs/juridique/memo.md §3). */
@@ -160,6 +221,33 @@ export function PrivacyPage() {
         </section>
       ))}
 
+      <h3 id="conservation">Récapitulatif des durées de conservation</h3>
+      <div className="mb-6 overflow-x-auto rounded-lg border">
+        <table className="w-full min-w-[32rem] border-collapse text-sm">
+          <caption className="sr-only">Durées de conservation des données</caption>
+          <thead>
+            <tr className="border-b bg-muted/40 text-left">
+              <th scope="col" className="px-3 py-2 font-semibold">
+                Donnée
+              </th>
+              <th scope="col" className="px-3 py-2 font-semibold">
+                Conservation
+              </th>
+            </tr>
+          </thead>
+          <tbody>
+            {retentionRows.map(([data, retention]) => (
+              <tr key={data} className="border-b align-top last:border-b-0">
+                <th scope="row" className="px-3 py-2 text-left font-normal">
+                  {data}
+                </th>
+                <td className="px-3 py-2">{retention}</td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+
       <h2 id="consignes">4. Consignes aux auteurs</h2>
       <p>
         <strong>Ne signez pas votre texte et ne nommez aucun agent ni particulier.</strong> Avant
@@ -201,7 +289,9 @@ export function PrivacyPage() {
       <p>
         Les données sont accessibles à l’éditeur et, pour les besoins décrits ci-dessus, à Mistral
         AI. Elles peuvent être communiquées à l’autorité judiciaire ou administrative sur
-        réquisition. Elles ne sont jamais vendues ni utilisées à des fins publicitaires.
+        réquisition ; la copie scellée d’un contenu escaladé peut être transmise aux autorités
+        (plateforme PHAROS, autorité judiciaire). Elles ne sont jamais vendues ni utilisées à des
+        fins publicitaires.
       </p>
 
       <h2 id="open-data">7. Données ouvertes</h2>
@@ -210,9 +300,9 @@ export function PrivacyPage() {
         <Link to={paths.licence}>Licence et réutilisation</Link>). Ces fichiers ne contiennent que
         les contenus publiés et visibles, masqués de leurs données personnelles, sans identifiant
         technique ni horodatage précis (dates au jour près). Ils excluent les textes refusés,
-        masqués ou en attente, les signalements et les coordonnées. Une copie déjà téléchargée par
-        un tiers ne peut pas être retirée : la suppression d’un contenu s’applique au site et aux
-        exports suivants (voir l’
+        masqués, retirés par leur auteur ou en attente, les signalements et les coordonnées. Une
+        copie déjà téléchargée par un tiers ne peut pas être retirée : la suppression d’un contenu
+        s’applique au site et aux exports suivants (voir l’
         <Link to={`${paths.terms}#${RULES_LICENCE_ANCHOR}`}>article des règles sur la licence</Link>
         ).
       </p>
@@ -249,14 +339,19 @@ export function PrivacyPage() {
       <h2 id="droits">10. Vos droits</h2>
       <p>
         Vous disposez d’un droit d’accès, de rectification, d’effacement, de limitation et
-        d’opposition sur les données qui vous concernent.
+        d’opposition sur les données qui vous concernent. Le droit à l’effacement ne s’applique pas
+        à la copie scellée d’un contenu escaladé pendant l’année où elle est conservée (article 17,
+        3, e du RGPD).
       </p>
       <ul>
         <li>
           <strong>Sans compte, votre lien de suivi est la preuve que vous êtes l’auteur</strong>{" "}
           d’un texte (article 11, 2 du RGPD). Depuis la page de suivi, vous pouvez consulter l’état
-          de votre envoi, le supprimer immédiatement ou demander un réexamen humain. Sans ce lien,
-          le site ne peut pas savoir qu’un texte est le vôtre.
+          de votre envoi, le supprimer ou demander un réexamen humain. Un texte non publié est
+          effacé immédiatement ; une idée publiée est retirée immédiatement du site et des exports
+          suivants, puis effacée 12 mois après le retrait (voir le{" "}
+          <a href="#conservation">récapitulatif des durées</a>). Sans ce lien, le site ne peut pas
+          savoir qu’un texte est le vôtre.
         </li>
         <li>
           Si un texte publié vous désigne, vous pouvez en demander le retrait sans lien de suivi en

@@ -18,10 +18,16 @@ export type { LegalInfo };
 export const LEGAL_DETAILS_UNAVAILABLE = "coordonnées momentanément indisponibles";
 
 /**
- * Date of the texts shipped with this version of the site, used when the API does not give a
- * page date (outage). Update it whenever a legal text of src/pages/legal changes.
+ * Dates of the texts shipped with this version of the site, page by page, used when the API
+ * does not give a page date (outage). They mirror `domain::rules::LEGAL_PAGES_UPDATED_ON` of the
+ * backend: update both whenever a legal text of src/pages/legal changes.
  */
-export const LEGAL_TEXTS_DATE = "2026-10-18";
+export const LEGAL_TEXTS_DATES: Readonly<Record<LegalPageKey, string>> = {
+  mentions_legales: "2026-10-18",
+  confidentialite: "2026-10-19",
+  regles: "2026-10-19",
+  licence: "2026-10-18",
+};
 
 export const SITE_DOMAIN = "iapolitique.fr";
 export const SOURCE_CODE_URL = "https://github.com/gvinsot/iapolitique";

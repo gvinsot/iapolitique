@@ -89,8 +89,9 @@ export function TermsPage() {
       </p>
       <p>
         Chaque envoi donne lieu à un lien de suivi personnel, affiché une seule fois. Il permet de
-        connaître le devenir de l’envoi, de le supprimer et de demander un réexamen humain. Il ne
-        peut pas être retrouvé s’il est perdu.
+        connaître le devenir de l’envoi, de le supprimer (ou, pour une idée publiée, de la retirer
+        du site, voir l’article 7) et de demander un réexamen humain. Il ne peut pas être retrouvé
+        s’il est perdu.
       </p>
 
       <h2 id={RULES_ARTICLE_CRITERIA_ANCHOR}>Article 4 – Critères d’acceptation et de rejet</h2>
@@ -98,6 +99,14 @@ export function TermsPage() {
         Un texte est accepté s’il respecte tous les critères ci-dessous qui s’appliquent à lui. Ils
         sont vérifiés dans cet ordre ; le premier critère non respecté est le motif du refus, qui
         vous est indiqué immédiatement avec une invitation à reformuler.
+      </p>
+      <p>
+        <strong>
+          Le site est apartisan : un texte qui nomme un parti, un élu, un candidat ou une
+          personnalité est refusé, même s’il le fait de façon neutre
+        </strong>{" "}
+        (par exemple pour situer une loi ou une annonce). Reformulez alors en décrivant la mesure
+        elle-même, ou en citant la fonction ou l’institution concernée.
       </p>
       <ol className="list-none! pl-0!">
         {screeningRules.map((rule) => (
@@ -121,7 +130,10 @@ export function TermsPage() {
           signez pas non plus votre texte) ;
         </li>
         <li>d’injurier, de diffamer, de menacer ou d’inciter à la haine ou à la violence ;</li>
-        <li>de promouvoir ou de dénigrer un candidat, un élu ou un parti politique ;</li>
+        <li>
+          de nommer un parti politique, un candidat, un élu ou une personnalité, même de façon
+          neutre, de promouvoir ou de dénigrer l’un d’eux, ou de donner une consigne de vote ;
+        </li>
         <li>
           de reproduire des contenus de tiers au-delà de courtes citations dont la source est
           indiquée ;
@@ -190,8 +202,25 @@ export function TermsPage() {
           dont le compteur « proposée N fois » augmente.
         </li>
         <li>
-          <strong>Suppression par l’auteur</strong> : depuis le lien de suivi, effacement immédiat
-          du site et retrait des exports suivants.
+          <strong>Suppression par l’auteur</strong> : depuis le lien de suivi. Un texte non publié
+          (refusé ou en cours d’examen), une amélioration, une objection ou un signalement sont
+          effacés immédiatement.
+        </li>
+        <li>
+          <strong>Retrait par l’auteur</strong> : une idée publiée ou masquée que son auteur
+          supprime est retirée immédiatement du site, de l’API publique et des exports suivants,
+          avec son analyse, ses contributions, ses signalements et ses droits de réponse. Elle reste
+          accessible à l’éditeur seul, marquée « retirée par son auteur », puis est supprimée 12
+          mois après le retrait. Le retrait est définitif : ni l’auteur ni l’éditeur ne peuvent la
+          republier. Le lien de suivi des autres visiteurs qui y avaient contribué ou l’avaient
+          signalée indique « idée retirée par son auteur ».
+        </li>
+        <li>
+          <strong>Copie scellée</strong> : lorsqu’un contenu grave est escaladé (article 6), une
+          copie en est conservée par l’éditeur pendant 1 an après l’escalade, même si l’auteur le
+          retire ou le supprime ensuite, pour répondre aux autorités et à la justice (voir la{" "}
+          <Link to={`${paths.privacy}#conservation`}>politique de confidentialité</Link>). Elle
+          n’est jamais publiée ni exportée.
         </li>
       </ul>
       <p>

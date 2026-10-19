@@ -53,9 +53,9 @@ export const screeningRules: readonly ScreeningRule[] = [
     key: "targeted",
     reasonCode: "targeted",
     anchor: "critere-ciblage",
-    title: "Aucun ciblage d’une personne, d’un parti ou d’un groupe",
+    title: "Aucun parti, élu ni personnalité nommé, aucun groupe visé",
     requirement:
-      "Le texte ne vise pas nommément une personne, un élu ou un parti, ni un groupe de personnes défini par leur origine, leur religion, leur sexe ou leur orientation. Il ne promeut ni ne dénigre aucun candidat ni aucun parti.",
+      "Le texte ne nomme aucun parti, aucun élu, aucun candidat ni aucune personnalité, même de façon neutre ou élogieuse : décrivez plutôt la mesure elle-même (le dispositif, la dépense ou la recette concernée). Les fonctions et les institutions (« le Gouvernement », « les élus locaux », « le Parlement ») restent permises. Le texte ne donne aucune consigne de vote et ne vise aucun groupe de personnes défini par leur origine, leur religion, leur sexe ou leur orientation.",
     appliesTo: ["idea", "contribution"],
   },
   {
@@ -65,7 +65,7 @@ export const screeningRules: readonly ScreeningRule[] = [
     anchor: "critere-donnees-personnelles",
     title: "Aucun particulier identifiable",
     requirement:
-      "Le texte ne permet de reconnaître aucun particulier (nom, prénom, signature, poste occupé par une seule personne dans un service, un établissement ou une ville nommés) et ne lui reproche aucun fait. Les responsables politiques agissant dans leur fonction ne sont pas des particuliers, mais la règle 4.3 interdit de les viser.",
+      "Le texte ne permet de reconnaître aucun particulier (nom, prénom, signature, poste occupé par une seule personne dans un service, un établissement ou une ville nommés) et ne lui reproche aucun fait. Les responsables politiques agissant dans leur fonction ne sont pas des particuliers, mais la règle 4.3 interdit de les nommer, même de façon neutre.",
     appliesTo: ["idea", "contribution"],
   },
   {

@@ -49,7 +49,7 @@ expect_status() {
     fi
 }
 
-csp_template="default-src 'none'; script-src 'self'; style-src 'self' 'nonce-NONCE' 'sha256-StEaX+se6YS7pqjzrzMIA0KaX9zF/8zAhvQXZAe5epY=' 'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=' 'sha256-441zG27rExd4/il+NvIqyL8zFx5XmyNQtE381kSkUJk='; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests"
+csp_template="default-src 'none'; script-src 'self' https://stats.methodinfo.fr; style-src 'self' 'nonce-NONCE' 'sha256-StEaX+se6YS7pqjzrzMIA0KaX9zF/8zAhvQXZAe5epY=' 'sha256-47DEQpj8HBSa+/TImW+5JCeuQeRkm5NMpJWZG3hSuFU=' 'sha256-441zG27rExd4/il+NvIqyL8zFx5XmyNQtE381kSkUJk='; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://stats.methodinfo.fr; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests"
 
 # Headers every response carries, whatever its status.
 common_headers() {

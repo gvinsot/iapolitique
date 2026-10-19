@@ -3,8 +3,10 @@ import { Link } from "react-router";
 
 import { ADMIN_TOKEN_KEY } from "@/api/admin-token";
 import { paths } from "@/app/paths";
+import { AudienceOptOut } from "@/components/legal/audience-opt-out";
 import { LegalEmail, LegalValue } from "@/components/legal/legal-details";
 import { useLegalDetails } from "@/hooks/use-legal-info";
+import { AUDIENCE_OPT_OUT_KEY } from "@/lib/audience";
 import { CNIL_COMPLAINT_URL } from "@/lib/legal";
 import { RULES_LICENCE_ANCHOR, RULES_RECOURSE_ANCHOR } from "@/lib/rules";
 import { THEME_STORAGE_KEY } from "@/lib/theme";
@@ -139,6 +141,30 @@ const processings: readonly Processing[] = [
     retention: "7 jours au plus.",
   },
   {
+    title: "Mesure d’audience",
+    data: (
+      <>
+        Pour chaque page vue : son adresse sans paramètres ni fragment (le lien de suivi n’est donc
+        jamais transmis), son titre, le site d’où vous venez, la langue, la taille d’écran, le type
+        de navigateur et d’appareil et le pays déduit de l’adresse IP. L’adresse IP sert à calculer
+        un identifiant de visite non réversible, renouvelé périodiquement, et n’est pas conservée.
+        Aucun cookie n’est déposé.
+      </>
+    ),
+    purpose:
+      "Produire des statistiques anonymes de fréquentation (nombre de visites, pages consultées), exclusivement pour l’éditeur.",
+    legalBasis: (
+      <>
+        Intérêt légitime de l’éditeur à connaître la fréquentation du site (article 6, 1, f du
+        RGPD). Outil de mesure d’audience auto-hébergé, sans cookie, limité à des statistiques
+        anonymes et jamais croisé avec d’autres données. La mesure est désactivée si votre
+        navigateur envoie le signal « Do Not Track », et vous pouvez la refuser à tout moment (voir{" "}
+        <a href="#mesure-audience">ci-dessous</a>).
+      </>
+    ),
+    retention: "25 mois au plus.",
+  },
+  {
     title: "Demandes d’exercice de vos droits",
     data: "Votre message et l’adresse e-mail que vous utilisez pour nous écrire.",
     purpose: "Répondre à votre demande et en garder la preuve.",
@@ -169,6 +195,7 @@ const retentionRows: readonly (readonly [string, string])[] = [
   ["Demande de réexamen humain", "Avec le texte, et 1 an au plus après son traitement"],
   ["Empreinte anti-abus de l’adresse IP", "24 heures, en mémoire uniquement"],
   ["Journaux techniques", "7 jours au plus"],
+  ["Statistiques de mesure d’audience", "25 mois au plus"],
   ["Sauvegardes de la base", "30 jours au plus"],
 ];
 
@@ -198,9 +225,13 @@ export function PrivacyPage() {
       <h2 id="principes">2. Nos principes</h2>
       <ul>
         <li>aucun compte, aucune adresse e-mail demandée pour proposer une idée ;</li>
-        <li>aucun cookie, aucune publicité, aucune mesure d’audience ;</li>
-        <li>aucune ressource chargée depuis un service tiers par votre navigateur ;</li>
-        <li>aucune adresse IP enregistrée par l’application ;</li>
+        <li>aucun cookie, aucune publicité, aucun traceur publicitaire ;</li>
+        <li>
+          une seule ressource chargée par votre navigateur depuis un autre site : l’outil de mesure
+          d’audience de l’éditeur, auto-hébergé, sans cookie, que vous pouvez refuser (voir{" "}
+          <a href="#mesure-audience">la mesure d’audience</a>) ;
+        </li>
+        <li>aucune adresse IP enregistrée par l’application ni par la mesure d’audience ;</li>
         <li>des serveurs situés en France, administrés par l’éditeur.</li>
       </ul>
 
@@ -288,10 +319,11 @@ export function PrivacyPage() {
       <h2 id="destinataires">6. Destinataires</h2>
       <p>
         Les données sont accessibles à l’éditeur et, pour les besoins décrits ci-dessus, à Mistral
-        AI. Elles peuvent être communiquées à l’autorité judiciaire ou administrative sur
-        réquisition ; la copie scellée d’un contenu escaladé peut être transmise aux autorités
-        (plateforme PHAROS, autorité judiciaire). Elles ne sont jamais vendues ni utilisées à des
-        fins publicitaires.
+        AI. Les statistiques de mesure d’audience sont hébergées sur un serveur administré par
+        l’éditeur (stats.methodinfo.fr) et ne sont communiquées à personne. Elles peuvent être
+        communiquées à l’autorité judiciaire ou administrative sur réquisition ; la copie scellée
+        d’un contenu escaladé peut être transmise aux autorités (plateforme PHAROS, autorité
+        judiciaire). Elles ne sont jamais vendues ni utilisées à des fins publicitaires.
       </p>
 
       <h2 id="open-data">7. Données ouvertes</h2>
@@ -323,11 +355,25 @@ export function PrivacyPage() {
           la page de suivi ou en effaçant les données du site dans votre navigateur ;
         </li>
         <li>
+          votre refus de la mesure d’audience, si vous l’exprimez (clé{" "}
+          <code>{AUDIENCE_OPT_OUT_KEY}</code>) ;
+        </li>
+        <li>
           pour l’administrateur seulement, sur le réseau local, son jeton d’accès, le temps de
           l’onglet (clé <code>{ADMIN_TOKEN_KEY}</code>).
         </li>
       </ul>
       <p>Ces informations ne sont jamais transmises au site ni à un tiers.</p>
+
+      <h3 id="mesure-audience">Mesure d’audience</h3>
+      <p>
+        Le site mesure sa fréquentation avec Umami, un outil libre hébergé par l’éditeur, sans
+        cookie ni identifiant conservé dans votre navigateur. Le fragment des adresses (qui contient
+        votre lien de suivi) et leurs paramètres ne sont jamais transmis. Vous pouvez refuser cette
+        mesure dans ce navigateur ; votre choix est enregistré localement et vaut aussi pour vos
+        prochaines visites.
+      </p>
+      <AudienceOptOut />
 
       <h2 id="securite">9. Sécurité et sauvegardes</h2>
       <p>

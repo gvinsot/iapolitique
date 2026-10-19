@@ -25,7 +25,7 @@ sociale, collectivités territoriales).
 | Principe | Conséquence concrète |
 |---|---|
 | **Apolitique** | Aucune étiquette gauche/droite, aucun parti, aucun élu nommé. Impacts décrits par public, pas par camp. Vocabulaire neutre. |
-| **Anonymat** | Aucun compte, aucun email, **aucune IP stockée**, aucun traceur ni service tiers côté navigateur. |
+| **Anonymat** | Aucun compte, aucun email, **aucune IP stockée**, aucun traceur publicitaire ni service tiers côté navigateur, sauf la mesure d'audience de l'éditeur (§7.6). |
 | **Transparence** | Prompts, grille de filtrage et formule de score publics et versionnés (page « Méthodologie »). Chaque analyse indique les versions utilisées. |
 | **Vérifiabilité** | Tout chiffrage cite ses sources et expose ses hypothèses et une fourchette basse/médiane/haute. |
 | **Utilité** | Le classement favorise les idées crédibles et faisables, pas les montants spectaculaires. |
@@ -184,8 +184,9 @@ iapolitique/
 - Types d'API **générés** depuis l'OpenAPI du backend (`openapi-typescript`) : jamais écrits à la
   main. Régénérer et committer à chaque changement d'API, dans le même commit.
 - Accessibilité : RGAA/WCAG AA visés (labels, contrastes, navigation clavier).
-- **Aucune ressource tierce** : pas de CDN, pas de Google Fonts, pas d'analytics, pas de
-  captcha tiers. Polices et assets auto-hébergés. Pas de cookie (le suivi passe par un lien).
+- **Aucune ressource tierce** : pas de CDN, pas de Google Fonts, pas de captcha tiers. Polices et
+  assets auto-hébergés. Pas de cookie (le suivi passe par un lien). Seule exception : la mesure
+  d'audience Umami auto-hébergée de l'éditeur (§7.6).
 - Mobile first.
 
 ### 4.3 Données
@@ -837,7 +838,24 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
   d'accès Traefik (infrastructure partagée) doivent tronquer l'IP ou être gardés 7 jours au plus
   (voir `docs/ops.md`).
 - **Stockage local navigateur** : uniquement le thème et, si l'utilisateur le demande, ses liens
-  de suivi ; décrit dans `/confidentialite`. Aucun cookie, donc pas de bandeau.
+  de suivi et son refus de la mesure d'audience (`umami.disabled`, §7.6) ; décrit dans
+  `/confidentialite`. Aucun cookie, donc pas de bandeau.
+
+### 7.6 Mesure d'audience
+
+Décision de l'éditeur (2026-10-19) : la fréquentation est mesurée par **Umami auto-hébergé**
+(`https://stats.methodinfo.fr`, serveur de l'éditeur), seule ressource d'une autre origine
+chargée par le navigateur. Balise dans `frontend/index.html` (`defer`, `crossorigin="anonymous"`
+exigé par COEP `require-corp`, `data-website-id`), avec, obligatoirement :
+`data-exclude-hash="true"` (le fragment de `/suivi#<jeton>` n'est **jamais** envoyé),
+`data-exclude-search="true"`, `data-do-not-track="true"` et `data-domains="iapolitique.fr"`
+(rien n'est mesuré en QA, en local ni sur l'admin). Sans cookie ; refus possible depuis
+`/confidentialite` (case qui pose la clé `umami.disabled` de `localStorage`, lue par le script ;
+`frontend/src/lib/audience.ts`). La CSP l'autorise dans `script-src` et `connect-src` seulement
+(§14.2), et `scripts/check-dist-urls.mjs` l'admet. `/confidentialite` décrit le traitement
+(intérêt légitime, exemption CNIL des mesures d'audience sans cookie, conservation **25 mois au
+plus** : la durée de conservation est à régler dans Umami par l'éditeur). Ajouter un autre
+service tiers reste interdit.
 
 ---
 
@@ -1262,7 +1280,7 @@ dispensent d'aucune des mesures ci-dessous.
   d'en-tête (`cc`, `bcc`, `body`, RFC 6068) ne s'ajoute à la réponse de l'éditeur. Le test
   `src/test/xss-guards.test.ts` vérifie en plus, dans les sources : aucun puits HTML ni code
   dynamique, aucune règle XSS désactivée, aucune dépendance de rendu Markdown/HTML, et le
-  stockage navigateur limité au thème, aux liens de suivi (`localStorage`) et au jeton admin
+  stockage navigateur limité au thème, aux liens de suivi, au refus de la mesure d'audience (`localStorage`) et au jeton admin
   (`sessionStorage`).
 - **CSV / formules** : dans les exports CSV, toute cellule commençant par `=`, `+`, `-`, `@`,
   tabulation ou retour chariot est préfixée par `'` ; encodage UTF-8 avec BOM, séparateur
@@ -1286,7 +1304,7 @@ worker (erreurs 404, 405, 413, 415, 504 et 500 comprises), retire `Server`, `X-P
 
 | En-tête | Valeur |
 |---|---|
-| `Content-Security-Policy` (frontend) | `default-src 'none'; script-src 'self'; style-src 'self' 'nonce-<par réponse>' <3 empreintes sha256>; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests` (valeur exacte : `frontend/nginx.conf`). Aucun `'unsafe-inline'` ni `'unsafe-eval'` pour les scripts ni pour les éléments `<style>`. `worker-src 'self'` suffit : le worker ALTCHA est un fichier de même origine (`altcha/worker`), sans `blob:`. Les `<style>` injectés par des bibliothèques sont autorisés un par un : par **empreinte** pour les contenus fixes (feuille de sonner, insérée vide puis remplie, d'où l'empreinte de la chaîne vide ; style du viewport de Radix Select), vérifiées contre `node_modules` par `src/test/csp.test.tsx` (à mettre à jour avec la bibliothèque) ; par **nonce** (`$request_id`, 128 bits, nouveau à chaque réponse) pour le style de compensation de barre de défilement de react-remove-scroll (dialogues et listes Radix), dont le contenu varie : nginx pose le nonce sur la balise de `theme-init.js` (`sub_filter`) et ce script le copie dans `window.__webpack_nonce__`, lu par react-style-singleton. `style-src-attr 'unsafe-inline'` : attributs `style` seulement (positionnement Radix, widget ALTCHA). |
+| `Content-Security-Policy` (frontend) | `default-src 'none'; script-src 'self' https://stats.methodinfo.fr; style-src 'self' 'nonce-<par réponse>' <3 empreintes sha256>; style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self' https://stats.methodinfo.fr; worker-src 'self'; manifest-src 'self'; base-uri 'none'; form-action 'self'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests` (valeur exacte : `frontend/nginx.conf`). Seule origine tierce : la mesure d'audience de l'éditeur (§7.6), vérifiée par `src/test/csp.test.tsx`. Aucun `'unsafe-inline'` ni `'unsafe-eval'` pour les scripts ni pour les éléments `<style>`. `worker-src 'self'` suffit : le worker ALTCHA est un fichier de même origine (`altcha/worker`), sans `blob:`. Les `<style>` injectés par des bibliothèques sont autorisés un par un : par **empreinte** pour les contenus fixes (feuille de sonner, insérée vide puis remplie, d'où l'empreinte de la chaîne vide ; style du viewport de Radix Select), vérifiées contre `node_modules` par `src/test/csp.test.tsx` (à mettre à jour avec la bibliothèque) ; par **nonce** (`$request_id`, 128 bits, nouveau à chaque réponse) pour le style de compensation de barre de défilement de react-remove-scroll (dialogues et listes Radix), dont le contenu varie : nginx pose le nonce sur la balise de `theme-init.js` (`sub_filter`) et ce script le copie dans `window.__webpack_nonce__`, lu par react-style-singleton. `style-src-attr 'unsafe-inline'` : attributs `style` seulement (positionnement Radix, widget ALTCHA). |
 | `Content-Security-Policy` (api) | `default-src 'none'; frame-ancestors 'none'; base-uri 'none'` |
 | `Strict-Transport-Security` | `max-age=63072000; includeSubDomains`, sans `preload` (difficile à annuler : décision de l'éditeur). Derrière Traefik, le middleware `security-headers` de `global@file` (infrastructure partagée) remplace cette valeur par la sienne, aujourd'hui `max-age=31536000; includeSubDomains; preload` : voir `docs/ops.md` |
 | `X-Content-Type-Options` | `nosniff` |

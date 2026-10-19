@@ -1,8 +1,9 @@
 #!/usr/bin/env node
 // Fails when the production build (dist/) names a third-party origin that is not on the list
-// below (AGENTS.md §14.1, §14.2): the site loads nothing from another origin (no CDN, font,
-// analytics or captcha service; the CSP would block it anyway) and the only absolute URLs allowed
-// in the bundle are identifiers and documentation links that the browser never fetches by itself.
+// below (AGENTS.md §14.1, §14.2): the site loads nothing from another origin (no CDN, font or
+// captcha service; the CSP would block it anyway) except the publisher's self-hosted audience
+// measurement, and the other absolute URLs allowed in the bundle are identifiers and
+// documentation links that the browser never fetches by itself.
 // Run after `npm run build` (`npm run check:dist`, devops/Dockerfile.test).
 //
 // Usage: node scripts/check-dist-urls.mjs [DIST_DIR]
@@ -12,6 +13,7 @@ import { fileURLToPath } from "node:url";
 
 /** Host -> why it may appear in the bundle. Any new entry needs the same justification. */
 export const ALLOWED_HOSTS = new Map([
+  ["stats.methodinfo.fr", "publisher's self-hosted Umami, allowed by the CSP (AGENTS.md §1, §7.5)"],
   ["www.w3.org", "XML namespaces (SVG, XHTML, MathML) used by React and the icons"],
   ["schema.org", "JSON-LD @context of the AI marking (AGENTS.md §7.5)"],
   ["cv.iptc.org", "IPTC digital source type of the AI marking (AGENTS.md §7.5)"],

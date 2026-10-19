@@ -19,6 +19,9 @@ const indexHtml = read("../../index.html");
 const nginxConf = read("../../nginx.conf");
 const themeInit = read("../../public/theme-init.js");
 
+/** The only third-party origin: the self-hosted audience measurement (AGENTS.md §1, §7.5). */
+const STATS_ORIGIN = "https://stats.methodinfo.fr";
+
 /**
  * The Content-Security-Policy of frontend/nginx.conf (AGENTS.md §14.2) allows the <style>
  * elements that libraries inject at run time by hash (fixed contents) or by nonce (contents that
@@ -67,14 +70,17 @@ describe("Content-Security-Policy of nginx.conf", () => {
       "upgrade-insecure-requests",
     ]);
     expect(directives.get("default-src")).toEqual(["'none'"]);
-    expect(directives.get("script-src")).toEqual(["'self'"]);
+    expect(directives.get("script-src")).toEqual(["'self'", STATS_ORIGIN]);
+    expect(directives.get("connect-src")).toEqual(["'self'", STATS_ORIGIN]);
     expect(directives.get("style-src-attr")).toEqual(["'unsafe-inline'"]);
     expect(directives.get("worker-src")).toEqual(["'self'"]);
     expect(directives.get("base-uri")).toEqual(["'none'"]);
     expect(directives.get("form-action")).toEqual(["'self'"]);
     expect(directives.get("frame-ancestors")).toEqual(["'none'"]);
     expect(directives.get("object-src")).toEqual(["'none'"]);
-    expect(csp).not.toMatch(/unsafe-eval|unsafe-hashes|\*|https?:|blob:/);
+    expect(csp.replaceAll(STATS_ORIGIN, "")).not.toMatch(
+      /unsafe-eval|unsafe-hashes|\*|https?:|blob:/,
+    );
     expect(directives.get("style-src")).not.toContain("'unsafe-inline'");
   });
 
@@ -132,5 +138,25 @@ describe("CSP nonce hand-over", () => {
       Reflect.deleteProperty(document, "currentScript");
       Reflect.deleteProperty(window, "__webpack_nonce__");
     }
+  });
+});
+
+describe("audience measurement script of index.html", () => {
+  const tag = /<script\s[^>]*stats\.methodinfo\.fr[^>]*>/.exec(indexHtml)?.[0] ?? "";
+
+  it("is the only third-party script, loaded from the origin the CSP allows", () => {
+    expect(tag).toContain(`src="${STATS_ORIGIN}/script.js"`);
+    expect(indexHtml.match(/src="https?:/g)).toHaveLength(1);
+  });
+
+  it("loads in CORS mode, required by Cross-Origin-Embedder-Policy: require-corp", () => {
+    expect(tag).toContain('crossorigin="anonymous"');
+  });
+
+  it("never sends the tracking token of /suivi nor the query, and honours Do Not Track", () => {
+    expect(tag).toContain('data-exclude-hash="true"');
+    expect(tag).toContain('data-exclude-search="true"');
+    expect(tag).toContain('data-do-not-track="true"');
+    expect(tag).toContain('data-domains="iapolitique.fr"');
   });
 });

@@ -98,7 +98,10 @@ function watch(page, browserName, where) {
   });
   page.on("request", (request) => {
     const url = new URL(request.url());
-    if (!["https://localhost", "https://admin.localhost"].includes(url.origin) && url.protocol !== "data:") {
+    // stats.methodinfo.fr: the self-hosted audience measurement script (AGENTS.md §1); it sends
+    // nothing outside the production host (data-domains of index.html).
+    const allowed = ["https://localhost", "https://admin.localhost", "https://stats.methodinfo.fr"];
+    if (!allowed.includes(url.origin) && url.protocol !== "data:") {
       problem(browserName, where(), `third-party request: ${request.url()}`);
     }
   });
@@ -120,7 +123,7 @@ async function checkDocument(page, browserName, response, where) {
     if (headers[name] !== value) problem(browserName, where, `${name}: ${headers[name] ?? "<absent>"}`);
   }
   const csp = headers["content-security-policy"] ?? "";
-  if (!/^default-src 'none'; script-src 'self'; style-src 'self' 'nonce-[0-9a-f]{32}' /.test(csp)) {
+  if (!/^default-src 'none'; script-src 'self' https:\/\/stats\.methodinfo\.fr; style-src 'self' 'nonce-[0-9a-f]{32}' /.test(csp)) {
     problem(browserName, where, `unexpected CSP: ${csp}`);
   }
   const state = await page.evaluate(() => ({

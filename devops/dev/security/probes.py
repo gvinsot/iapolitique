@@ -48,10 +48,10 @@ HSTS = "max-age=63072000; includeSubDomains"
 # The exact policy of frontend/nginx.conf (also checked by devops/check_frontend_headers.sh),
 # with a fresh 128-bit nonce on every response.
 FRONT_CSP = re.compile(
-    r"^default-src 'none'; script-src 'self'; style-src 'self' 'nonce-[0-9a-f]{32}' "
+    r"^default-src 'none'; script-src 'self' https://stats\.methodinfo\.fr; style-src 'self' 'nonce-[0-9a-f]{32}' "
     r"'sha256-[A-Za-z0-9+/]{43}='( 'sha256-[A-Za-z0-9+/]{43}='){2}; "
     r"style-src-attr 'unsafe-inline'; img-src 'self' data:; font-src 'self'; "
-    r"connect-src 'self'; worker-src 'self'; manifest-src 'self'; base-uri 'none'; "
+    r"connect-src 'self' https://stats\.methodinfo\.fr; worker-src 'self'; manifest-src 'self'; base-uri 'none'; "
     r"form-action 'self'; frame-ancestors 'none'; object-src 'none'; upgrade-insecure-requests$"
 )
 RESULTS: list[dict[str, str]] = []

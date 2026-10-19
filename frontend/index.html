@@ -13,6 +13,19 @@
     <meta name="theme-color" media="(prefers-color-scheme: dark)" content="#141211" />
     <link rel="icon" href="/favicon.svg" type="image/svg+xml" />
     <script src="/theme-init.js"></script>
+    <!-- Audience measurement (AGENTS.md §1, §7.5): self-hosted Umami, no cookie. The hash (tracking
+         token of /suivi) and the query string are never sent; Do Not Track and the opt-out of
+         /confidentialite (localStorage "umami.disabled") are honoured; production host only. -->
+    <script
+      defer
+      src="https://stats.methodinfo.fr/script.js"
+      crossorigin="anonymous"
+      data-website-id="b12ca931-7377-4158-8c3a-fda3fc458582"
+      data-domains="iapolitique.fr"
+      data-do-not-track="true"
+      data-exclude-hash="true"
+      data-exclude-search="true"
+    ></script>
     <title>iapolitique</title>
   </head>
   <body>

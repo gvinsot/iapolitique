@@ -53,9 +53,10 @@ describe("XSS guards", () => {
     expect(dependencies.filter((name) => renderers.test(name))).toEqual([]);
   });
 
-  it("keeps localStorage to the theme and the opt-in tracking links", () => {
+  it("keeps localStorage to the theme, the opt-in tracking links and the audience opt-out", () => {
     expect(filesMatching(/localStorage/).sort()).toEqual([
       "/src/components/tracking/remember-link-toggle.tsx",
+      "/src/lib/audience.ts",
       "/src/lib/theme.ts",
       "/src/lib/tracking-storage.ts",
       "/src/lib/tracking-token.ts",

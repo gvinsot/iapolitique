@@ -19,6 +19,15 @@ export function ScorePoints({
   max?: number;
   className?: string;
 }) {
+  // A response of an older api (deployment in progress, cached answer) has no points.
+  if (!Number.isFinite(points)) {
+    return (
+      <strong className={cn("tabular-nums", className)}>
+        <span aria-hidden="true">—</span>
+        <span className="sr-only">score indisponible</span>
+      </strong>
+    );
+  }
   return (
     <strong className={cn("tabular-nums", className)}>
       <span aria-hidden="true">{formatPoints(points, max)}</span>

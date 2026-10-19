@@ -155,6 +155,15 @@ describe("estimates and score", () => {
     expect(screen.getByText("410/1000")).toBeInTheDocument();
     expect(screen.getByText("410 points sur 1000")).toHaveClass("sr-only");
     expect(screen.getByText(/Score brut \(produit des composantes\) : 1,92 M/)).toBeInTheDocument();
+  });
+
+  it("never shows NaN when an older api sends no points", () => {
+    const { points: _points, ...withoutPoints } = scoreBreakdownFixture;
+    renderComponent(
+      <ScoreBreakdown data={withoutPoints as unknown as typeof scoreBreakdownFixture} />,
+    );
+    expect(screen.queryByText(/NaN/)).not.toBeInTheDocument();
+    expect(screen.getByText("score indisponible")).toBeInTheDocument();
     expect(screen.getByRole("link", { name: "Comment ce score est-il calculé ?" })).toHaveAttribute(
       "href",
       "/regles#score",

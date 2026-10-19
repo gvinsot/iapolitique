@@ -3,14 +3,23 @@ import { Link } from "react-router";
 
 import { paths } from "@/app/paths";
 import { ProcessSteps } from "@/components/common/process-steps";
-import { EmptyState } from "@/components/common/states";
 import { IdeaFiltersBar } from "@/components/ideas/idea-filters-bar";
+import { IdeaRanking } from "@/components/ideas/idea-ranking";
+import { PublicStats } from "@/components/ideas/public-stats";
 import { Container } from "@/components/layout/container";
 import { Button } from "@/components/ui/button";
 import { useDocumentTitle } from "@/hooks/use-document-title";
+import { useIdeaFilters } from "@/hooks/use-idea-filters";
+import { usePageDescription } from "@/hooks/use-page-meta";
+import { useTaxonomyLabels } from "@/hooks/use-taxonomy";
 
 export function HomePage() {
   useDocumentTitle();
+  usePageDescription(
+    "Propositions citoyennes et anonymes pour réduire les dépenses ou augmenter les recettes publiques, analysées et chiffrées par IA avec leurs sources, classées par rentabilité.",
+  );
+  const { filters } = useIdeaFilters();
+  const { categories } = useTaxonomyLabels();
 
   return (
     <>
@@ -50,7 +59,8 @@ export function HomePage() {
         </Container>
       </section>
 
-      <Container className="py-10 sm:py-12">
+      <Container className="space-y-10 py-10 sm:py-12">
+        <PublicStats />
         <section aria-labelledby="classement-titre" className="space-y-6">
           <div className="space-y-2">
             <h2 id="classement-titre" className="text-2xl font-semibold sm:text-3xl">
@@ -68,18 +78,8 @@ export function HomePage() {
             </p>
           </div>
 
-          <IdeaFiltersBar />
-
-          <EmptyState
-            headingLevel={3}
-            title="Aucune idée publiée pour le moment"
-            description="Les idées apparaîtront ici dès que leur analyse sera terminée. Vous pouvez être parmi les premiers à proposer une mesure."
-            action={
-              <Button asChild>
-                <Link to={paths.propose}>Proposer une idée</Link>
-              </Button>
-            }
-          />
+          <IdeaFiltersBar categories={categories} />
+          <IdeaRanking filters={filters} />
         </section>
       </Container>
     </>

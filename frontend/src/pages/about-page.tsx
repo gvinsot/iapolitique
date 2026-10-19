@@ -11,9 +11,11 @@ import { Link } from "react-router";
 import { paths } from "@/app/paths";
 import { PageHeader } from "@/components/common/page-header";
 import { ProcessSteps } from "@/components/common/process-steps";
+import { PublicStats } from "@/components/ideas/public-stats";
 import { Container } from "@/components/layout/container";
 import { Button } from "@/components/ui/button";
 import { useDocumentTitle } from "@/hooks/use-document-title";
+import { usePageDescription } from "@/hooks/use-page-meta";
 
 interface Principle {
   icon: LucideIcon;
@@ -51,6 +53,9 @@ const principles: readonly Principle[] = [
 
 export function AboutPage() {
   useDocumentTitle("À propos");
+  usePageDescription(
+    "Comment fonctionne iapolitique : dépôt anonyme, filtrage par IA, analyse et chiffrage par Mistral AI, classement par rentabilité, sans parti pris.",
+  );
 
   return (
     <>
@@ -77,6 +82,8 @@ export function AboutPage() {
             communes).
           </p>
         </section>
+
+        <PublicStats />
 
         <section aria-labelledby="etapes" className="space-y-6">
           <div className="max-w-prose space-y-2">

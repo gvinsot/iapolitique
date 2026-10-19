@@ -248,7 +248,14 @@ pub(crate) async fn capture_logs<F: std::future::Future>(future: F) -> (F::Outpu
 
     static INSTALLED: std::sync::Once = std::sync::Once::new();
     INSTALLED.call_once(|| {
-        let capturing = |_: &tracing::Metadata<'_>| CAPTURE.with(|c| c.borrow().is_some());
+        // The answer depends on the current thread, so it must never be cached per call site: a
+        // plain `filter_fn` is also asked for the call-site interest, and when a thread that is
+        // not capturing registered `security_event` first (or rebuilt the cache), the cached
+        // `Interest::never` dropped the event for every test (flaky in CI).
+        let capturing = tracing_subscriber::filter::DynFilterFn::new(|_, _| {
+            CAPTURE.with(|c| c.borrow().is_some())
+        })
+        .with_callsite_filter(|_| tracing::subscriber::Interest::sometimes());
         let layer = tracing_subscriber::fmt::layer()
             .json()
             .with_writer(|| {
@@ -257,7 +264,7 @@ pub(crate) async fn capture_logs<F: std::future::Future>(future: F) -> (F::Outpu
                     |buffer| Box::new(buffer) as Box<dyn std::io::Write>,
                 )
             })
-            .with_filter(tracing_subscriber::filter::filter_fn(capturing));
+            .with_filter(capturing);
         tracing::subscriber::set_global_default(tracing_subscriber::registry().with(layer))
             .expect("no other global subscriber in the tests");
     });

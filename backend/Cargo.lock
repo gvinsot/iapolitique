@@ -1184,6 +1184,7 @@ dependencies = [
  "chrono",
  "clap",
  "hmac",
+ "http-body",
  "http-body-util",
  "indexmap",
  "jsonschema",

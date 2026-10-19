@@ -917,6 +917,10 @@ du port 8082 : `503` si sa boucle est bloquée.
 Erreurs : toute réponse 4xx/5xx a le corps JSON du §4.1, y compris 404, 405, 413 (corps au-delà
 de `HTTP_BODY_LIMIT_BYTES`), 403 et 415 (anti-CSRF, §14.3), 504 (`timeout`, au-delà de `HTTP_REQUEST_TIMEOUT_SECS`) et 500.
 Chaque réponse porte un en-tête `x-request-id` généré par le serveur.
+Une réponse HTTP/1 qui laisse le corps de la requête non lu (route inconnue, 403, 405, 413, 415…)
+porte `Connection: close` (`http::middleware::close_unread_body`) : sinon hyper ferme la connexion
+sans le dire, et Traefik, qui partage ses connexions vers l'api entre tous les clients, pouvait y
+envoyer la requête d'un autre visiteur et lui répondre `500` (revue ZAP-2).
 
 Le frontend appelle toujours des chemins relatifs `/api/...`. En dev, Vite proxifie `/api` vers
 `localhost:8080` (et vers `8081` pour `/api/admin`). En production, Traefik fait de même sur

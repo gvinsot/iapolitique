@@ -1,19 +1,24 @@
 //! HTTP layers shared by the public and admin servers.
 //!
-//! From the outside in: security headers (`security.rs`, §14.2), sensitive headers marking,
-//! request id, tracing, no CORS and anti-CSRF (`csrf.rs`, §14.3), panic catching, compression,
-//! JSON error bodies, timeout and body size limit.
+//! From the outside in: security headers (`security.rs`, §14.2), `Connection: close` after an
+//! unread request body, sensitive headers marking, request id, tracing, no CORS and anti-CSRF
+//! (`csrf.rs`, §14.3), panic catching, compression, JSON error bodies, timeout and body size
+//! limit.
 //!
 //! Tracing records the method, the **route template** (never the concrete URI, which may hold
 //! a tracking token or a search text), the status and the latency. No header, IP or body is
 //! logged (§7.1).
 
 use std::any::Any;
+use std::pin::Pin;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::task::{Context, Poll};
 
 use axum::Router;
-use axum::body::Body;
+use axum::body::{Body, Bytes};
 use axum::extract::{DefaultBodyLimit, MatchedPath, Request};
-use axum::http::{HeaderName, HeaderValue, StatusCode, header};
+use axum::http::{HeaderName, HeaderValue, StatusCode, Version, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use tower_http::LatencyUnit;
@@ -45,6 +50,71 @@ pub async fn request_id(mut request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     if let Ok(value) = HeaderValue::from_str(&id) {
         response.headers_mut().insert(REQUEST_ID_HEADER, value);
+    }
+    response
+}
+
+/// Request body that records whether it was read to its end.
+struct TrackedBody {
+    inner: Body,
+    finished: Arc<AtomicBool>,
+}
+
+impl http_body::Body for TrackedBody {
+    type Data = Bytes;
+    type Error = axum::Error;
+
+    fn poll_frame(
+        mut self: Pin<&mut Self>,
+        cx: &mut Context<'_>,
+    ) -> Poll<Option<Result<http_body::Frame<Bytes>, axum::Error>>> {
+        let poll = Pin::new(&mut self.inner).poll_frame(cx);
+        if matches!(poll, Poll::Ready(None)) {
+            self.finished.store(true, Ordering::Relaxed);
+        }
+        poll
+    }
+
+    fn is_end_stream(&self) -> bool {
+        let end = self.inner.is_end_stream();
+        if end {
+            self.finished.store(true, Ordering::Relaxed);
+        }
+        end
+    }
+
+    fn size_hint(&self) -> http_body::SizeHint {
+        self.inner.size_hint()
+    }
+}
+
+/// Answers `Connection: close` when an HTTP/1 response leaves the request body unread (unknown
+/// route, `403`/`415` of the anti-CSRF layer, `405`, `413`, a handler that ignores its body).
+///
+/// hyper then closes the connection, since the unread bytes would corrupt the next request,
+/// but without the header Traefik cannot know it: it pools its connections to the api for all
+/// clients and may send another visitor's request on the closing one, which it then answers
+/// `500` (`server closed idle connection`) without retrying a `POST`, so that a stranger's
+/// rejected requests could fail a legitimate submission (security review ZAP-2). With the
+/// header, Traefik drops the connection from its pool.
+pub async fn close_unread_body(request: Request, next: Next) -> Response {
+    let http1 = matches!(request.version(), Version::HTTP_10 | Version::HTTP_11);
+    if !http1 || http_body::Body::is_end_stream(request.body()) {
+        return next.run(request).await;
+    }
+    let finished = Arc::new(AtomicBool::new(false));
+    let tracked = finished.clone();
+    let request = request.map(move |inner| {
+        Body::new(TrackedBody {
+            inner,
+            finished: tracked,
+        })
+    });
+    let mut response = next.run(request).await;
+    if !finished.load(Ordering::Relaxed) {
+        response
+            .headers_mut()
+            .insert(header::CONNECTION, HeaderValue::from_static("close"));
     }
     response
 }
@@ -157,6 +227,7 @@ pub fn with_common_layers(
             header::COOKIE,
             HeaderName::from_static("x-forwarded-for"),
         ]))
+        .layer(middleware::from_fn(close_unread_body))
         .layer(middleware::from_fn_with_state(
             surface,
             security::security_headers,
@@ -400,5 +471,85 @@ hello
         )
         .await;
         assert_eq!(status, "HTTP/1.1 415 Unsupported Media Type");
+    }
+
+    fn post_req(uri: &str, content_type: &str, body: String) -> axum::http::Request<Body> {
+        axum::http::Request::post(uri)
+            .header(header::CONTENT_TYPE, content_type)
+            .body(Body::from(body))
+            .unwrap()
+    }
+
+    /// ZAP-2: a response that leaves the request body unread closes the connection explicitly.
+    #[tokio::test]
+    async fn unread_request_bodies_close_the_connection() {
+        let unread = [
+            post_req("/missing", "application/json", "{}".into()),
+            post_req("/ok", "application/json", "{}".into()),
+            post_req("/echo", "text/plain", "hello".into()),
+            post_req("/echo", "application/json", "y".repeat(2048)),
+        ];
+        for request in unread {
+            let uri = request.uri().clone();
+            let response = app().oneshot(request).await.unwrap();
+            assert!(response.status().is_client_error(), "{uri}");
+            assert_eq!(response.headers()[header::CONNECTION], "close", "{uri}");
+            security::assert_security_headers(response.headers(), "unread body");
+        }
+        // Read bodies and bodyless requests keep the connection.
+        for request in [
+            post_req("/echo", "application/json", "small".into()),
+            get_req("/ok"),
+            get_req("/missing"),
+            axum::http::Request::post("/echo")
+                .body(Body::empty())
+                .unwrap(),
+        ] {
+            let uri = request.uri().clone();
+            let response = app().oneshot(request).await.unwrap();
+            assert!(
+                !response.headers().contains_key(header::CONNECTION),
+                "{uri}"
+            );
+        }
+        // HTTP/2 has no Connection header.
+        let mut request = post_req("/missing", "application/json", "{}".into());
+        *request.version_mut() = Version::HTTP_2;
+        let response = app().oneshot(request).await.unwrap();
+        assert!(!response.headers().contains_key(header::CONNECTION));
+    }
+
+    /// ZAP-2 on a real server: the headers of a rejected request arrive before its body (as
+    /// Traefik may send them); the early answer says `Connection: close`, and hyper closes.
+    #[tokio::test]
+    async fn early_answers_close_the_connection_on_a_real_server() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app()).await });
+        let answer = tokio::task::spawn_blocking(move || {
+            use std::io::{Read, Write};
+            let mut stream = std::net::TcpStream::connect(address).unwrap();
+            stream
+                .set_read_timeout(Some(Duration::from_secs(5)))
+                .unwrap();
+            let head = "POST /missing HTTP/1.1\r\nHost: x\r\n\
+                        Content-Type: application/json\r\nContent-Length: 2\r\n\r\n";
+            stream.write_all(head.as_bytes()).unwrap();
+            let mut answer = Vec::new();
+            let mut buffer = [0_u8; 4096];
+            // Until the server closes the connection (EOF), without ever sending the body.
+            while let Ok(read) = stream.read(&mut buffer) {
+                if read == 0 {
+                    break;
+                }
+                answer.extend_from_slice(&buffer[..read]);
+            }
+            String::from_utf8_lossy(&answer).to_ascii_lowercase()
+        })
+        .await
+        .unwrap();
+        server.abort();
+        assert!(answer.starts_with("http/1.1 404"), "{answer}");
+        assert!(answer.contains("\r\nconnection: close\r\n"), "{answer}");
     }
 }

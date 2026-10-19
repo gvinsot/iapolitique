@@ -6,11 +6,12 @@
 #     AGENTS.md §13.5, reached from the containers through host.docker.internal),
 #   - the real decision service (E2E_DECISION_SERVICE_URL),
 #   - devops/dev/mock_mistral.py in a python container, with a dummy MISTRAL_API_KEY.
-# devops/check_frontend_headers.sh checks the nginx headers, then devops/dev/e2e_scenario.py
-# drives the pipeline, devops/dev/browser_check.sh browses every route in Chromium and Firefox
-# (CSP violations, ALTCHA, admin; E2E_BROWSER=0 skips it), a second phase restarts the api and
-# the worker with a tiny daily budget, and the container logs are checked for client IPs,
-# tracking tokens and visitor texts (AGENTS.md §7.1).
+# The containers run with the hardening of devops/docker-compose.swarm.yml (read-only root file
+# system, tmpfs, capabilities, init). devops/check_frontend_headers.sh checks the nginx headers,
+# then devops/dev/e2e_scenario.py drives the pipeline, devops/dev/browser_check.sh browses every
+# route in Chromium and Firefox (CSP violations, ALTCHA, admin; E2E_BROWSER=0 skips it), a second
+# phase restarts the api and the worker with a tiny daily budget, and the container logs are
+# checked for client IPs, tracking tokens and visitor texts (AGENTS.md §7.1).
 #
 # Build the images first (from devops/, with a copy of .env.example):
 #   docker compose -f docker-compose.swarm.yml --env-file <copy> build api frontend
@@ -71,6 +72,10 @@ docker create --name e2e-mock-mistral --network "$net" python:3.13-alpine \
 docker cp "$here/mock_mistral.py" e2e-mock-mistral:/mock_mistral.py >/dev/null
 docker start e2e-mock-mistral >/dev/null
 
+# Same hardening as devops/docker-compose.swarm.yml (AGENTS.md §14.7).
+backend_hardening=(--read-only --tmpfs /tmp:size=16m --cap-drop ALL --init)
+front_hardening=(--read-only --tmpfs /run:size=1m --tmpfs /var/cache/nginx:size=16m --cap-drop ALL
+    --cap-add CHOWN --cap-add SETGID --cap-add SETUID --cap-add NET_BIND_SERVICE --init)
 contact_email=securite@example.org
 
 backend_env=(
@@ -89,7 +94,7 @@ start_backend() {
     local budget="$1"
     docker rm -f e2e-api e2e-worker >/dev/null 2>&1 || true
     docker run -d --name e2e-api --network "$net" --add-host=host.docker.internal:host-gateway \
-        -p "127.0.0.1:$public_port:8080" -p "127.0.0.1:$admin_port:8081" \
+        "${backend_hardening[@]}" -p "127.0.0.1:$public_port:8080" -p "127.0.0.1:$admin_port:8081" \
         "${backend_env[@]}" -e "MISTRAL_DAILY_BUDGET_EUR=$budget" \
         -e "ADMIN_API_TOKEN=$token" -e "ALTCHA_HMAC_KEY=$altcha_key" -e "TRUSTED_PROXY_HOPS=1" \
         -e "LEGAL_PUBLISHER_NAME=Éditeur de test" -e "LEGAL_CONTACT_EMAIL=contact@example.org" \
@@ -97,7 +102,7 @@ start_backend() {
         "$api_image" api >/dev/null
     # Same probe as the compose file: the image's default HEALTHCHECK targets the api port.
     docker run -d --name e2e-worker --network "$net" --add-host=host.docker.internal:host-gateway \
-        "${backend_env[@]}" -e "MISTRAL_DAILY_BUDGET_EUR=$budget" \
+        "${backend_hardening[@]}" "${backend_env[@]}" -e "MISTRAL_DAILY_BUDGET_EUR=$budget" \
         --health-cmd "/app/iapolitique healthcheck --url http://127.0.0.1:8082/health" \
         --health-interval 2s --health-start-period 120s \
         "$api_image" worker >/dev/null
@@ -115,7 +120,7 @@ start_backend() {
 
 echo "== api, worker and frontend"
 start_backend 5
-docker run -d --name e2e-front --network "$net" -p "127.0.0.1:$front_port:80" \
+docker run -d --name e2e-front --network "$net" -p "127.0.0.1:$front_port:80" "${front_hardening[@]}" \
     -e "LEGAL_CONTACT_EMAIL=$contact_email" -e "TRAEFIK_HOST=localhost" "$front_image" >/dev/null
 
 echo "== frontend"

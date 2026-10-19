@@ -152,6 +152,7 @@ iapolitique/
     ├── Dockerfile.test     # image CI (§13.5)
     ├── run-tests.sh        # point d'entrée de l'image CI
     ├── check_frontend_headers.sh # contrat HTTP de nginx (CI et bout en bout)
+    ├── check_compose_security.py # invariants de sécurité du compose (CI, + ses tests)
     ├── dev/                # bout en bout local des images runtime, faux Mistral (dev/README.md)
     └── .env.example
 ```
@@ -927,10 +928,12 @@ Le service `test` du compose construit `devops/Dockerfile.test` (contexte `..`) 
 2. stage `frontend-headers` (même image nginx que le runtime) : le `dist/` de `frontend-check`
    servi par `frontend/nginx.conf`, contrôlé par `devops/check_frontend_headers.sh` (en-têtes,
    nonce CSP, cache, méthodes, fichiers cachés, `security.txt` avec et sans adresse, §14.2) ;
-3. stage `backend-test` (rust) : `cargo fmt --check`, `cargo clippy -D warnings`, compilation des
+3. stage `devops-check` (alpine, python3 + PyYAML du paquet `py3-yaml`) :
+   `devops/check_compose_security.py` (invariants du compose, §14.4 et §14.7) et ses tests ;
+4. stage `backend-test` (rust) : `cargo fmt --check`, `cargo clippy -D warnings`, compilation des
    tests ; il copie un fichier témoin produit par chacun des stages précédents (sinon BuildKit
    les saute) ;
-4. à l'exécution (`devops/run-tests.sh`) : attente du port de `test-db`, puis
+5. à l'exécution (`devops/run-tests.sh`) : attente du port de `test-db`, puis
    `cargo test --locked --offline` (rien n'est recompilé) avec `DATABASE_URL` vers le service
    `test-db` (`pgvector/pgvector:pg18` en mémoire, sans mot de passe, réseau interne au compose).
    `test-db` n'est **pas** en `replicas: 0` (compose ne démarrerait pas la dépendance) mais en
@@ -1097,6 +1100,21 @@ aucune valeur de la requête ne peut y figurer.
 - Images non root, système de fichiers en lecture seule là où Swarm le permet (sinon
   documenter), capacités minimales, aucun outil inutile dans l'image runtime, images de base
   épinglées.
+- Dans `devops/docker-compose.swarm.yml`, api, worker et frontend ont `read_only: true`,
+  `init: true` et `cap_drop: [ALL]` (tous pris en charge par `docker stack deploy`, vérifié sur
+  Docker 29) ; les seuls chemins inscriptibles sont des volumes `type: tmpfs` (la clé courte
+  `tmpfs:` est ignorée par Swarm) : `/tmp` pour api et worker ; `/run` (pid, `security.txt`
+  généré) et `/var/cache/nginx` pour le frontend, qui garde seulement `CHOWN`, `SETGID`,
+  `SETUID` (maître nginx root, workers `nginx`) et `NET_BIND_SERVICE` (port 80). `security_opt`
+  (`no-new-privileges`) est ignoré par Swarm : les processus applicatifs tournent sans privilège
+  (uid 10001 pour api et worker, utilisateur `nginx` pour les workers nginx). Aucun port publié :
+  tout passe par Traefik. `devops/dev/e2e.sh` lance les conteneurs avec les mêmes options.
+- `devops/check_compose_security.py` (CI, stage `devops-check`) vérifie ces réglages, les
+  réseaux (worker hors `proxy`, services de CI sur leur réseau interne), et les routeurs Traefik :
+  chacun nomme son service, son point d'entrée et un seul `Host()` connu ; `global@file` sur tout
+  routeur HTTPS public, `dashboard-allowlist@file` sur `ADMIN_HOST` ; les routeurs HTTP ne font que
+  rediriger ; le port admin 8081 n'est servi que sur `ADMIN_HOST`, pour `/api/admin`, derrière
+  `dashboard-allowlist@file` (§14.4).
 - CI (`devops/Dockerfile.test`) : `cargo deny check advisories bans` (ou `cargo audit`) et
   `npm audit --omit=dev --audit-level=high` bloquants ; `Cargo.lock` et `package-lock.json`
   committés ; `npm ci` uniquement.

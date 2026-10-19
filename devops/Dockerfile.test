@@ -13,6 +13,7 @@ ARG RUST_VERSION=1.99
 ARG NODE_VERSION=22
 # Keep NGINX_VERSION aligned with frontend/Dockerfile.
 ARG NGINX_VERSION=1.31
+ARG ALPINE_VERSION=3.24
 
 # ---------------------------------------------------------------------------------------------
 # 1. Frontend: ESLint + Prettier, tsc, Vitest, production build.
@@ -61,7 +62,20 @@ RUN set -eu; \
     touch /frontend-headers-ok
 
 # ---------------------------------------------------------------------------------------------
-# 3. Backend: rustfmt, clippy, test compilation. The test binaries run later, at `docker compose
+# 3. devops: security invariants of docker-compose.swarm.yml (container hardening, networks,
+#    Traefik routers and the admin port; AGENTS.md §14.4, §14.7) and the tests of the checker.
+# ---------------------------------------------------------------------------------------------
+FROM alpine:${ALPINE_VERSION} AS devops-check
+RUN apk add --no-cache python3 py3-yaml
+WORKDIR /devops
+COPY devops/docker-compose.swarm.yml devops/check_compose_security.py \
+     devops/test_check_compose_security.py ./
+RUN PYTHONDONTWRITEBYTECODE=1 python3 check_compose_security.py \
+    && PYTHONDONTWRITEBYTECODE=1 python3 -m unittest -q test_check_compose_security.py \
+    && touch /devops-ok
+
+# ---------------------------------------------------------------------------------------------
+# 4. Backend: rustfmt, clippy, test compilation. The test binaries run later, at `docker compose
 #    run`, because the integration tests need the test-db service.
 # ---------------------------------------------------------------------------------------------
 FROM rust:${RUST_VERSION}-trixie AS backend-test
@@ -76,6 +90,7 @@ WORKDIR /src
 # Witness files: without a dependency on the other stages, BuildKit would skip them entirely.
 COPY --from=frontend-check /frontend-ok /tmp/frontend-ok
 COPY --from=frontend-headers /frontend-headers-ok /tmp/frontend-headers-ok
+COPY --from=devops-check /devops-ok /tmp/devops-ok
 # Same layout as the repository: tests resolve ../prompts and ../frontend/src/api/openapi.json
 # from CARGO_MANIFEST_DIR.
 COPY --from=frontend-check /frontend-out/api/ frontend/src/api/

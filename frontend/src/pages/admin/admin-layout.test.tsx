@@ -112,6 +112,59 @@ describe("admin access", () => {
     await user.click(screen.getByRole("button", { name: "Se connecter" }));
 
     expect(await screen.findByText("Jeton refusé")).toBeInTheDocument();
+    // Finding AUTH-3: a refused token never stays in the tab.
+    expect(window.sessionStorage.getItem(ADMIN_TOKEN_KEY)).toBeNull();
+  });
+
+  it("forgets a token refused in the middle of a session and asks for a new one (AUTH-3)", async () => {
+    storeAdminToken("ancien-jeton");
+    let rotated = false;
+    const fetch = stubFetch((request) => {
+      const url = new URL(request.url);
+      const authorization = request.headers.get("Authorization");
+      if (authorization === null || rotated) {
+        return apiError(401, "unauthorized", "Jeton d’administration invalide.");
+      }
+      if (url.pathname === "/api/admin/session") return Response.json({ authenticated: true });
+      // The token is rotated while the page is open: the next admin call is refused.
+      rotated = true;
+      return apiError(401, "unauthorized", "Jeton d’administration invalide.");
+    });
+    renderRoute("/admin/couts");
+
+    expect(await screen.findByText("Jeton refusé")).toBeInTheDocument();
+    expect(screen.getByLabelText("Jeton d’administration")).toBeInTheDocument();
+    expect(readAdminToken()).toBeNull();
+    expect(
+      screen.queryByRole("navigation", { name: "Navigation de l’administration" }),
+    ).not.toBeInTheDocument();
+    const sent = sentAuthorization(fetch).filter((value) => value !== null);
+    expect(sent.every((value) => value === "Bearer ancien-jeton")).toBe(true);
+  });
+
+  it("shows the French message of the lockout and keeps the form (AUTH-3)", async () => {
+    storeAdminToken("bon-jeton");
+    stubFetch((request) =>
+      request.headers.get("Authorization") === null
+        ? apiError(401, "unauthorized", "Jeton d’administration invalide.")
+        : new Response(
+            JSON.stringify({
+              error: {
+                code: "admin_locked",
+                message:
+                  "Trop d'échecs d'authentification : l'administration est verrouillée quelques minutes.",
+              },
+            }),
+            { status: 429, headers: { "Content-Type": "application/json", "Retry-After": "240" } },
+          ),
+    );
+    renderRoute("/admin");
+
+    const alert = await screen.findByRole("alert");
+    expect(alert).toHaveTextContent("Administration verrouillée");
+    expect(alert).toHaveTextContent("l'administration est verrouillée quelques minutes.");
+    expect(alert).toHaveTextContent("Réessayez dans 4 minutes.");
+    expect(screen.getByLabelText("Jeton d’administration")).toBeInTheDocument();
   });
 
   it("reuses a stored token and signs out", async () => {

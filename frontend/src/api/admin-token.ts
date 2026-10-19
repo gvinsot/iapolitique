@@ -31,3 +31,24 @@ export function clearAdminToken(): void {
     // Storage unavailable: nothing was stored.
   }
 }
+
+type RejectionListener = () => void;
+const rejectionListeners = new Set<RejectionListener>();
+
+/**
+ * The admin API answered 401 to a request carrying the stored token (finding AUTH-3): the token
+ * is wrong or was rotated. It is forgotten at once, and the admin session is told to ask for a
+ * new one, instead of being sent again with every request of the tab.
+ */
+export function rejectAdminToken(): void {
+  clearAdminToken();
+  for (const listener of rejectionListeners) listener();
+}
+
+/** Subscribes to rejectAdminToken; returns the unsubscribe function. */
+export function onAdminTokenRejected(listener: RejectionListener): () => void {
+  rejectionListeners.add(listener);
+  return () => {
+    rejectionListeners.delete(listener);
+  };
+}

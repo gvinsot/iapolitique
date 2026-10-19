@@ -39,6 +39,16 @@ function AdminContent({
   switch (state.status) {
     case "signed-out":
       return <AdminSignIn onSubmit={onSignIn} rejected={state.rejected} />;
+    case "locked":
+      // Finding AUTH-3: the French message of the API, and the form for after the lock.
+      return (
+        <AdminSignIn
+          onSubmit={onSignIn}
+          rejected={false}
+          lockedMessage={state.message}
+          retryAfterSeconds={state.retryAfterSeconds}
+        />
+      );
     case "checking":
       return <PageLoading />;
     case "wrong-host":

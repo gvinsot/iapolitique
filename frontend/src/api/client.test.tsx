@@ -5,6 +5,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import { AppProviders } from "@/app/providers";
 
+import { ADMIN_TOKEN_KEY, readAdminToken, storeAdminToken } from "./admin-token";
 import { createApiClient } from "./client";
 import { ApiError } from "./errors";
 import { createQueryClient } from "./query-client";
@@ -111,6 +112,52 @@ describe("createApiClient", () => {
     await client.GET("/api/admin/stats");
 
     expect(fetch.mock.calls[0]![0].headers.has("Authorization")).toBe(false);
+  });
+
+  it("forgets the admin token the admin API refuses, and only that one (AUTH-3)", async () => {
+    const unauthorized = () =>
+      Response.json(
+        { error: { code: "unauthorized", message: "Jeton d’administration invalide." } },
+        { status: 401 },
+      );
+    const onAdminTokenRejected = vi.fn();
+    const client = createApiClient<TestPaths>({
+      fetch: fakeFetch(unauthorized),
+      getAdminToken: () => "ancien-jeton",
+      onAdminTokenRejected,
+    });
+    await expect(client.GET("/api/admin/stats")).rejects.toMatchObject({ status: 401 });
+    expect(onAdminTokenRejected).toHaveBeenCalledOnce();
+
+    // A token-less probe (401 by design) and a public 401 never drop anything.
+    const probe = createApiClient<TestPaths>({
+      fetch: fakeFetch(unauthorized),
+      getAdminToken: () => null,
+      onAdminTokenRejected,
+    });
+    await expect(probe.GET("/api/admin/stats")).rejects.toMatchObject({ status: 401 });
+    const publicClient = createApiClient<TestPaths>({
+      fetch: fakeFetch(unauthorized),
+      getAdminToken: () => "ancien-jeton",
+      onAdminTokenRejected,
+    });
+    await expect(publicClient.GET("/api/health")).rejects.toMatchObject({ status: 401 });
+    expect(onAdminTokenRejected).toHaveBeenCalledOnce();
+  });
+
+  it("clears the stored admin token on a 401 by default", async () => {
+    storeAdminToken("ancien-jeton");
+    const client = createApiClient<TestPaths>({
+      fetch: fakeFetch(() =>
+        Response.json(
+          { error: { code: "unauthorized", message: "Jeton d’administration invalide." } },
+          { status: 401 },
+        ),
+      ),
+    });
+    await expect(client.GET("/api/admin/stats")).rejects.toBeInstanceOf(ApiError);
+    expect(readAdminToken()).toBeNull();
+    expect(window.sessionStorage.getItem(ADMIN_TOKEN_KEY)).toBeNull();
   });
 });
 

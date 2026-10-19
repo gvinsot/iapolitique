@@ -1,7 +1,7 @@
 import createFetchClient, { type Client, type Middleware } from "openapi-fetch";
 import createQueryHooks from "openapi-react-query";
 
-import { readAdminToken } from "./admin-token";
+import { readAdminToken, rejectAdminToken } from "./admin-token";
 import { apiErrorFromResponse, isAbortError, networkError } from "./errors";
 import type { paths } from "./schema";
 
@@ -48,10 +48,32 @@ export function adminAuthMiddleware(getToken: () => string | null): Middleware {
   };
 }
 
+/**
+ * Forgets an admin token that the admin API refused (401 to a request that carried it, finding
+ * AUTH-3). Registered after errorMiddleware: openapi-fetch runs `onResponse` in reverse order,
+ * so this one sees the response before errorMiddleware turns it into an ApiError.
+ */
+export function adminRejectionMiddleware(onRejected: () => void): Middleware {
+  return {
+    onResponse({ request, response }) {
+      if (
+        response.status === 401 &&
+        isAdminPath(new URL(request.url).pathname) &&
+        request.headers.has("Authorization")
+      ) {
+        onRejected();
+      }
+      return undefined;
+    },
+  };
+}
+
 export interface ApiClientOptions {
   baseUrl?: string;
   fetch?: (request: Request) => Promise<Response>;
   getAdminToken?: () => string | null;
+  /** Called when the admin API refuses the token sent (defaults to rejectAdminToken). */
+  onAdminTokenRejected?: () => void;
 }
 
 // eslint-disable-next-line @typescript-eslint/no-empty-object-type -- mirrors openapi-fetch's own constraint
@@ -66,7 +88,11 @@ export function createApiClient<Paths extends {} = paths>(
     // Same-origin API, no cookie anyway (AGENTS.md §7.1): never send credentials.
     credentials: "omit",
   });
-  client.use(adminAuthMiddleware(options.getAdminToken ?? readAdminToken), errorMiddleware);
+  client.use(
+    adminAuthMiddleware(options.getAdminToken ?? readAdminToken),
+    errorMiddleware,
+    adminRejectionMiddleware(options.onAdminTokenRejected ?? rejectAdminToken),
+  );
   return client;
 }
 

@@ -120,7 +120,7 @@ sont évaluées pour cette synthèse, selon l'impact et la facilité d'exploitat
 | NET-4 | faible | Même cause, réseaux `postgresqlcluster_internal` et `llm-net` | Idem |
 | HDR-1 | faible | Sur la QA, Traefik remplace HSTS (`preload`), pose `X-Robots-Tag: none` partout et `X-XSS-Protection` | Infrastructure (§6) ; `noindex` voulu en QA |
 | TLS-1 | faible | Pas d'enregistrement CAA ; suites CBC-SHA1 offertes en TLS 1.2 | Infrastructure (§6) |
-| AUTH-3 | faible\* | Jeton refusé (401) gardé en `sessionStorage` ; compteur d'échecs commun à tout le port | Partie frontend à faire ; partie compteur liée à NET-1 |
+| AUTH-3 | faible\* | Jeton refusé (401) gardé en `sessionStorage` ; compteur d'échecs commun à tout le port | Partie frontend corrigée le 2026-10-19 : toute réponse `401` à une requête admin qui portait le jeton l'efface de `sessionStorage` et redemande le jeton ; un verrouillage (`429`) affiche le message de l'API et le délai (tests `client.test.tsx`, `admin-layout.test.tsx`). Partie compteur liée à NET-1, ouverte |
 | IMG-1, SUP-1 (backend) | faible\* | `backend/Dockerfile` non épinglé par digest, runtime Debian complet | À faire (digests notés dans le rapport de la revue) ; signalé sans bloquer par `check_image_pins.py` |
 | SUP-2 (reste) | faible\* | Pas de scan d'images (Trivy/Grype) ni de mise à jour automatique des digests | À faire |
 

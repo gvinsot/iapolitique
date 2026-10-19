@@ -1221,7 +1221,10 @@ fichier incomplet.
   requête `/api/admin/…` est refusée 5 minutes, bon jeton compris, par `429 admin_locked` avec
   `Retry-After` ; un en-tête absent répond `401` sans compter (sonde de session des pages admin) ;
   chaque échec est un événement de sécurité (§14.6) ; côté navigateur, conservé en mémoire ou en `sessionStorage`, jamais en
-  `localStorage`.
+  `localStorage`, et oublié dès qu'une requête admin qui le portait reçoit `401` (jeton faux ou
+  changé : middleware `adminRejectionMiddleware` de `frontend/src/api/client.ts`, la page redemande
+  le jeton) ; pendant un verrouillage (`429 admin_locked`), la page affiche le message français de
+  l'API et le délai de `Retry-After` (revue AUTH-3).
 - Le port public ne connaît aucune route admin (404) ; test dédié.
 - **Exposition résiduelle** (revue de sécurité NET-1, NET-4) : « jamais routé depuis Internet »
   vaut pour Traefik seulement. L'api écoute sur `0.0.0.0` et rejoint les réseaux partagés

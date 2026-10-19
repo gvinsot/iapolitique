@@ -10,11 +10,25 @@ import { useDocumentTitle } from "@/hooks/use-document-title";
 
 interface AdminSignInProps {
   onSubmit: (token: string) => void;
-  /** The previous token was refused by the API. */
+  /** The previous token was refused by the API (and already forgotten). */
   rejected: boolean;
+  /** French message of the admin API while it is locked (429 `admin_locked`). */
+  lockedMessage?: string | null;
+  /** Seconds before the lock ends, from Retry-After. */
+  retryAfterSeconds?: number | null;
 }
 
-export function AdminSignIn({ onSubmit, rejected }: AdminSignInProps) {
+function minutesText(seconds: number): string {
+  const minutes = Math.max(1, Math.ceil(seconds / 60));
+  return minutes === 1 ? "1 minute" : `${minutes} minutes`;
+}
+
+export function AdminSignIn({
+  onSubmit,
+  rejected,
+  lockedMessage = null,
+  retryAfterSeconds = null,
+}: AdminSignInProps) {
   useDocumentTitle("Connexion · Administration");
   const id = useId();
   const [token, setToken] = useState("");
@@ -41,11 +55,27 @@ export function AdminSignIn({ onSubmit, rejected }: AdminSignInProps) {
       </CardHeader>
       <CardContent>
         <form onSubmit={handleSubmit} noValidate className="space-y-4">
-          {rejected ? (
+          {lockedMessage ? (
+            <Alert variant="destructive" role="alert">
+              <AlertTitle>Administration verrouillée</AlertTitle>
+              <AlertDescription>
+                <p>{lockedMessage}</p>
+                <p>
+                  {retryAfterSeconds !== null
+                    ? `Réessayez dans ${minutesText(retryAfterSeconds)}.`
+                    : "Réessayez dans quelques minutes."}{" "}
+                  Pendant le verrouillage, même le bon jeton est refusé.
+                </p>
+              </AlertDescription>
+            </Alert>
+          ) : rejected ? (
             <Alert variant="destructive" role="alert">
               <AlertTitle>Jeton refusé</AlertTitle>
               <AlertDescription>
-                <p>Ce jeton n’est pas valide. Vérifiez-le puis réessayez.</p>
+                <p>
+                  Ce jeton n’est pas valide ou a changé : cet onglet l’a oublié. Vérifiez-le puis
+                  réessayez.
+                </p>
               </AlertDescription>
             </Alert>
           ) : null}

@@ -1,7 +1,12 @@
 import { useQuery, useQueryClient } from "@tanstack/react-query";
 import { useCallback, useEffect, useState } from "react";
 
-import { clearAdminToken, readAdminToken, storeAdminToken } from "@/api/admin-token";
+import {
+  clearAdminToken,
+  onAdminTokenRejected,
+  readAdminToken,
+  storeAdminToken,
+} from "@/api/admin-token";
 import { $api, createApiClient } from "@/api/client";
 import { ApiError } from "@/api/errors";
 
@@ -10,6 +15,8 @@ export type AdminSessionState =
   | { status: "checking" }
   | { status: "wrong-host" }
   | { status: "error"; error: unknown; retry: () => void }
+  /** Too many wrong tokens: the admin API refuses every request for a few minutes (429). */
+  | { status: "locked"; message: string; retryAfterSeconds: number | null }
   | { status: "authenticated" };
 
 const SESSION_QUERY_KEY = ["get", "/api/admin/session"] as const;
@@ -48,6 +55,8 @@ async function probeAdminApi(signal: AbortSignal): Promise<ProbeResult> {
 export function useAdminSession() {
   const queryClient = useQueryClient();
   const [token, setToken] = useState<string | null>(readAdminToken);
+  /** The last token was refused by the admin API (401): it is already forgotten. */
+  const [rejected, setRejected] = useState(false);
 
   const probe = useQuery({
     queryKey: PROBE_QUERY_KEY,
@@ -73,9 +82,24 @@ export function useAdminSession() {
     if (wrongHost) clearAdminToken();
   }, [wrongHost]);
 
+  // Finding AUTH-3: any admin call answered 401 drops the stored token (client middleware); the
+  // page then asks for a new one and forgets every cached admin response.
+  useEffect(
+    () =>
+      onAdminTokenRejected(() => {
+        setToken(null);
+        setRejected(true);
+        queryClient.removeQueries({
+          predicate: (query) => query.queryKey[0] !== PROBE_QUERY_KEY[0],
+        });
+      }),
+    [queryClient],
+  );
+
   const signIn = useCallback(
     (value: string) => {
       storeAdminToken(value);
+      setRejected(false);
       setToken(value.trim());
       void queryClient.resetQueries({ queryKey: SESSION_QUERY_KEY });
     },
@@ -84,6 +108,7 @@ export function useAdminSession() {
 
   const signOut = useCallback(() => {
     clearAdminToken();
+    setRejected(false);
     setToken(null);
     // Drop every cached admin response along with the token; keep the (token-less) probe.
     queryClient.removeQueries({
@@ -105,20 +130,28 @@ export function useAdminSession() {
       },
     };
   } else if (token === null) {
-    state = { status: "signed-out", rejected: false };
+    state = { status: "signed-out", rejected };
   } else if (session.isPending) {
     state = { status: "checking" };
   } else if (session.isError) {
-    state =
-      session.error instanceof ApiError && session.error.status === 401
-        ? { status: "signed-out", rejected: true }
-        : {
-            status: "error",
-            error: session.error,
-            retry: () => {
-              void session.refetch();
-            },
-          };
+    const error = session.error;
+    if (error instanceof ApiError && error.status === 401) {
+      state = { status: "signed-out", rejected: true };
+    } else if (error instanceof ApiError && error.status === 429) {
+      state = {
+        status: "locked",
+        message: error.message,
+        retryAfterSeconds: error.retryAfterSeconds,
+      };
+    } else {
+      state = {
+        status: "error",
+        error,
+        retry: () => {
+          void session.refetch();
+        },
+      };
+    }
   } else {
     state = session.data.authenticated
       ? { status: "authenticated" }

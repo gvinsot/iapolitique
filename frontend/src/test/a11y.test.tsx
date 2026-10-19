@@ -10,7 +10,7 @@ import { renderRoute } from "./render-route";
 const publicRoutes: [path: string, heading: string][] = [
   ["/", "Des idées concrètes pour des finances publiques plus saines"],
   ["/proposer", "Proposer une idée"],
-  ["/idees/exemple", "Détail de l’idée « exemple »"],
+  ["/idees/exemple", "Idée « exemple »"],
   ["/suivi", "Suivi de votre proposition"],
   ["/suivi#AbCdEfGhIjKlMnOpQrStUvWxYz0123456789-_abcde", "Suivi de votre proposition"],
   ["/suivi#invalide", "Suivi de votre proposition"],

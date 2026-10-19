@@ -11,7 +11,7 @@ describe("routes", () => {
   it.each([
     ["/", "Des idées concrètes pour des finances publiques plus saines"],
     ["/proposer", "Proposer une idée"],
-    ["/idees/reduire-les-doublons", "Détail de l’idée « reduire-les-doublons »"],
+    ["/idees/reduire-les-doublons", "Idée « reduire-les-doublons »"],
     [`/suivi#${VALID_TOKEN}`, "Suivi de votre proposition"],
     [`/suivi/${VALID_TOKEN}`, "Suivi de votre proposition"],
     ["/methodologie", "Méthodologie"],

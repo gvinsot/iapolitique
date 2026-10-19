@@ -22,6 +22,25 @@ Les prompts versionnés (`prompts/`, §13.4 d'`AGENTS.md`) sont lus dans `PROMPT
 invalide empêche le démarrage et toutes les erreurs sont listées. En développement natif,
 depuis `backend/` : `PROMPTS_DIR=../prompts`.
 
+## Développement local avec le frontend
+
+Le serveur de dev Vite (`npm run dev`, port 5173) relaie `/api` vers 8080 et `/api/admin` vers
+8081 en gardant l'`Origin` du navigateur ; l'anti-CSRF (AGENTS.md §14.3) ne l'accepte que si elle
+est déclarée :
+
+```sh
+export DATABASE_CONNECTION_STRING=postgres://postgres:postgres@localhost:55432/postgres
+export ADMIN_API_TOKEN=$(openssl rand -hex 32) ALTCHA_HMAC_KEY=$(openssl rand -hex 32)
+export PROMPTS_DIR=../prompts LOG_FORMAT=text
+export ALLOWED_DEV_ORIGINS=http://localhost:5173
+cargo run -- api        # et, dans un autre terminal, cargo run -- worker
+```
+
+`ALLOWED_DEV_ORIGINS` (liste séparée par des virgules) ne sert qu'en développement : jamais en
+QA ni en production, où le compose ne la transmet pas (contrôlé par
+`devops/check_compose_security.py`). Les autres variables et leurs défauts : AGENTS.md §13.1 et
+`devops/.env.example`.
+
 ## Organisation
 
 | Chemin | Contenu |
@@ -61,8 +80,10 @@ réponses réelles enregistrées dans `tests/fixtures/` (avec la grille utilisé
 
 ## Image Docker
 
-`Dockerfile` (contexte : racine du dépôt) : stage `build` puis `runtime` (Debian slim,
-utilisateur non root, binaire `/app/iapolitique`, prompts dans `/app/prompts`).
+`Dockerfile` (contexte : racine du dépôt) : stage `build` puis `runtime`
+(`gcr.io/distroless/cc-debian13`, images épinglées par digest, utilisateur non root 10001, binaire
+`/app/iapolitique`, prompts dans `/app/prompts` ; ni shell ni curl : la sonde est
+`iapolitique healthcheck`, AGENTS.md §14.7).
 
 En production, l'extension `vector` doit être créée par un superutilisateur avant le premier
 démarrage (`CREATE EXTENSION vector;`) : l'utilisateur applicatif ne peut pas la créer.

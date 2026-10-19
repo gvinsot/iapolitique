@@ -853,15 +853,22 @@ décidée par l'humain.
   `LEGAL_PUBLISHER_ADDRESS`, `LEGAL_PUBLISHER_PHONE`, `LEGAL_CONTACT_EMAIL`, `LEGAL_PRIVACY_EMAIL`.
   `LEGAL_CONTACT_EMAIL` et `TRAEFIK_HOST` sont aussi transmises au frontend, qui en tire
   `/.well-known/security.txt` (§14.2).
-- Variables non sensibles : `TRAEFIK_HOST`, `ADMIN_HOST`, `ALLOWED_DEV_ORIGINS` (dev uniquement), `LLM_NETWORK`, `DECISION_SERVICE_URL`,
+- Variables non sensibles : `TRAEFIK_HOST`, `ADMIN_HOST`, `LLM_NETWORK`, `DECISION_SERVICE_URL`,
   `DECISION_SERVICE_TIMEOUT_SECS`, `DECISION_SERVICE_JOB_TIMEOUT_SECS`, `MISTRAL_API_BASE_URL`,
   `MISTRAL_ANALYSIS_MODEL`, `MISTRAL_REVIEW_MODEL`, `MISTRAL_EMBED_MODEL`,
   `MISTRAL_ANALYSIS_REASONING_EFFORT`, `MISTRAL_REVIEW_REASONING_EFFORT`,
   `MISTRAL_DAILY_BUDGET_EUR`, prix unitaires Mistral, `DEDUP_SIMILARITY_THRESHOLD`, limites de
   rate limit, `RUST_LOG`, `DATABASE_MAX_CONNECTIONS`, `WORKER_CONCURRENCY`, `TRUSTED_PROXY_HOPS`,
-  et pour PulsarCD seul `DEPLOY_HEALTHCHECK_PATH`, `DEPLOY_CONVERGE_TIMEOUT`. Toute variable de
-  `.env.example` lue par le backend est transmise par `x-backend-env` (api et worker) ou par
-  l'environnement de l'api dans `docker-compose.swarm.yml`.
+  limites et délais facultatifs (`DATABASE_STATEMENT_TIMEOUT_SECS`,
+  `DATABASE_JOB_STATEMENT_TIMEOUT_SECS`, `DATABASE_ACQUIRE_TIMEOUT_SECS`,
+  `HTTP_REQUEST_TIMEOUT_SECS`, `HTTP_BODY_LIMIT_BYTES`, `WORKER_POLL_INTERVAL_MS`,
+  `JOB_LOCK_TIMEOUT_SECS`, vides = défauts du §13.1),
+  et pour PulsarCD seul `DEPLOY_HEALTHCHECK_PATH`, `DEPLOY_CONVERGE_TIMEOUT`. Toute variable
+  active de `.env.example` lue par le backend est transmise par `x-backend-env` (api et worker)
+  ou par l'environnement de l'api dans `docker-compose.swarm.yml`. Y figurent seulement en
+  commentaire : les réglages liés à l'image et aux sondes (`BIND_ADDRESS`, ports, `PROMPTS_DIR`,
+  `LOG_FORMAT`), et `ALLOWED_DEV_ORIGINS`, réservée au développement local et que le compose ne
+  transmet jamais (`check_compose_security.py` le vérifie).
 
 ---
 

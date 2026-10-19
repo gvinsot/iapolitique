@@ -96,6 +96,14 @@ class ComposeSecurityTest(unittest.TestCase):
             "DATABASE_URL",
         )
 
+    def test_dev_origins_are_never_deployed(self) -> None:
+        self.assert_reported(
+            lambda c: c["services"]["api"]["environment"].update(
+                ALLOWED_DEV_ORIGINS="http://localhost:5173"
+            ),
+            "api: ALLOWED_DEV_ORIGINS is for local development only",
+        )
+
     def test_worker_stays_off_the_proxy_network(self) -> None:
         self.assert_reported(
             lambda c: c["services"]["worker"]["networks"].append("proxy"),

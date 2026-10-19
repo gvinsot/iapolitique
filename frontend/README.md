@@ -30,6 +30,11 @@ En développement, Vite relaie `/api/admin` vers `localhost:8081` et le reste de
 le backend sur l'hôte (`cargo run`), ajouter `-e API_PROXY_HOST=host.docker.internal` : dans le
 conteneur, `localhost` désigne le conteneur lui-même.
 
+Le proxy garde l'en-tête `Origin` du navigateur (`http://localhost:5173`), que l'anti-CSRF du
+backend refuse par défaut (`403 origin_not_allowed` sur tout `POST`, AGENTS.md §14.3) : lancer
+le backend avec `ALLOWED_DEV_ORIGINS=http://localhost:5173` (voir `backend/README.md`). Cette
+variable n'existe qu'en développement : le compose de production ne la transmet jamais.
+
 ## Organisation
 
 ```

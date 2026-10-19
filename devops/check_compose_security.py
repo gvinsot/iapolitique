@@ -103,6 +103,8 @@ def check_hardening(name: str, service: dict, errors: list[str]) -> None:
     keys = environment.keys() if isinstance(environment, dict) else [e.split("=", 1)[0] for e in environment]
     if "DATABASE_URL" in keys:
         errors.append(f"{name}: DATABASE_URL would be deployed in clear (AGENTS.md §10.3)")
+    if "ALLOWED_DEV_ORIGINS" in keys:
+        errors.append(f"{name}: ALLOWED_DEV_ORIGINS is for local development only (AGENTS.md §14.3)")
 
 
 def check_networks(services: dict, errors: list[str]) -> None:

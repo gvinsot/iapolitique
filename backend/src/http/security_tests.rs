@@ -643,3 +643,105 @@ async fn abuse_refusals_are_security_events_without_ip_nor_text(pool: PgPool) {
         assert!(!logs.contains(secret), "{secret} logged: {logs}");
     }
 }
+
+fn percent_encode(value: &str) -> String {
+    value
+        .bytes()
+        .map(|b| {
+            if b.is_ascii_alphanumeric() || b"-_.~".contains(&b) {
+                (b as char).to_string()
+            } else {
+                format!("%{b:02X}")
+            }
+        })
+        .collect()
+}
+
+const SQL_PAYLOADS: &[&str] = &[
+    "' OR '1'='1",
+    "'; DROP TABLE ideas; --",
+    "1) OR (1=1",
+    "') UNION SELECT token_hash FROM tracking_tokens --",
+    "\" OR \"\"=\"",
+    "$1",
+    "%",
+    "_",
+    "\\",
+    "%' OR 1=1 --",
+];
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn sql_injection_payloads_are_inert(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), false, &[]).await;
+    crate::test_support::published_idea(&pool, "idee-publiee").await;
+    let admin = admin_router(app.state.clone(), Secret::new(SECRET));
+    let bearer = format!("Bearer {SECRET}");
+    let ideas_before: i64 = sqlx::query_scalar("SELECT count(*) FROM ideas")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+
+    // The idea is listed: an inert payload must not find it.
+    let (status, _, body) = send(&app.router, request(Method::GET, "/api/ideas", None)).await;
+    assert_eq!(
+        (status, body["total"].as_i64()),
+        (StatusCode::OK, Some(1)),
+        "{body}"
+    );
+
+    for payload in SQL_PAYLOADS {
+        let encoded = percent_encode(payload);
+        // Free-text filters: searched as data, nothing matches.
+        for parameter in ["q", "territory"] {
+            let uri = format!("/api/ideas?{parameter}={encoded}");
+            let (status, _, body) = send(&app.router, request(Method::GET, &uri, None)).await;
+            assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+            assert_eq!(body["total"], 0, "{uri}: {body}");
+        }
+        // Closed values: refused.
+        for parameter in [
+            "sort",
+            "category",
+            "admin_level",
+            "kind",
+            "page",
+            "per_page",
+        ] {
+            let uri = format!("/api/ideas?{parameter}={encoded}");
+            let (status, _, body) = send(&app.router, request(Method::GET, &uri, None)).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {body}");
+            assert_eq!(body["error"]["code"], "invalid_query", "{uri}");
+        }
+        // Slugs: unknown idea.
+        for uri in [
+            format!("/api/ideas/{encoded}"),
+            format!("/api/ideas/idee-publiee{encoded}"),
+        ] {
+            let (status, _, body) = send(&app.router, request(Method::GET, &uri, None)).await;
+            assert_eq!(status, StatusCode::NOT_FOUND, "{uri}: {body}");
+        }
+        // Admin filters.
+        for uri in [
+            format!("/api/admin/ideas?q={encoded}"),
+            format!("/api/admin/actions?action={encoded}&target_id={encoded}"),
+        ] {
+            let request = with_headers(Method::GET, &uri, &[("authorization", &bearer)], None);
+            let (status, _, body) = send(&admin, request).await;
+            assert_eq!(status, StatusCode::OK, "{uri}: {body}");
+            assert_eq!(body["total"], 0, "{uri}: {body}");
+        }
+        for uri in [
+            format!("/api/admin/screenings?reason_code={encoded}"),
+            format!("/api/admin/jobs?status={encoded}"),
+        ] {
+            let request = with_headers(Method::GET, &uri, &[("authorization", &bearer)], None);
+            let (status, _, body) = send(&admin, request).await;
+            assert_eq!(status, StatusCode::BAD_REQUEST, "{uri}: {body}");
+        }
+    }
+    let ideas_after: i64 = sqlx::query_scalar("SELECT count(*) FROM ideas")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(ideas_after, ideas_before);
+}

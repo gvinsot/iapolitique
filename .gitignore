@@ -35,3 +35,7 @@ dist/
 
 # Claude Code local state (agent worktrees)
 .claude/
+
+# Python bytecode (devops scripts)
+__pycache__/
+*.pyc

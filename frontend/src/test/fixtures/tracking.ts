@@ -66,6 +66,18 @@ export const reviewedReportFixture: TrackedItem = {
   review_request: null,
 };
 
+/** A contribution whose idea was withdrawn by its author (owner decision D2). */
+export const withdrawnIdeaContributionFixture: TrackedItem = {
+  kind: "contribution",
+  status: "integrated",
+  submitted_on: "2026-10-12",
+  idea: null,
+  decision: null,
+  report_outcome: null,
+  review_request: null,
+  idea_withdrawn: true,
+};
+
 export const acceptedIdeaResultFixture: SubmissionResult = {
   status: "accepted",
   tracking_token: TRACKING_TOKEN,

@@ -1,4 +1,5 @@
 import {
+  ArchiveXIcon,
   CheckCircle2Icon,
   CircleDashedIcon,
   EyeOffIcon,
@@ -16,6 +17,7 @@ import { paths } from "@/app/paths";
 import { formatDate } from "@/lib/format";
 import {
   canRequestReview,
+  ideaWithdrawn,
   type ReviewOutcome,
   type TrackedItem,
   type TrackedKind,
@@ -150,7 +152,7 @@ function phaseText(item: TrackedItem, phase: TrackingPhase): PhaseText {
       return {
         title: "Supprimé à votre demande",
         description:
-          "Le texte a été effacé et n’apparaîtra plus dans les exports suivants. Ce lien de suivi ne sert plus à rien.",
+          "Votre suppression est faite : le texte n’est plus visible sur le site et n’apparaîtra plus dans les exports suivants. Un texte non publié est effacé aussitôt ; une idée publiée est retirée du site, n’est plus visible que de l’éditeur, puis est effacée 12 mois après son retrait. Ce lien de suivi ne sert plus à rien.",
         icon: Trash2Icon,
         tone: "neutral",
       };
@@ -173,6 +175,32 @@ const toneClasses: Record<PhaseText["tone"], string> = {
 };
 
 const linkClass = "font-medium underline underline-offset-4 hover:no-underline";
+
+const WITHDRAWN_TEXTS: Record<TrackedKind, string> = {
+  idea: "L’idée à laquelle la vôtre avait été rattachée a été supprimée par son auteur : elle n’est plus visible sur le site ni dans les exports, avec tout ce qui s’y rattache.",
+  contribution:
+    "L’idée sur laquelle portait votre contribution a été supprimée par son auteur : elle n’est plus visible sur le site ni dans les exports, avec ses contributions.",
+  report:
+    "L’idée que vous avez signalée a été supprimée par son auteur : elle n’est plus visible sur le site ni dans les exports.",
+};
+
+/** The idea concerned was withdrawn by its author (owner decision D2, AGENTS.md §7.1). */
+function IdeaWithdrawnNotice({ kind }: { kind: TrackedKind }) {
+  const headingId = useId();
+  return (
+    <section aria-labelledby={headingId} className="space-y-2 rounded-lg border bg-card p-4 sm:p-5">
+      <h2 id={headingId} className="flex items-center gap-2 text-lg font-semibold">
+        <ArchiveXIcon className="size-5 shrink-0" aria-hidden="true" />
+        Idée retirée par son auteur
+      </h2>
+      <p className="text-pretty">{WITHDRAWN_TEXTS[kind]}</p>
+      <p className="text-sm text-pretty text-muted-foreground">
+        Votre texte garde son statut ci-dessus. Il est effacé avec l’idée 12 mois après son retrait
+        ; vous pouvez le supprimer dès maintenant. Un réexamen humain n’est plus possible.
+      </p>
+    </section>
+  );
+}
 
 /** Current state of a submission seen through its tracking link. */
 export function TrackingStatus({ item }: { item: TrackedItem }) {
@@ -209,6 +237,8 @@ export function TrackingStatus({ item }: { item: TrackedItem }) {
           </p>
         ) : null}
       </section>
+
+      {ideaWithdrawn(item) ? <IdeaWithdrawnNotice kind={item.kind} /> : null}
 
       {(phase === "rejected" || phase === "hidden") && item.decision ? (
         <StatementOfReasons

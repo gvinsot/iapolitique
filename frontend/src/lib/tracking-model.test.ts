@@ -1,6 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import { canDelete, canRequestReview, type TrackedItem, trackingPhase } from "./tracking-model";
+import {
+  canDelete,
+  canRequestReview,
+  deletionWithdraws,
+  ideaWithdrawn,
+  type TrackedItem,
+  trackingPhase,
+} from "./tracking-model";
 
 const base: TrackedItem = {
   kind: "idea",
@@ -37,6 +44,7 @@ describe("trackingPhase", () => {
     ["report", "accepted", "received"],
     ["report", "reviewed", "reviewed"],
     ["report", "deleted", "deleted"],
+    ["idea", "withdrawn", "deleted"],
     ["idea", "integrated", "unknown"],
   ] as const)("%s %s → %s", (kind, status, phase) => {
     expect(trackingPhase({ kind, status })).toBe(phase);
@@ -49,6 +57,21 @@ describe("available actions", () => {
     expect(canDelete({ ...base, status: "published" })).toBe(true);
     expect(canDelete({ ...base, status: "purged" })).toBe(false);
     expect(canDelete({ ...base, status: "deleted" })).toBe(false);
+    expect(canDelete({ ...base, status: "withdrawn" })).toBe(false);
+  });
+
+  it("withdraws a published or hidden idea instead of erasing it (D2)", () => {
+    expect(deletionWithdraws({ kind: "idea", status: "published" })).toBe(true);
+    expect(deletionWithdraws({ kind: "idea", status: "hidden" })).toBe(true);
+    expect(deletionWithdraws({ kind: "idea", status: "rejected" })).toBe(false);
+    expect(deletionWithdraws({ kind: "idea", status: "queued_analysis" })).toBe(false);
+    expect(deletionWithdraws({ kind: "contribution", status: "integrated" })).toBe(false);
+  });
+
+  it("refuses a human review once the idea concerned was withdrawn", () => {
+    expect(ideaWithdrawn(base)).toBe(false);
+    expect(ideaWithdrawn({ idea_withdrawn: true })).toBe(true);
+    expect(canRequestReview({ ...base, kind: "contribution", idea_withdrawn: true })).toBe(false);
   });
 
   it("allows one human review of a refusal or a masking", () => {

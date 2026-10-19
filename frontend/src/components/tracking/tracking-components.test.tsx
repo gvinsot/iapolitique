@@ -12,6 +12,7 @@ import {
   rejectedIdeaResultFixture,
   reviewedReportFixture,
   TRACKING_TOKEN,
+  withdrawnIdeaContributionFixture,
 } from "@/test/fixtures/tracking";
 import { renderComponent } from "@/test/render-component";
 
@@ -85,6 +86,44 @@ describe("TrackingStatus", () => {
     expect(screen.getByText(/L’analyse de l’idée va être refaite/)).toBeInTheDocument();
   });
 
+  it("says that the idea of a contribution was withdrawn by its author, without a link", () => {
+    renderComponent(<TrackingStatus item={withdrawnIdeaContributionFixture} />);
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Contribution prise en compte" }),
+    ).toBeInTheDocument();
+    const notice = screen.getByRole("region", { name: "Idée retirée par son auteur" });
+    expect(notice).toHaveTextContent(
+      "L’idée sur laquelle portait votre contribution a été supprimée",
+    );
+    expect(notice).toHaveTextContent("12 mois après son retrait");
+    expect(screen.queryByRole("link", { name: /Voir l’idée/ })).not.toBeInTheDocument();
+  });
+
+  it("tells a reporter and a merged duplicate that the idea was withdrawn", () => {
+    const { unmount } = renderComponent(
+      <TrackingStatus item={{ ...reviewedReportFixture, idea: null, idea_withdrawn: true }} />,
+    );
+    expect(screen.getByRole("region", { name: "Idée retirée par son auteur" })).toHaveTextContent(
+      "L’idée que vous avez signalée",
+    );
+    unmount();
+    renderComponent(
+      <TrackingStatus item={{ ...mergedIdeaFixture, idea: null, idea_withdrawn: true }} />,
+    );
+    expect(screen.getByRole("region", { name: "Idée retirée par son auteur" })).toHaveTextContent(
+      "L’idée à laquelle la vôtre avait été rattachée",
+    );
+  });
+
+  it("shows the author's deletion of a published idea as done", () => {
+    renderComponent(<TrackingStatus item={{ ...publishedIdeaFixture, status: "deleted" }} />);
+    expect(
+      screen.getByRole("heading", { level: 2, name: "Supprimé à votre demande" }),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/une idée publiée est retirée du site/)).toBeInTheDocument();
+    expect(screen.queryByRole("region", { name: "Idée retirée par son auteur" })).toBeNull();
+  });
+
   it("shows a pending human review", () => {
     renderComponent(
       <TrackingStatus
@@ -105,8 +144,9 @@ describe("TrackingActions", () => {
     const confirmSpy = vi.spyOn(window, "confirm");
     const onDelete = vi.fn(() => Promise.resolve());
     const { user } = renderComponent(
-      <TrackingActions item={publishedIdeaFixture} onDelete={onDelete} onRequestReview={vi.fn()} />,
+      <TrackingActions item={rejectedIdeaFixture} onDelete={onDelete} onRequestReview={vi.fn()} />,
     );
+    expect(screen.getByText(/efface immédiatement votre texte/)).toBeInTheDocument();
 
     await user.click(screen.getByRole("button", { name: "Supprimer ma contribution" }));
     const dialog = screen.getByRole("dialog", { name: "Supprimer définitivement ?" });
@@ -118,6 +158,36 @@ describe("TrackingActions", () => {
     expect(onDelete).toHaveBeenCalledOnce();
     expect(await screen.findByText("Votre texte a été supprimé.")).toBeInTheDocument();
     expect(confirmSpy).not.toHaveBeenCalled();
+  });
+
+  it("explains that deleting a published idea withdraws it for good", async () => {
+    const onDelete = vi.fn(() => Promise.resolve());
+    const { user } = renderComponent(
+      <TrackingActions item={publishedIdeaFixture} onDelete={onDelete} onRequestReview={vi.fn()} />,
+    );
+    expect(screen.getByText(/retire immédiatement votre idée du site/)).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Durées de conservation" })).toHaveAttribute(
+      "href",
+      "/confidentialite#traitements",
+    );
+    await user.click(screen.getByRole("button", { name: "Supprimer ma contribution" }));
+    const dialog = screen.getByRole("dialog", { name: "Retirer définitivement votre idée ?" });
+    expect(dialog).toHaveTextContent("ni vous ni l’éditeur ne pourrez la republier");
+    await user.click(within(dialog).getByRole("button", { name: "Supprimer définitivement" }));
+    expect(onDelete).toHaveBeenCalledOnce();
+    expect(await screen.findByText("Votre idée a été retirée du site.")).toBeInTheDocument();
+  });
+
+  it("offers no human review once the idea was withdrawn, but still the deletion", () => {
+    renderComponent(
+      <TrackingActions
+        item={{ ...reviewedReportFixture, idea: null, idea_withdrawn: true, status: "rejected" }}
+        onDelete={vi.fn()}
+        onRequestReview={vi.fn()}
+      />,
+    );
+    expect(screen.queryByRole("button", { name: "Demander un réexamen humain" })).toBeNull();
+    expect(screen.getByRole("button", { name: "Supprimer ma contribution" })).toBeInTheDocument();
   });
 
   it("keeps the dialog open with the API message when the deletion fails", async () => {

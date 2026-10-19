@@ -6,6 +6,7 @@ import {
   publishedIdeaFixture,
   rejectedIdeaFixture,
   TRACKING_TOKEN,
+  withdrawnIdeaContributionFixture,
 } from "@/test/fixtures/tracking";
 import { renderRoute } from "@/test/render-route";
 
@@ -114,9 +115,19 @@ describe("TrackPage", () => {
     await user.click(await screen.findByRole("button", { name: "Supprimer ma contribution" }));
     await user.click(screen.getByRole("button", { name: "Supprimer définitivement" }));
 
-    expect(await screen.findByText("Votre texte a été supprimé.")).toBeInTheDocument();
+    expect(await screen.findByText("Votre idée a été retirée du site.")).toBeInTheDocument();
     const deletion = requests.find((request) => request.url.endsWith("/api/track/delete"));
     expect(deletion).toMatchObject({ method: "POST", body: { token: TRACKING_TOKEN } });
+  });
+
+  it("tells another visitor that the idea was withdrawn by its author", async () => {
+    trackingApi(withdrawnIdeaContributionFixture);
+    renderRoute(`/suivi#${TRACKING_TOKEN}`);
+    expect(
+      await screen.findByRole("heading", { level: 2, name: "Idée retirée par son auteur" }),
+    ).toBeInTheDocument();
+    expect(screen.queryByText("Aucun envoi ne correspond à ce lien")).toBeNull();
+    expect(screen.getByRole("button", { name: "Supprimer ma contribution" })).toBeInTheDocument();
   });
 
   it("requests a human review of a refusal", async () => {

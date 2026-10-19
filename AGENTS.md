@@ -1090,7 +1090,9 @@ total_pages }`) et refusent les paramètres inconnus (`400 invalid_query`).
 Le port admin sert aussi, sans jeton, `/api/health`, `/api/ready` et `/api/openapi.json` (spec
 complète ; celle du port public omet les routes admin et les schémas qu'elles seules
 utilisent). Le worker répond sur `/health` (et `/api/health`)
-du port 8082 : `503` si sa boucle est bloquée.
+du port 8082 : `503` si sa boucle est bloquée (2 min sans tour ; quand toutes les places sont
+prises par des jobs longs, la boucle continue de tourner à chaque intervalle de sondage : ce n'est
+pas un blocage, sinon Swarm tuerait le worker en pleine analyse).
 
 Erreurs : toute réponse 4xx/5xx a le corps JSON du §4.1, y compris 404, 405, 413 (corps au-delà
 de `HTTP_BODY_LIMIT_BYTES`), 403 et 415 (anti-CSRF, §14.3), 504 (`timeout`, au-delà de `HTTP_REQUEST_TIMEOUT_SECS`) et 500.

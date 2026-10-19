@@ -221,9 +221,13 @@ impl Worker {
                 next_maintenance = Instant::now() + self.options.maintenance_interval;
             }
 
+            // Every slot busy is a healthy state (an analysis takes 15 minutes or more, its lock
+            // has its own heartbeat): the loop goes round meanwhile, so that it keeps ticking the
+            // liveness and running maintenance, instead of looking stuck to the health probe.
             let permit = tokio::select! {
                 permit = slots.clone().acquire_owned() => permit?,
                 _ = shutdown.changed() => break,
+                () = tokio::time::sleep(self.options.poll_interval) => continue,
             };
             match queue::claim(pool, &self.options.id, &kinds).await {
                 Ok(Some(job)) => {
@@ -433,6 +437,10 @@ mod tests {
                         chrono::Utc::now() + chrono::Duration::hours(1),
                     )),
                     Some("panic") => panic!("scripted panic"),
+                    Some("slow") => {
+                        tokio::time::sleep(Duration::from_millis(1_500)).await;
+                        Ok(JobOutcome::Done)
+                    }
                     _ => Ok(JobOutcome::Done),
                 }
             })
@@ -548,6 +556,61 @@ mod tests {
                 .await
                 .unwrap();
         assert_eq!(panic_error.as_deref(), Some("handler panicked"));
+    }
+
+    /// Every slot busy with a long job (an analysis) is not a stuck loop: the worker stays
+    /// alive for its health probe. Production, 2026-10-19: two analyses filled both slots, the
+    /// loop stopped ticking while it waited for one, and Swarm killed the worker mid-analysis.
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn a_worker_with_every_slot_busy_stays_alive(pool: PgPool) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut registry = Registry::new();
+        registry.register(Scripted {
+            kind: JobKind::ScreenIdea,
+            calls: Arc::clone(&calls),
+        });
+        enqueue(
+            &pool,
+            &NewJob::new(JobKind::ScreenIdea).payload(serde_json::json!({ "mode": "slow" })),
+        )
+        .await
+        .unwrap();
+        let ctx = JobContext {
+            pool: pool.clone(),
+            config: test_config(false),
+            prompts: crate::ai::prompts::test_prompts(),
+            screener: test_screener(),
+            mistral: None,
+        };
+        let liveness = Liveness::new(Duration::from_millis(400));
+        let worker = Worker::new(
+            ctx,
+            registry,
+            WorkerOptions {
+                concurrency: 1,
+                ..options()
+            },
+            liveness.clone(),
+        );
+        let (stop, shutdown) = watch::channel(false);
+        let running = tokio::spawn(worker.run(shutdown));
+
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while calls.load(Ordering::SeqCst) < 1 {
+            assert!(Instant::now() < deadline, "job not started in time");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+        // The only slot is busy for 1.5 s, well beyond the 400 ms of allowed silence.
+        for _ in 0..20 {
+            tokio::time::sleep(Duration::from_millis(50)).await;
+            assert!(liveness.is_alive(), "the waiting loop looked stuck");
+        }
+        stop.send(true).unwrap();
+        running.await.unwrap().unwrap();
+        assert_eq!(
+            job_states(&pool).await,
+            [("slow".into(), "succeeded".into(), 1)]
+        );
     }
 
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]

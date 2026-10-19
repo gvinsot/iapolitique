@@ -7,7 +7,9 @@ import {
 } from "lucide-react";
 
 import type { Impact } from "@/lib/idea-model";
-import { type ImpactEffect, impactEffectLabels } from "@/lib/labels";
+import { useTaxonomyLabels } from "@/hooks/use-taxonomy";
+import type { ImpactEffect } from "@/lib/labels";
+import { labelOf } from "@/lib/taxonomy-labels";
 import { cn } from "@/lib/utils";
 
 import { CitedText } from "./cited-text";
@@ -32,6 +34,7 @@ interface ImpactGridProps {
 
 /** Expected effect of the measure for every public of the taxonomy, described by public. */
 export function ImpactGrid({ impacts, sourceIds, className }: ImpactGridProps) {
+  const labels = useTaxonomyLabels();
   return (
     <ul className={cn("grid gap-3 sm:grid-cols-2 lg:grid-cols-3", className)}>
       {impacts.map((impact) => {
@@ -43,7 +46,7 @@ export function ImpactGrid({ impacts, sourceIds, className }: ImpactGridProps) {
               <p className={cn("flex items-center gap-1.5 text-sm font-semibold", style.className)}>
                 <style.icon className="size-4" aria-hidden="true" />
                 <span className="sr-only">Effet : </span>
-                {impactEffectLabels[impact.effect]}
+                {labelOf(labels.impactEffects, impact.effect)}
               </p>
             </div>
             <p className="text-sm text-pretty text-muted-foreground">

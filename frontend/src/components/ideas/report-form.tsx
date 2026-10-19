@@ -19,7 +19,9 @@ import {
   validateOptionalEmail,
   validateReportDetails,
 } from "@/lib/idea-text";
-import { entriesOf, isKeyOf, type ReportReason, reportReasonLabels } from "@/lib/labels";
+import { useTaxonomyLabels } from "@/hooks/use-taxonomy";
+import { isKeyOf, type ReportReason, reportReasonLabels } from "@/lib/labels";
+import { labelledOptions } from "@/lib/taxonomy-labels";
 import { cn } from "@/lib/utils";
 
 export interface ReportFormValues {
@@ -59,6 +61,7 @@ function optional(value: string): string | null {
  */
 export function ReportForm({ onSubmit, submitting = false, altchaTestMode }: ReportFormProps) {
   const id = useId();
+  const labels = useTaxonomyLabels();
   const { altchaRef, solving, error: altchaError, submitWith } = useAntiRobot();
   const [reason, setReason] = useState<ReportReason | null>(null);
   const [details, setDetails] = useState("");
@@ -127,7 +130,7 @@ export function ReportForm({ onSubmit, submitting = false, altchaTestMode }: Rep
           aria-describedby={errors.reason ? ids.reasonError : undefined}
           className="gap-2"
         >
-          {entriesOf(reportReasonLabels).map(([value, label]) => (
+          {labelledOptions(reportReasonLabels, labels.reportReasons).map(([value, label]) => (
             <div key={value} className="flex items-center gap-3">
               <RadioGroupItem value={value} id={`${id}-${value}`} />
               <Label htmlFor={`${id}-${value}`} className="font-normal">

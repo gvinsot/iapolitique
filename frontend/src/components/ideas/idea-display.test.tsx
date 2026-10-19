@@ -10,6 +10,9 @@ import {
   rightOfReplyFixture,
   scoreBreakdownFixture,
 } from "@/test/fixtures/ideas";
+import { apiRoutes } from "@/test/api-routes";
+import { stubFetch } from "@/test/fetch-mock";
+import { taxonomyFixture } from "@/test/fixtures/reference";
 import { renderComponent } from "@/test/render-component";
 
 import { AiGenerated, AiGeneratedNotice } from "./ai-generated-notice";
@@ -85,6 +88,13 @@ describe("AI transparency", () => {
 });
 
 describe("IdeaCard", () => {
+  it("labels its badges with the taxonomy served by the API", async () => {
+    stubFetch(apiRoutes({ "GET /api/taxonomy": taxonomyFixture }));
+    renderComponent(<IdeaCard idea={ideaSummaryFixture} />);
+    expect(await screen.findByText("Commune (libellé de la taxonomie)")).toBeInTheDocument();
+    expect(screen.getByText("Économie de dépense")).toBeInTheDocument();
+  });
+
   it("summarises an idea with its badges, estimate, score and proposal count", () => {
     const { container } = renderComponent(<IdeaCard idea={ideaSummaryFixture} rank={2} />);
     const card = container.querySelector("article")!;

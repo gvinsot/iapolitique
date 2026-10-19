@@ -2,27 +2,26 @@ import { GaugeIcon, LandmarkIcon, MapPinIcon, ScaleIcon, TagIcon } from "lucide-
 
 import { Badge } from "@/components/ui/badge";
 import type { CategoryRef, Territory } from "@/lib/idea-model";
+import { useTaxonomyLabels } from "@/hooks/use-taxonomy";
 import {
   type AdminLevel,
-  adminLevelLabels,
   type Confidence,
-  confidenceLabels,
   feasibilityLabel,
   type IdeaKind,
-  ideaKindLabels,
   type LegalVehicle,
-  legalVehicleLabels,
 } from "@/lib/labels";
+import { labelOf } from "@/lib/taxonomy-labels";
 import { cn } from "@/lib/utils";
 
 /** Badges describing an idea. Each one carries its meaning in words, not only in colour. */
 
 export function AdminLevelBadge({ level }: { level: AdminLevel }) {
+  const labels = useTaxonomyLabels();
   return (
     <Badge variant="secondary">
       <LandmarkIcon aria-hidden="true" />
       <span className="sr-only">Niveau administratif : </span>
-      {adminLevelLabels[level]}
+      {labelOf(labels.adminLevels, level)}
     </Badge>
   );
 }
@@ -48,21 +47,23 @@ export function CategoryBadge({ category }: { category: CategoryRef }) {
 }
 
 export function KindBadge({ kind }: { kind: IdeaKind }) {
+  const labels = useTaxonomyLabels();
   return (
     <Badge variant="outline">
       <span className="sr-only">Type de mesure : </span>
-      {ideaKindLabels[kind]}
+      {labelOf(labels.ideaKinds, kind)}
     </Badge>
   );
 }
 
 export function LegalVehicleBadge({ vehicle }: { vehicle: LegalVehicle }) {
+  const labels = useTaxonomyLabels();
   return (
     <Badge variant="outline" className="max-w-full">
       <ScaleIcon aria-hidden="true" />
       <span className="truncate">
         <span className="sr-only">Texte nécessaire : </span>
-        {legalVehicleLabels[vehicle]}
+        {labelOf(labels.legalVehicles, vehicle)}
       </span>
     </Badge>
   );
@@ -92,10 +93,11 @@ export function FeasibilityBadge({ score, className }: { score: number; classNam
 }
 
 export function ConfidenceBadge({ confidence }: { confidence: Confidence }) {
+  const labels = useTaxonomyLabels();
   return (
     <Badge variant="outline">
       <GaugeIcon aria-hidden="true" />
-      Confiance {confidenceLabels[confidence].toLowerCase()}
+      Confiance {labelOf(labels.confidenceLevels, confidence).toLowerCase()}
     </Badge>
   );
 }

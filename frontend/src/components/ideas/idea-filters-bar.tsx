@@ -19,7 +19,9 @@ import {
   IDEA_TERRITORY_MAX_LENGTH,
 } from "@/lib/idea-filters";
 import type { CategoryRef } from "@/lib/idea-model";
+import { useTaxonomyLabels } from "@/hooks/use-taxonomy";
 import { adminLevelLabels, entriesOf, ideaKindLabels, ideaSortLabels, isKeyOf } from "@/lib/labels";
+import { labelledOptions } from "@/lib/taxonomy-labels";
 
 /** Radix Select reserves the empty string, so "no filter" uses this sentinel value. */
 const ALL = "all";
@@ -32,6 +34,7 @@ interface IdeaFiltersBarProps {
 /** Sort and filters of the ranking (AGENTS.md §13.2), kept in the URL query string. */
 export function IdeaFiltersBar({ categories = [] }: IdeaFiltersBarProps) {
   const { filters, update } = useIdeaFilters();
+  const labels = useTaxonomyLabels();
   const id = useId();
 
   const onSearch = (event: SubmitEvent<HTMLFormElement>) => {
@@ -118,7 +121,7 @@ export function IdeaFiltersBar({ categories = [] }: IdeaFiltersBarProps) {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL}>Tous les niveaux</SelectItem>
-            {entriesOf(adminLevelLabels).map(([value, label]) => (
+            {labelledOptions(adminLevelLabels, labels.adminLevels).map(([value, label]) => (
               <SelectItem key={value} value={value}>
                 {label}
               </SelectItem>
@@ -140,7 +143,7 @@ export function IdeaFiltersBar({ categories = [] }: IdeaFiltersBarProps) {
           </SelectTrigger>
           <SelectContent>
             <SelectItem value={ALL}>Tous les types</SelectItem>
-            {entriesOf(ideaKindLabels).map(([value, label]) => (
+            {labelledOptions(ideaKindLabels, labels.ideaKinds).map(([value, label]) => (
               <SelectItem key={value} value={value}>
                 {label}
               </SelectItem>

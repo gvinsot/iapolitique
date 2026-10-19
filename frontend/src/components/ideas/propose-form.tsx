@@ -28,7 +28,9 @@ import {
   TERRITORY_MAX_LENGTH,
   validateIdeaText,
 } from "@/lib/idea-text";
-import { type AdminLevel, adminLevelLabels, entriesOf, isKeyOf } from "@/lib/labels";
+import { useTaxonomyLabels } from "@/hooks/use-taxonomy";
+import { type AdminLevel, adminLevelLabels, isKeyOf } from "@/lib/labels";
+import { labelledOptions } from "@/lib/taxonomy-labels";
 import { cn } from "@/lib/utils";
 
 export interface ProposeFormValues {
@@ -65,6 +67,7 @@ const noErrors: FormErrors = { text: null, consents: null };
  */
 export function ProposeForm({ onSubmit, submitting = false, altchaTestMode }: ProposeFormProps) {
   const id = useId();
+  const labels = useTaxonomyLabels();
   const textRef = useRef<HTMLTextAreaElement>(null);
   const { altchaRef, solving, error: altchaError, submitWith } = useAntiRobot();
   const [text, setText] = useState("");
@@ -170,7 +173,7 @@ export function ProposeForm({ onSubmit, submitting = false, altchaTestMode }: Pr
             </SelectTrigger>
             <SelectContent>
               <SelectItem value={UNKNOWN_LEVEL}>Je ne sais pas</SelectItem>
-              {entriesOf(adminLevelLabels).map(([value, label]) => (
+              {labelledOptions(adminLevelLabels, labels.adminLevels).map(([value, label]) => (
                 <SelectItem key={value} value={value}>
                   {label}
                 </SelectItem>

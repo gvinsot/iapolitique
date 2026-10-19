@@ -3,7 +3,8 @@ import { CheckIcon, MinusIcon } from "lucide-react";
 import { Badge } from "@/components/ui/badge";
 import { formatDate } from "@/lib/format";
 import type { ContributionConsidered } from "@/lib/idea-model";
-import { contributionKindLabels } from "@/lib/labels";
+import { useTaxonomyLabels } from "@/hooks/use-taxonomy";
+import { labelOf } from "@/lib/taxonomy-labels";
 
 interface ContributionsListProps {
   contributions: ContributionConsidered[];
@@ -16,6 +17,7 @@ interface ContributionsListProps {
  * answer of the analysis are shown, never the raw text of the visitor (AGENTS.md §5.5).
  */
 export function ContributionsList({ contributions, totalCount }: ContributionsListProps) {
+  const labels = useTaxonomyLabels();
   const count = totalCount ?? contributions.length;
   return (
     <div className="space-y-4">
@@ -33,7 +35,9 @@ export function ContributionsList({ contributions, totalCount }: ContributionsLi
             // The API sends no identifier (AGENTS.md §13.2): the order is stable for a page.
             <li key={index} className="space-y-2 rounded-lg border bg-card p-4">
               <div className="flex flex-wrap items-center gap-2">
-                <Badge variant="secondary">{contributionKindLabels[contribution.kind]}</Badge>
+                <Badge variant="secondary">
+                  {labelOf(labels.contributionKinds, contribution.kind)}
+                </Badge>
                 <Badge variant="outline">
                   {contribution.taken_into_account ? (
                     <CheckIcon aria-hidden="true" />

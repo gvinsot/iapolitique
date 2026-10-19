@@ -4,6 +4,7 @@ import { Link } from "react-router";
 import type {
   Methodology,
   MethodologyFile,
+  MethodologyModel,
   ScreeningCriterion,
   ScreeningSection,
 } from "@/api/types";
@@ -33,6 +34,18 @@ const PROMPT_NAMES: Record<string, string> = {
   second_opinion: "Second avis (zone grise)",
   report_review: "Revue des signalements",
 };
+
+/** The reasoning effort sent to Mistral (AGENTS.md §6.1), in words. */
+function reasoningLabel(effort: MethodologyModel["reasoning_effort"]): string {
+  switch (effort) {
+    case "high":
+      return "réflexion complète avant la réponse (high)";
+    case "none":
+      return "réflexion minimale (none)";
+    default:
+      return "réglage par défaut de Mistral";
+  }
+}
 
 /** What makes a criterion pass, in words. */
 function passCondition(criterion: ScreeningCriterion): string {
@@ -97,7 +110,12 @@ function CriterionRow({ criterion, index }: { criterion: ScreeningCriterion; ind
  */
 export function MethodologyInForce({ methodology }: { methodology: Methodology }) {
   const labels = useTaxonomyLabels();
-  const { scoring, screening } = methodology;
+  const { models, scoring, screening } = methodology;
+  const modelRows: [string, MethodologyModel | string][] = [
+    ["Analyse (recherche web, puis structuration)", models.analysis],
+    ["Second avis et revue des signalements", models.review],
+    ["Détection des doublons (embeddings)", models.embedding],
+  ];
   const versions: [string, string][] = [
     ["Grille de filtrage (screening.yaml)", methodology.screening_version],
     ["Taxonomie (taxonomy.yaml)", methodology.taxonomy_version],
@@ -120,6 +138,27 @@ export function MethodologyInForce({ methodology }: { methodology: Methodology }
             <div key={name} className="contents">
               <dt className="text-muted-foreground">{name}</dt>
               <dd className="font-mono break-all">{version}</dd>
+            </div>
+          ))}
+        </dl>
+      </section>
+
+      <section aria-labelledby="modeles-en-vigueur" className="space-y-3">
+        <h3 id="modeles-en-vigueur">Modèles d’IA en vigueur (Mistral AI)</h3>
+        <dl className="grid gap-x-6 gap-y-1 text-sm sm:grid-cols-[minmax(0,1fr)_auto]">
+          {modelRows.map(([usage, model]) => (
+            <div key={usage} className="contents">
+              <dt className="text-muted-foreground">{usage}</dt>
+              <dd>
+                {typeof model === "string" ? (
+                  <code className="break-all">{model}</code>
+                ) : (
+                  <>
+                    <code className="break-all">{model.model}</code> · effort de raisonnement :{" "}
+                    {reasoningLabel(model.reasoning_effort)}
+                  </>
+                )}
+              </dd>
             </div>
           ))}
         </dl>

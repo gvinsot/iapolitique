@@ -1976,6 +1976,24 @@ export interface components {
          * @enum {string}
          */
         MethodologyFileKind: "screening" | "taxonomy" | "prompt" | "schema";
+        /** @description A Mistral model in use and the reasoning effort it is sent (§6.1). */
+        MethodologyModel: {
+            /** @example mistral-large-latest */
+            model: string;
+            reasoning_effort: components["schemas"]["ReasoningEffort"] | null;
+        };
+        /** @description The Mistral models configured in production (§6.1). */
+        MethodologyModels: {
+            /** @description Both steps of an analysis: web research, then structuring. */
+            analysis: components["schemas"]["MethodologyModel"];
+            /** @description Second opinion on the gray zone and review of reports. */
+            review: components["schemas"]["MethodologyModel"];
+            /**
+             * @description Embeddings of the duplicate detection (no reasoning).
+             * @example mistral-embed
+             */
+            embedding: string;
+        };
         /** @description Prompts, grid, taxonomy and formula as used in production (§6.5). */
         MethodologyResponse: {
             screening_version: string;
@@ -1992,6 +2010,8 @@ export interface components {
             export_schema_version: string;
             /** @description Version of the publication rules (`/regles`). */
             cgu_version: string;
+            /** @description Mistral models and reasoning efforts in use. */
+            models: components["schemas"]["MethodologyModels"];
             scoring: components["schemas"]["ScoringMethod"];
             screening: components["schemas"]["ScreeningMethod"];
             /** @description Full text of every file of `prompts/` (to display as plain text). */
@@ -2485,6 +2505,8 @@ export type SchemaLegalVehicle = components['schemas']['LegalVehicle'];
 export type SchemaMeasure = components['schemas']['Measure'];
 export type SchemaMethodologyFile = components['schemas']['MethodologyFile'];
 export type SchemaMethodologyFileKind = components['schemas']['MethodologyFileKind'];
+export type SchemaMethodologyModel = components['schemas']['MethodologyModel'];
+export type SchemaMethodologyModels = components['schemas']['MethodologyModels'];
 export type SchemaMethodologyResponse = components['schemas']['MethodologyResponse'];
 export type SchemaOriginalText = components['schemas']['OriginalText'];
 export type SchemaPublicStats = components['schemas']['PublicStats'];

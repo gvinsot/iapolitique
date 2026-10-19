@@ -48,9 +48,10 @@ use super::ideas::{
 };
 use super::legal::{self, LegalInfo, LegalPages, LegalPublisher};
 use super::reference::{
-    self, AdminLevelItem, CategoryItem, ConfidenceFactor, KeyCount, MethodologyResponse,
-    PublicStats, RejectionReason, ScoringMethod, ScreeningCriterion, ScreeningMethod,
-    ScreeningSection, TaxonomyItem, TaxonomyResponse, YesNoLabels,
+    self, AdminLevelItem, CategoryItem, ConfidenceFactor, KeyCount, MethodologyModel,
+    MethodologyModels, MethodologyResponse, PublicStats, RejectionReason, ScoringMethod,
+    ScreeningCriterion, ScreeningMethod, ScreeningSection, TaxonomyItem, TaxonomyResponse,
+    YesNoLabels,
 };
 use super::submissions::{
     self, ContributionSubmission, ContributionSubmissionKind, IdeaSubmission, ReportSubmission,
@@ -185,6 +186,8 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         ContributionSummary,
         RightOfReply,
         MethodologyResponse,
+        MethodologyModels,
+        MethodologyModel,
         MethodologyFile,
         MethodologyFileKind,
         ScoringMethod,

@@ -15,6 +15,15 @@ describe("MethodologyPage", () => {
     expect(versions).toHaveTextContent("sha256:0123456789ab");
     expect(versions).toHaveTextContent("Analyse, étape 1 : recherche web");
 
+    const models = screen.getByRole("region", { name: "Modèles d’IA en vigueur (Mistral AI)" });
+    expect(models).toHaveTextContent(
+      "mistral-large-latest · effort de raisonnement : réflexion complète avant la réponse (high)",
+    );
+    expect(models).toHaveTextContent(
+      "mistral-medium-3-5 · effort de raisonnement : réglage par défaut de Mistral",
+    );
+    expect(models).toHaveTextContent("mistral-embed");
+
     expect(screen.getByRole("heading", { name: "Formule du score (version 1)" })).toBeVisible();
     expect(container.querySelector("pre")).toHaveTextContent("score = gain net annuel");
 

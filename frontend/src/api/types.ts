@@ -56,6 +56,7 @@ export type TaxonomyItem = Schemas["TaxonomyItem"];
 export type CategoryItem = Schemas["CategoryItem"];
 export type Methodology = Schemas["MethodologyResponse"];
 export type MethodologyFile = Schemas["MethodologyFile"];
+export type MethodologyModel = Schemas["MethodologyModel"];
 export type ScreeningSection = Schemas["ScreeningSection"];
 export type ScreeningCriterion = Schemas["ScreeningCriterion"];
 export type ScoringMethod = Schemas["ScoringMethod"];

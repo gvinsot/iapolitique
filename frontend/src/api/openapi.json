@@ -6063,6 +6063,55 @@
           "schema"
         ]
       },
+      "MethodologyModel": {
+        "type": "object",
+        "description": "A Mistral model in use and the reasoning effort it is sent (§6.1).",
+        "required": [
+          "model",
+          "reasoning_effort"
+        ],
+        "properties": {
+          "model": {
+            "type": "string",
+            "example": "mistral-large-latest"
+          },
+          "reasoning_effort": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReasoningEffort",
+                "description": "`reasoning_effort` sent with each call: `high` (full thinking before the answer) or\n`none` (minimal thinking); `null` when the parameter is omitted (Mistral's default)."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          }
+        }
+      },
+      "MethodologyModels": {
+        "type": "object",
+        "description": "The Mistral models configured in production (§6.1).",
+        "required": [
+          "analysis",
+          "review",
+          "embedding"
+        ],
+        "properties": {
+          "analysis": {
+            "$ref": "#/components/schemas/MethodologyModel",
+            "description": "Both steps of an analysis: web research, then structuring."
+          },
+          "review": {
+            "$ref": "#/components/schemas/MethodologyModel",
+            "description": "Second opinion on the gray zone and review of reports."
+          },
+          "embedding": {
+            "type": "string",
+            "description": "Embeddings of the duplicate detection (no reasoning).",
+            "example": "mistral-embed"
+          }
+        }
+      },
       "MethodologyResponse": {
         "type": "object",
         "description": "Prompts, grid, taxonomy and formula as used in production (§6.5).",
@@ -6073,6 +6122,7 @@
           "analysis_schema_version",
           "export_schema_version",
           "cgu_version",
+          "models",
           "scoring",
           "screening",
           "files"
@@ -6104,6 +6154,10 @@
           "cgu_version": {
             "type": "string",
             "description": "Version of the publication rules (`/regles`)."
+          },
+          "models": {
+            "$ref": "#/components/schemas/MethodologyModels",
+            "description": "Mistral models and reasoning efforts in use."
           },
           "scoring": {
             "$ref": "#/components/schemas/ScoringMethod"

@@ -18,11 +18,12 @@ use crate::ai::decision::ThresholdOverrides;
 use crate::ai::prompts::{
     Criterion, CriterionKind, MethodologyFile, Prompts, Taxonomy, TaxonomyEntry,
 };
+use crate::config::MistralConfig;
 use crate::domain::rules::{self, CGU_VERSION, RuleReference};
 use crate::domain::scoring::{
     AMORTIZATION_YEARS, DELAY_HALF_LIFE_MONTHS, FORMULA_FR, MAX_FEASIBILITY, SCORING_VERSION,
 };
-use crate::domain::types::{Confidence, TargetKind};
+use crate::domain::types::{Confidence, ReasoningEffort, TargetKind};
 use crate::jobs::analysis::schema_version;
 use crate::jobs::exports::EXPORT_SCHEMA_VERSION;
 use crate::moderation::section_label;
@@ -107,6 +108,45 @@ pub struct ScreeningMethod {
     pub sections: Vec<ScreeningSection>,
 }
 
+/// A Mistral model in use and the reasoning effort it is sent (§6.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct MethodologyModel {
+    #[schema(example = "mistral-large-latest")]
+    pub model: String,
+    /// `reasoning_effort` sent with each call: `high` (full thinking before the answer) or
+    /// `none` (minimal thinking); `null` when the parameter is omitted (Mistral's default).
+    #[schema(required = true)]
+    pub reasoning_effort: Option<ReasoningEffort>,
+}
+
+/// The Mistral models configured in production (§6.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct MethodologyModels {
+    /// Both steps of an analysis: web research, then structuring.
+    pub analysis: MethodologyModel,
+    /// Second opinion on the gray zone and review of reports.
+    pub review: MethodologyModel,
+    /// Embeddings of the duplicate detection (no reasoning).
+    #[schema(example = "mistral-embed")]
+    pub embedding: String,
+}
+
+impl MethodologyModels {
+    pub fn from_config(config: &MistralConfig) -> Self {
+        Self {
+            analysis: MethodologyModel {
+                model: config.analysis_model.clone(),
+                reasoning_effort: config.analysis_reasoning_effort,
+            },
+            review: MethodologyModel {
+                model: config.review_model.clone(),
+                reasoning_effort: config.review_reasoning_effort,
+            },
+            embedding: config.embed_model.clone(),
+        }
+    }
+}
+
 /// Prompts, grid, taxonomy and formula as used in production (§6.5).
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 pub struct MethodologyResponse {
@@ -120,6 +160,8 @@ pub struct MethodologyResponse {
     pub export_schema_version: String,
     /// Version of the publication rules (`/regles`).
     pub cgu_version: String,
+    /// Mistral models and reasoning efforts in use.
+    pub models: MethodologyModels,
     pub scoring: ScoringMethod,
     pub screening: ScreeningMethod,
     /// Full text of every file of `prompts/` (to display as plain text).
@@ -235,6 +277,7 @@ pub async fn methodology(State(state): State<AppState>) -> Result<Response, ApiE
                 .unwrap_or_default(),
             export_schema_version: EXPORT_SCHEMA_VERSION.to_owned(),
             cgu_version: CGU_VERSION.to_owned(),
+            models: MethodologyModels::from_config(&state.config.mistral),
             scoring: scoring_method(),
             screening: screening_method(prompts, &overrides),
             files: methodology.files.clone(),
@@ -581,6 +624,38 @@ mod tests {
         let files = body["files"].as_array().unwrap();
         assert!(files.iter().any(|f| f["file"] == "screening.yaml"));
         assert!(files.iter().any(|f| f["file"] == "analysis.schema.json"));
+        assert_eq!(
+            body["models"],
+            json!({
+                "analysis": { "model": "mistral-large-latest", "reasoning_effort": "high" },
+                "review": { "model": "mistral-large-latest", "reasoning_effort": "none" },
+                "embedding": "mistral-embed"
+            })
+        );
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn methodology_publishes_the_models_and_efforts_in_use(pool: PgPool) {
+        let app = TestApp::new(
+            pool,
+            false,
+            &[
+                ("MISTRAL_REVIEW_MODEL", "mistral-medium-3-5"),
+                ("MISTRAL_ANALYSIS_REASONING_EFFORT", ""),
+                ("MISTRAL_REVIEW_REASONING_EFFORT", "high"),
+            ],
+        )
+        .await;
+        let (status, _, body) = get_json(&app.router, "/api/methodology", &[]).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_eq!(
+            body["models"]["analysis"],
+            json!({ "model": "mistral-large-latest", "reasoning_effort": null })
+        );
+        assert_eq!(
+            body["models"]["review"],
+            json!({ "model": "mistral-medium-3-5", "reasoning_effort": "high" })
+        );
     }
 
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]

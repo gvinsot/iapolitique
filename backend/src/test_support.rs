@@ -223,6 +223,7 @@ impl TestApp {
             mistral: mistral_client(&config),
             config: Arc::new(config),
             prompts,
+            exports: Arc::default(),
         };
         Self {
             router: public_router(state.clone()),

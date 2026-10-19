@@ -68,6 +68,8 @@ pub struct AppState {
     /// Inline second opinions (§5.2); `None` without `MISTRAL_API_KEY` (the worker's job then
     /// handles them).
     pub mistral: Option<MistralClient>,
+    /// Latest export contents held in memory (§14.5).
+    pub exports: Arc<exports::ExportCache>,
 }
 
 impl FromRef<AppState> for TrustedProxyHops {
@@ -184,6 +186,7 @@ mod tests {
             altcha: Arc::new(Altcha::new(Secret::new(TOKEN))),
             rate_limiter,
             mistral: None,
+            exports: Arc::default(),
         }
     }
 

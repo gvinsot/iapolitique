@@ -182,6 +182,7 @@ pub async fn run_api(config: Config) -> anyhow::Result<()> {
         rate_limiter: Arc::new(RateLimiter::new(RateLimits::from(&config.antispam))),
         mistral: mistral_client(&config)?,
         prompts,
+        exports: Arc::default(),
     };
     let public = http::public_router(state.clone());
     let admin = http::admin_router(state, admin_token);

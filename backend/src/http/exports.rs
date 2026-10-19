@@ -4,7 +4,15 @@
 //! Every header is built from fixed names and from the database (§14.1): the download name is
 //! `iapolitique-<file>-<day of the generation>.<extension>`, the `ETag` is the SHA-256 of the
 //! content (conditional requests answer `304`).
+//!
+//! The api keeps the latest content of each format in memory ([`ExportCache`]): a conditional
+//! request never reads the content, a download reads it only when the generation changed, and
+//! concurrent downloads share one reference-counted buffer instead of one copy each (EXP-1).
 
+use std::collections::HashMap;
+use std::sync::RwLock;
+
+use axum::body::Bytes;
 use axum::extract::State;
 use axum::http::{HeaderMap, HeaderValue, StatusCode, header};
 use axum::response::{IntoResponse, Response};
@@ -15,6 +23,25 @@ use super::cache;
 use super::error::{ApiError, ErrorBody};
 use crate::db::exports::{self, StoredExport};
 use crate::domain::types::ExportFormat;
+
+/// Latest content of each export format held by the api: (SHA-256, content).
+#[derive(Debug, Default)]
+pub struct ExportCache(RwLock<HashMap<ExportFormat, (Vec<u8>, Bytes)>>);
+
+impl ExportCache {
+    fn get(&self, format: ExportFormat, sha256: &[u8]) -> Option<Bytes> {
+        let cache = self.0.read().unwrap_or_else(|e| e.into_inner());
+        cache
+            .get(&format)
+            .filter(|(sha, _)| sha == sha256)
+            .map(|(_, bytes)| bytes.clone())
+    }
+
+    fn put(&self, format: ExportFormat, sha256: Vec<u8>, bytes: Bytes) {
+        let mut cache = self.0.write().unwrap_or_else(|e| e.into_inner());
+        cache.insert(format, (sha256, bytes));
+    }
+}
 
 /// Seconds suggested before asking again when no export exists yet.
 pub const RETRY_AFTER_SECS: u64 = 300;
@@ -91,7 +118,20 @@ async fn serve(
         download_name(format, file.generated_on)
     ))
     .map_err(|_| ApiError::internal())?;
-    let mut response = file.content.into_response();
+    let content = match state.exports.get(format, &file.content_sha256) {
+        Some(bytes) => bytes,
+        None => {
+            let content = exports::content(&state.pool, file.id)
+                .await?
+                .ok_or_else(unavailable)?;
+            let bytes = Bytes::from(content);
+            state
+                .exports
+                .put(format, file.content_sha256.clone(), bytes.clone());
+            bytes
+        }
+    };
+    let mut response = content.into_response();
     let headers = response.headers_mut();
     headers.insert(
         header::CONTENT_TYPE,
@@ -297,5 +337,62 @@ mod tests {
 
         let (status, _, _) = get_json(&app.router, "/api/exports/other.json", &[]).await;
         assert_eq!(status, StatusCode::NOT_FOUND);
+    }
+
+    /// EXP-1: a conditional request never reads the content, and downloads share the content
+    /// held in memory instead of reading it from the database each time.
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn contents_are_read_once_per_generation(pool: PgPool) {
+        let app = TestApp::new(pool.clone(), false, &[]).await;
+        generation(&pool, "v1").await;
+        let get = |etag: Option<String>| {
+            let router = app.router.clone();
+            async move {
+                let mut request = Request::get("/api/exports/ideas.json");
+                if let Some(etag) = etag {
+                    request = request.header(header::IF_NONE_MATCH, etag);
+                }
+                let response = router
+                    .oneshot(request.body(Body::empty()).unwrap())
+                    .await
+                    .unwrap();
+                let status = response.status();
+                let etag = response.headers()[header::ETAG]
+                    .to_str()
+                    .unwrap()
+                    .to_owned();
+                let body = response.into_body().collect().await.unwrap().to_bytes();
+                (status, etag, body)
+            }
+        };
+        // The content column is replaced behind the api's back (same checksum): a 304 never
+        // reads it, and a download before any 200 reads it once.
+        sqlx::query("UPDATE exports SET content = 'sentinel'::bytea WHERE format = 'json'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let etag: String = sqlx::query_scalar(
+            "SELECT '\"' || encode(content_sha256, 'hex') || '\"' FROM exports WHERE format = 'json'",
+        )
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        let (status, _, body) = get(Some(etag.clone())).await;
+        assert_eq!((status, body.is_empty()), (StatusCode::NOT_MODIFIED, true));
+        let (status, _, body) = get(None).await;
+        assert_eq!((status, &body[..]), (StatusCode::OK, &b"sentinel"[..]));
+        // Held in memory: the database content is not read again for the same generation.
+        sqlx::query("UPDATE exports SET content = 'other'::bytea WHERE format = 'json'")
+            .execute(&pool)
+            .await
+            .unwrap();
+        let (_, _, body) = get(None).await;
+        assert_eq!(&body[..], b"sentinel");
+        // A new generation is read.
+        generation(&pool, "v2").await;
+        let (status, new_etag, body) = get(Some(etag.clone())).await;
+        assert_eq!(status, StatusCode::OK);
+        assert_ne!(new_etag, etag);
+        assert_eq!(&body[..], b"v2 json");
     }
 }

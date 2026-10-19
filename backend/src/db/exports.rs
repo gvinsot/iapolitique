@@ -147,10 +147,12 @@ pub async fn insert(
     Ok(generation_id)
 }
 
-/// The latest generated file of a format, as served by the api.
+/// The latest generated file of a format, as served by the api, without its content: a
+/// conditional request is answered from it, and the content is read only when the api does not
+/// hold it already (EXP-1).
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct StoredExport {
-    pub content: Vec<u8>,
+    pub id: i64,
     pub content_sha256: Vec<u8>,
     pub generated_at: chrono::DateTime<chrono::Utc>,
     /// Day of the generation (Europe/Paris), used in the download name.
@@ -160,7 +162,7 @@ pub struct StoredExport {
 /// The file of the latest generation of `format`, `None` before the first generation.
 pub async fn latest(pool: &PgPool, format: ExportFormat) -> sqlx::Result<Option<StoredExport>> {
     sqlx::query_as(
-        "SELECT content, content_sha256, generated_at,
+        "SELECT id, content_sha256, generated_at,
                 (generated_at AT TIME ZONE 'Europe/Paris')::date AS generated_on
          FROM exports WHERE format = $1
          ORDER BY generated_at DESC, id DESC
@@ -169,4 +171,12 @@ pub async fn latest(pool: &PgPool, format: ExportFormat) -> sqlx::Result<Option<
     .bind(format.as_str())
     .fetch_optional(pool)
     .await
+}
+
+/// Content of the export file `id` (`None` if it was removed meanwhile).
+pub async fn content(pool: &PgPool, id: i64) -> sqlx::Result<Option<Vec<u8>>> {
+    sqlx::query_scalar("SELECT content FROM exports WHERE id = $1")
+        .bind(id)
+        .fetch_optional(pool)
+        .await
 }

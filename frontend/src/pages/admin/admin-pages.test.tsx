@@ -232,6 +232,43 @@ describe("admin pages", () => {
     ).toBeInTheDocument();
   });
 
+  it("checks the Mistral key on demand and shows the result", async () => {
+    const calls = adminRoutes({
+      "GET /api/admin/dashboard": {
+        ...dashboardFixture,
+        alerts: [
+          {
+            code: "mistral_auth",
+            since: "2026-10-19T06:00:00Z",
+            last_seen_at: "2026-10-19T07:45:00Z",
+            http_status: 401,
+            failures: 3,
+            message: "Clé Mistral refusée depuis le 19/10/2026 à 08:00 (HTTP 401).",
+          },
+        ],
+      },
+      "POST /api/admin/provider-alerts/mistral/check": {
+        result: "ok",
+        http_status: 200,
+        alert_cleared: true,
+        jobs_due: 2,
+        message: "Clé Mistral acceptée : alerte close, 2 jobs IA en attente repartent maintenant.",
+      },
+    });
+    const { user } = renderRoute("/admin");
+    await user.click(
+      await screen.findByRole("button", { name: "Vérifier la clé Mistral maintenant" }),
+    );
+    expect(
+      await screen.findByText(
+        "Clé Mistral acceptée : alerte close, 2 jobs IA en attente repartent maintenant.",
+      ),
+    ).toBeInTheDocument();
+    const posts = calls.filter((call) => call.path === "/api/admin/provider-alerts/mistral/check");
+    expect(posts).toHaveLength(1);
+    expect(posts[0]).toMatchObject({ method: "POST", body: null });
+  });
+
   it("shows the Mistral key alert and requeues every failed analysis after confirmation", async () => {
     const answers = [
       { requeued: 500, remaining: 1 },

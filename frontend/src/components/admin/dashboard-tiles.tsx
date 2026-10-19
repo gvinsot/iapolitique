@@ -4,16 +4,18 @@ import {
   FilterIcon,
   KeyRoundIcon,
   ListTodoIcon,
+  Loader2Icon,
   type LucideIcon,
   RotateCcwIcon,
   WalletIcon,
 } from "lucide-react";
-import type { ReactNode } from "react";
+import { type ReactNode, useState } from "react";
 import { Link } from "react-router";
 
 import type { AdminAlert, AdminDashboard, AdminQueues } from "@/api/types";
 import { paths } from "@/app/paths";
 import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
+import { Button } from "@/components/ui/button";
 import { labelFor, targetSectionLabels } from "@/lib/admin-model";
 import { formatDateTime, formatEurosPrecise, formatInteger, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
@@ -269,11 +271,47 @@ function plural(count: number, word: string): string {
 }
 
 /**
+ * « Vérifier la clé Mistral maintenant » (POST /api/admin/provider-alerts/mistral/check): one
+ * call that bills nothing, instead of waiting up to an hour for the next job allowed to check
+ * the key. `onCheck` shows the result (toast); the button is disabled while it runs.
+ */
+export function CheckMistralKeyButton({ onCheck }: { onCheck: () => Promise<void> }) {
+  const [checking, setChecking] = useState(false);
+  return (
+    <Button
+      type="button"
+      variant="outline"
+      size="sm"
+      disabled={checking}
+      onClick={() => {
+        setChecking(true);
+        void onCheck().finally(() => {
+          setChecking(false);
+        });
+      }}
+    >
+      {checking ? (
+        <Loader2Icon aria-hidden="true" className="animate-spin" />
+      ) : (
+        <KeyRoundIcon aria-hidden="true" />
+      )}
+      Vérifier la clé Mistral maintenant
+    </Button>
+  );
+}
+
+interface DashboardAlertsProps {
+  alerts: readonly AdminAlert[];
+  /** Checks the Mistral key now (button of the refused-key alert); no button without it. */
+  onCheckKey?: () => Promise<void>;
+}
+
+/**
  * Configuration alerts in progress (AGENTS.md §6.1, §6.4): a refused Mistral key makes every AI
  * job wait without failing until the key is fixed; a model that refuses `reasoning_effort` is
  * called without it. The message comes from the API, in French.
  */
-export function DashboardAlerts({ alerts }: { alerts: readonly AdminAlert[] }) {
+export function DashboardAlerts({ alerts, onCheckKey }: DashboardAlertsProps) {
   if (alerts.length === 0) return null;
   return (
     <section aria-label="Alertes de configuration" className="space-y-3">
@@ -297,6 +335,11 @@ export function DashboardAlerts({ alerts }: { alerts: readonly AdminAlert[] }) {
                     redéployez (procédure : <code>docs/ops.md</code>, rotation de la clé Mistral) ;
                     relancez ensuite les analyses passées en échec.
                   </p>
+                  {onCheckKey ? (
+                    <div className="pt-1">
+                      <CheckMistralKeyButton onCheck={onCheckKey} />
+                    </div>
+                  ) : null}
                 </>
               ) : (
                 <p>

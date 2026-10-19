@@ -7,6 +7,7 @@
 //! Every mutation is recorded in `admin_actions` in the transaction that applies it.
 //!
 //! - [`actions`]: journal of the admin actions;
+//! - [`alerts`]: check of the Mistral API key on demand;
 //! - [`dashboard`]: job queue, screening rates, AI costs, pending queues;
 //! - [`jobs`]: job list and retry of dead jobs;
 //! - [`ideas`]: ideas by status with search, hide / republish, re-analysis;
@@ -35,6 +36,7 @@ use super::security::security_event;
 use crate::config::Secret;
 
 pub mod actions;
+pub mod alerts;
 pub mod dashboard;
 pub mod ideas;
 pub mod jobs;
@@ -59,6 +61,10 @@ pub fn routes() -> Router<AppState> {
     Router::new()
         .route("/session", get(session))
         .route("/dashboard", get(dashboard::dashboard))
+        .route(
+            "/provider-alerts/mistral/check",
+            post(alerts::check_mistral_key),
+        )
         .route("/jobs", get(jobs::list))
         .route("/jobs/{id}/retry", post(jobs::retry))
         .route("/ideas", get(ideas::list))

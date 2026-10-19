@@ -51,6 +51,9 @@ repeatable) makes a chat or conversation request for one of these models that ca
 `reasoning_effort` answer HTTP 400 with Mistral's error shape (`param: "reasoning_effort"`), as
 a model that does not document the parameter; the same request without it is answered. `[]`
 lifts it. Refusals are counted under `refused_reasoning_effort` in GET /stats.
+
+GET /v1/models lists a few models without billing anything, like Mistral: the key check of the
+admin dashboard (POST /api/admin/provider-alerts/mistral/check) calls it; the key switch applies.
 """
 
 from __future__ import annotations
@@ -454,6 +457,21 @@ class Handler(BaseHTTPRequestHandler):
         if self.path == "/stats":
             with STATS_LOCK:
                 self.send_json(200, dict(STATS))
+        elif self.path == "/v1/models":
+            # Lists models without billing anything: the admin's key check calls it.
+            if not self.headers.get("Authorization", "").startswith("Bearer "):
+                self.send_json(401, {"object": "error", "message": "missing bearer key"})
+                return
+            with STATS_LOCK:
+                refusal = AUTH_REFUSAL["status"]
+                name = "refused_auth" if refusal is not None else "/v1/models"
+                STATS[name] = STATS.get(name, 0) + 1
+            if refusal is not None:
+                self.send_json(refusal, {"message": "Unauthorized", "request_id": "mock"})
+                return
+            self.send_json(200, {"object": "list", "data": [
+                {"id": model, "object": "model", "owned_by": "mistralai"}
+                for model in ("mistral-large-latest", "mistral-large-4-0", "mistral-embed")]})
         else:
             self.send_json(404, {"object": "error", "message": "not found"})
 

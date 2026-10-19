@@ -64,6 +64,7 @@ export type ScoringMethod = Schemas["ScoringMethod"];
 // --- Administration ---------------------------------------------------------------------------
 export type AdminDashboard = Schemas["AdminDashboard"];
 export type AdminAlert = Schemas["AdminAlert"];
+export type AdminMistralKeyCheck = Schemas["AdminMistralKeyCheck"];
 export type AdminBulkReanalysis = Schemas["AdminBulkReanalysis"];
 export type AdminScreeningRates = Schemas["AdminScreeningRates"];
 export type AdminAiCosts = Schemas["AdminAiCosts"];

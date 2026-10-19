@@ -10,7 +10,7 @@
 //!   sent.
 
 use chrono::{DateTime, Duration, Utc};
-use sqlx::PgPool;
+use sqlx::{PgExecutor, PgPool};
 
 /// The Mistral API key is refused.
 pub const MISTRAL_AUTH: &str = "mistral_auth";
@@ -53,7 +53,11 @@ macro_rules! alert_columns {
 
 /// Records a refusal. Returns whether it should be logged now (first refusal, or the last log
 /// is older than [`AUTH_LOG_PERIOD`]).
-pub async fn record_failure(pool: &PgPool, alert: &str, http_status: u16) -> sqlx::Result<bool> {
+pub async fn record_failure<'e>(
+    executor: impl PgExecutor<'e>,
+    alert: &str,
+    http_status: u16,
+) -> sqlx::Result<bool> {
     sqlx::query_scalar(
         "INSERT INTO provider_alerts AS a (alert, last_http_status) VALUES ($1, $2)
          ON CONFLICT (alert) DO UPDATE SET
@@ -66,15 +70,15 @@ pub async fn record_failure(pool: &PgPool, alert: &str, http_status: u16) -> sql
     .bind(alert)
     .bind(i32::from(http_status))
     .bind(AUTH_LOG_PERIOD.num_seconds() as f64)
-    .fetch_one(pool)
+    .fetch_one(executor)
     .await
 }
 
 /// Ends the alert (a call succeeded). Returns whether there was one.
-pub async fn clear(pool: &PgPool, alert: &str) -> sqlx::Result<bool> {
+pub async fn clear<'e>(executor: impl PgExecutor<'e>, alert: &str) -> sqlx::Result<bool> {
     let done = sqlx::query("DELETE FROM provider_alerts WHERE alert = $1")
         .bind(alert)
-        .execute(pool)
+        .execute(executor)
         .await?;
     Ok(done.rows_affected() > 0)
 }

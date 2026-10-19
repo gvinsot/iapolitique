@@ -260,6 +260,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/provider-alerts/mistral/check": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Checks the Mistral API key now (see the module documentation). */
+        post: operations["checkAdminMistralKey"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/replies/{id}": {
         parameters: {
             query?: never;
@@ -1213,6 +1230,24 @@ export interface components {
             description: string;
             category_groups: string[];
         };
+        /** @description What a key check found and did. */
+        AdminMistralKeyCheck: {
+            result: components["schemas"]["MistralKeyCheckResult"];
+            /**
+             * Format: int32
+             * @description HTTP status answered by Mistral (`null`: no answer).
+             */
+            http_status: number | null;
+            /** @description The `mistral_auth` alert was in progress and is now closed. */
+            alert_cleared: boolean;
+            /**
+             * Format: int64
+             * @description Mistral jobs that waited for the key and are now due.
+             */
+            jobs_due: number;
+            /** @description French message to display as is. */
+            message: string;
+        };
         /** @description AI calls and estimated costs of one purpose. */
         AdminPurposeCost: {
             /**
@@ -2020,6 +2055,11 @@ export interface components {
             /** @description Full text of every file of `prompts/` (to display as plain text). */
             files: components["schemas"]["MethodologyFile"][];
         };
+        /**
+         * @description Result of a key check.
+         * @enum {string}
+         */
+        MistralKeyCheckResult: "ok" | "refused" | "unavailable";
         /** @description Masked original text of the author, shown apart from the generated content. */
         OriginalText: {
             text: string;
@@ -2441,6 +2481,7 @@ export type SchemaAdminJobPage = components['schemas']['AdminJobPage'];
 export type SchemaAdminJobSummary = components['schemas']['AdminJobSummary'];
 export type SchemaAdminLevel = components['schemas']['AdminLevel'];
 export type SchemaAdminLevelItem = components['schemas']['AdminLevelItem'];
+export type SchemaAdminMistralKeyCheck = components['schemas']['AdminMistralKeyCheck'];
 export type SchemaAdminPurposeCost = components['schemas']['AdminPurposeCost'];
 export type SchemaAdminQueues = components['schemas']['AdminQueues'];
 export type SchemaAdminReanalysis = components['schemas']['AdminReanalysis'];
@@ -2511,6 +2552,7 @@ export type SchemaMethodologyFileKind = components['schemas']['MethodologyFileKi
 export type SchemaMethodologyModel = components['schemas']['MethodologyModel'];
 export type SchemaMethodologyModels = components['schemas']['MethodologyModels'];
 export type SchemaMethodologyResponse = components['schemas']['MethodologyResponse'];
+export type SchemaMistralKeyCheckResult = components['schemas']['MistralKeyCheckResult'];
 export type SchemaOriginalText = components['schemas']['OriginalText'];
 export type SchemaPublicStats = components['schemas']['PublicStats'];
 export type SchemaReasoningEffort = components['schemas']['ReasoningEffort'];
@@ -3246,6 +3288,44 @@ export interface operations {
                 };
             };
             /** @description Job non mort (`job_not_dead`) ou job équivalent déjà en file (`job_already_queued`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    checkAdminMistralKey: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Résultat de la vérification. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminMistralKeyCheck"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Aucune clé configurée pour l'api (`mistral_key_missing`). */
             409: {
                 headers: {
                     [name: string]: unknown;

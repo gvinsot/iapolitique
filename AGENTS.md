@@ -509,7 +509,13 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
   pour vérifier la clé, les autres sont replanifiés sans appel ; l'api ne tente plus le second
   avis en ligne (le job en file prend le relais). Le premier appel qui franchit
   l'authentification (réponse, sortie invalide, autre 4xx) clôt l'alerte. Le tableau de bord
-  admin l'affiche (`alerts`, « Clé Mistral refusée depuis le … ») ; les idées passées en
+  admin l'affiche (`alerts`, « Clé Mistral refusée depuis le … ») avec le bouton « Vérifier la
+  clé Mistral maintenant » (`POST /api/admin/provider-alerts/mistral/check`, §13.2) : un appel
+  `GET /v1/models`, qui ne facture rien, au lieu d'attendre jusqu'à 1 h le prochain job autorisé
+  à vérifier ; acceptée, l'alerte est close et les jobs Mistral qui attendaient (échéance dans
+  l'heure) deviennent dus aussitôt. Ce contrôle n'est pas enregistré dans `ai_calls` (aucun
+  token, aucun coût, aucun usage du pipeline : la contrainte `purpose` n'a pas à s'élargir) ; il
+  est journalisé dans `admin_actions` (`provider_alert.mistral_check`). Les idées passées en
   `analysis_failed` avant la correction se relancent en masse
   (`POST /api/admin/ideas/reanalyze-failed`, §13.2). Remplacer la clé (secret Docker immuable) :
   `docs/ops.md` §2.1.
@@ -795,7 +801,8 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
   `iapolitique-admin-redirect`, priorité 50, `global@file`, `noop@internal`) : les pages admin ne
   s'exécutent pas sur l'origine publique.
 - Fonctions : tableau de bord (file de jobs, taux d'acceptation, coûts IA du jour/mois, alertes
-  de configuration comme une clé Mistral refusée ou un modèle qui refuse `reasoning_effort`), idées masquées et signalements,
+  de configuration comme une clé Mistral refusée — avec vérification immédiate de la clé — ou un
+  modèle qui refuse `reasoning_effort`), idées masquées et signalements,
   masquer/republier, relancer une analyse ou toutes les analyses échouées, consulter les copies
   scellées des escalades (`/admin/copies-scellees` ; la copie n'est demandée à l'API qu'après un
   clic explicite, jamais rechargée en arrière-plan, puisque chaque lecture est journalisée),
@@ -1016,6 +1023,7 @@ total_pages }`) et refusent les paramètres inconnus (`400 invalid_query`).
 |---|---|---|
 | GET | `/api/admin/session` | vérifie le jeton (`200 { "authenticated": true }` ou `401` ; `429 admin_locked` pendant un verrouillage, §14.4) |
 | GET | `/api/admin/dashboard` | `{ alerts: [{ code (`mistral_auth` : clé refusée, « Clé Mistral refusée depuis le JJ/MM/AAAA à HH:MI (HTTP 401) : … » ; `mistral_reasoning_unsupported` : un modèle configuré avec un effort refuse `reasoning_effort`, §6.1, « Le modèle X refuse le paramètre reasoning_effort depuis le … : … définir MISTRAL_ANALYSIS_MODEL (ou MISTRAL_REVIEW_MODEL) sur un modèle qui le prend en charge, par exemple mistral-large-4-0 » ; un refus d'un modèle qui n'est plus configuré avec un effort n'est pas une alerte), since, last_seen_at, http_status, failures, message (français) }] (toujours présent, vide sans alerte ; facultatif dans la spec pour les anciens clients), jobs: { queued, running, succeeded, dead, by_kind: [{ kind, status, count }] }, screening_window_days (30), screening: [{ kind, total, accepted, rejected, gray_zone, errors, acceptance_rate, rejection_rate, gray_zone_rate, second_opinion_accept, second_opinion_reject, labeled }], ai_costs: { today_eur, month_eur, daily_budget_eur, remaining_today_eur, budget_reached, next_reset, by_purpose: [{ purpose, provider, calls_today, calls_month, today_eur, month_eur }] }, queues: { escalations_pending, review_requests_pending, ideas_analysis_failed, texts_second_opinion, texts_submitted_stale, ideas_hidden, reports_awaiting_review, jobs_dead } }` (jour et mois Europe/Paris) |
+| POST | `/api/admin/provider-alerts/mistral/check` | sans corps : « Vérifier la clé Mistral maintenant » (§6.4), un `GET /v1/models` de Mistral (rien de facturé, pas de ligne `ai_calls`, délai 15 s) → `200 { result: ok\|refused\|unavailable, http_status (statut de Mistral, `null` sans réponse), alert_cleared, jobs_due, message (français) }` : `ok` (2xx) clôt l'alerte `mistral_auth` et rend dus aussitôt les jobs Mistral en file dont l'échéance tombe dans l'heure (`AUTH_RETRY_MAX`) ; `refused` (401/403) ouvre ou prolonge l'alerte comme un appel refusé ; `unavailable` (délai, réseau, autre statut) ne change rien ; `409 mistral_key_missing` si l'api n'a pas de `MISTRAL_API_KEY` ; action `provider_alert.mistral_check` (`result`, `http_status`, `alert_cleared`, `jobs_due`) |
 | GET | `/api/admin/jobs` | jobs, filtres `status`, `kind` ; plus récents d'abord |
 | POST | `/api/admin/jobs/{id}/retry` | remet en file un job `dead` (tentatives remises à zéro) → `200` job ; `404 job_not_found`, `409 job_not_dead` / `job_already_queued` (même clé de dédoublonnage en file) ; action `job.retry` |
 | GET | `/api/admin/ideas` | idées de tout statut, filtre `status`, recherche `q` (identifiant, ou partie du slug, du titre, du résumé ou du texte, sans accents ni casse) ; plus récemment changées d'abord ; extrait du texte masqué, motifs, signalements en attente, réexamen et escalade en attente, `withdrawn_at` (idée retirée par son auteur, statut `withdrawn` ; facultatif dans la spec) |

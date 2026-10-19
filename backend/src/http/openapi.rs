@@ -11,6 +11,7 @@ use utoipa::openapi::security::{HttpAuthScheme, HttpBuilder, SecurityScheme};
 use utoipa::{Modify, OpenApi};
 
 use super::admin::actions::{self as admin_actions, AdminAction, AdminActionPage};
+use super::admin::alerts::{self as admin_alerts, AdminMistralKeyCheck, MistralKeyCheckResult};
 use super::admin::dashboard::{
     self as admin_dashboard, AdminAiCosts, AdminAlert, AdminDashboard, AdminJobCount,
     AdminJobSummary, AdminPurposeCost, AdminQueues, AdminScreeningRates,
@@ -108,6 +109,7 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         tracking::request_review,
         admin::session,
         admin_dashboard::dashboard,
+        admin_alerts::check_mistral_key,
         admin_jobs::list,
         admin_jobs::retry,
         admin_ideas::list,
@@ -208,6 +210,8 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         LegalPages,
         AdminDashboard,
         AdminAlert,
+        AdminMistralKeyCheck,
+        MistralKeyCheckResult,
         AdminBulkReanalysis,
         AdminEscalationSeal,
         AdminEscalationSealSummary,

@@ -508,6 +508,25 @@ describe("Mistral key alert and bulk re-analysis", () => {
     expect(section).not.toHaveTextContent("MISTRAL_API_KEY");
   });
 
+  it("checks the key on demand, once at a time", async () => {
+    const pending: { finish?: () => void } = {};
+    const onCheckKey = vi.fn(
+      () =>
+        new Promise<void>((resolve) => {
+          pending.finish = resolve;
+        }),
+    );
+    const { user } = renderComponent(<DashboardAlerts alerts={[alert]} onCheckKey={onCheckKey} />);
+    const button = screen.getByRole("button", { name: "Vérifier la clé Mistral maintenant" });
+    await user.click(button);
+    expect(onCheckKey).toHaveBeenCalledTimes(1);
+    expect(button).toBeDisabled();
+    pending.finish?.();
+    await waitFor(() => {
+      expect(button).toBeEnabled();
+    });
+  });
+
   it("shows nothing when all is well", () => {
     renderComponent(<DashboardAlerts alerts={[]} />);
     expect(screen.queryByRole("region", { name: "Alertes de configuration" })).toBeNull();

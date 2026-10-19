@@ -107,9 +107,30 @@ function useReanalyzeFailed() {
   };
 }
 
+/**
+ * Checks the Mistral key now and shows the result: accepted (alert closed, waiting jobs due),
+ * still refused, or no conclusion. The check itself is journaled by the API.
+ */
+function useCheckMistralKey() {
+  const invalidate = useInvalidate();
+  return async () => {
+    try {
+      const { data } = await apiClient.POST("/api/admin/provider-alerts/mistral/check");
+      const check = requireData(data);
+      if (check.result === "ok") toast.success(check.message);
+      else if (check.result === "refused") toast.error(check.message);
+      else toast.warning(check.message);
+    } catch (error) {
+      toast.error(errorMessage(error));
+    }
+    await invalidate("/api/admin/dashboard", "/api/admin/jobs", "/api/admin/actions");
+  };
+}
+
 export function AdminDashboardPage() {
   const query = useDashboard();
   const reanalyzeFailed = useReanalyzeFailed();
+  const checkMistralKey = useCheckMistralKey();
   return (
     <div className="space-y-8">
       <AdminPageHeader
@@ -132,7 +153,7 @@ export function AdminDashboardPage() {
       <AdminQuery query={query} label="le tableau de bord">
         {(dashboard) => (
           <div className="space-y-8">
-            <DashboardAlerts alerts={dashboard.alerts ?? []} />
+            <DashboardAlerts alerts={dashboard.alerts ?? []} onCheckKey={checkMistralKey} />
             <DashboardTiles dashboard={dashboard} />
             <section aria-labelledby="files-attente" className="space-y-3">
               <div className="flex flex-wrap items-end justify-between gap-2">

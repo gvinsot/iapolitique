@@ -421,3 +421,129 @@ async fn the_dashboard_shows_a_model_that_refuses_reasoning_effort(pool: PgPool)
     let (_, dashboard) = admin_get(&app, "/api/admin/dashboard").await;
     assert_eq!(dashboard["alerts"], json!([]));
 }
+
+/// Run-after of the queued job of `kind`, relative to now (seconds).
+async fn due_in(pool: &PgPool, kind: JobKind) -> i64 {
+    sqlx::query_scalar(
+        "SELECT extract(epoch FROM run_after - now())::bigint FROM jobs
+         WHERE kind = $1 AND status = 'queued'",
+    )
+    .bind(kind.as_str())
+    .fetch_one(pool)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn the_admin_checks_the_key_now(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), true, &[]).await;
+    let check = "/api/admin/provider-alerts/mistral/check";
+    // Still refused: the alert opens (or grows), nothing is released.
+    refuse(&app, 401).await;
+    let (status, body) = admin_call(&app, Method::POST, check, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["result"], "refused");
+    assert_eq!(body["http_status"], 401);
+    assert_eq!(body["alert_cleared"], false);
+    assert!(
+        body["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Clé Mistral toujours refusée (HTTP 401)")
+    );
+    let alert = provider_alerts::get(&pool, MISTRAL_AUTH)
+        .await
+        .unwrap()
+        .unwrap();
+    assert_eq!(alert.last_http_status, Some(401));
+
+    // Jobs waiting for the key (15 min), and one waiting for something else (24 h).
+    let idea = idea_with_status(&pool, "queued_analysis").await;
+    queue::enqueue(
+        &pool,
+        &pipeline::analyze_job(idea, AnalysisTrigger::Initial)
+            .run_after(Utc::now() + AUTH_RETRY_MIN),
+    )
+    .await
+    .unwrap();
+    let published = published_idea(&pool, "signalee").await;
+    queue::enqueue(
+        &pool,
+        &pipeline::review_reports_job(published, Utc::now() + Duration::hours(24)),
+    )
+    .await
+    .unwrap();
+
+    // Mistral cannot conclude: nothing changes.
+    let server = app.mistral.as_ref().unwrap();
+    server.reset().await;
+    Mock::given(wiremock::matchers::path("/v1/models"))
+        .respond_with(ResponseTemplate::new(503))
+        .up_to_n_times(1)
+        .mount(server)
+        .await;
+    let (_, body) = admin_call(&app, Method::POST, check, None).await;
+    assert_eq!(body["result"], "unavailable");
+    assert_eq!(body["http_status"], 503);
+    assert!(
+        provider_alerts::get(&pool, MISTRAL_AUTH)
+            .await
+            .unwrap()
+            .is_some()
+    );
+
+    // Accepted: the alert closes and the jobs that waited for the key are due now.
+    Mock::given(wiremock::matchers::method("GET"))
+        .and(wiremock::matchers::path("/v1/models"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": [] })))
+        .mount(server)
+        .await;
+    let (status, body) = admin_call(&app, Method::POST, check, None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(
+        body,
+        json!({
+            "result": "ok", "http_status": 200, "alert_cleared": true, "jobs_due": 1,
+            "message": "Clé Mistral acceptée : alerte close, 1 job IA en attente repart maintenant."
+        })
+    );
+    assert!(
+        provider_alerts::get(&pool, MISTRAL_AUTH)
+            .await
+            .unwrap()
+            .is_none()
+    );
+    assert!(due_in(&pool, JobKind::AnalyzeIdea).await <= 0);
+    assert!(due_in(&pool, JobKind::ReviewReports).await > 23 * 3600);
+    // A check is not a billable AI call.
+    let (calls,): (i64,) = sqlx::query_as("SELECT count(*) FROM ai_calls")
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(calls, 0);
+    // Every check is journaled.
+    let actions: Vec<(String, Value)> =
+        sqlx::query_as("SELECT action, details FROM admin_actions ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    let results: Vec<(&str, &Value)> = actions
+        .iter()
+        .map(|(action, details)| (action.as_str(), &details["result"]))
+        .collect();
+    assert_eq!(
+        results,
+        [
+            ("provider_alert.mistral_check", &json!("refused")),
+            ("provider_alert.mistral_check", &json!("unavailable")),
+            ("provider_alert.mistral_check", &json!("ok")),
+        ]
+    );
+    assert_eq!(actions[2].1["jobs_due"], 1);
+
+    // Without a key for the api: nothing to check.
+    let without = TestApp::new(pool, false, &[]).await;
+    let (status, body) = admin_call(&without, Method::POST, check, None).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"]["code"], "mistral_key_missing");
+}

@@ -97,6 +97,26 @@ pub async fn bring_forward<'e>(
     Ok(result.rows_affected() > 0)
 }
 
+/// Makes due now the queued jobs of `kinds` scheduled within `within` from now (jobs that wait
+/// for a short delay, such as a refused API key: 15 min to 1 h). Returns how many.
+pub async fn bring_forward_kinds<'e>(
+    executor: impl PgExecutor<'e>,
+    kinds: &[JobKind],
+    within: Duration,
+) -> Result<u64, sqlx::Error> {
+    let kinds: Vec<&str> = kinds.iter().map(|k| k.as_str()).collect();
+    let result = sqlx::query(
+        "UPDATE jobs SET run_after = now()
+         WHERE status = 'queued' AND kind = ANY($1) AND run_after > now()
+           AND run_after <= now() + $2 * interval '1 millisecond'",
+    )
+    .bind(&kinds)
+    .bind(millis(within))
+    .execute(executor)
+    .await?;
+    Ok(result.rows_affected())
+}
+
 /// Claims the most urgent due job among `kinds`: highest priority, then oldest `run_after`.
 /// Concurrent workers never get the same job (`FOR UPDATE SKIP LOCKED`).
 pub async fn claim(

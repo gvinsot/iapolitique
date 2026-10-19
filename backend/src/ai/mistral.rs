@@ -149,6 +149,20 @@ impl Timeouts {
     }
 }
 
+/// Outcome of [`MistralClient::check_key`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum KeyCheck {
+    /// The key is accepted (HTTP 2xx).
+    Accepted,
+    /// The key is refused (HTTP 401 or 403).
+    Refused(u16),
+    /// No conclusion: another HTTP status (`Some`), a timeout or an unreachable API (`None`).
+    Inconclusive(Option<u16>),
+}
+
+/// Longest wait of a key check (an administrator waits for it).
+pub const KEY_CHECK_TIMEOUT: Duration = Duration::from_secs(15);
+
 /// Model family of a call: decides the model name and the unit prices.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ModelTier {
@@ -614,6 +628,26 @@ impl MistralClient {
             Attempt::answered(result, usage, Some(self.embed_model.clone()), http_status)
         })
         .await
+    }
+
+    /// Checks the API key with one call that bills nothing: `GET /v1/models` (the models
+    /// available to the key, no tokens). Not recorded in `ai_calls`, which holds billable calls
+    /// of a purpose: the admin action that asks for it is journaled instead (`admin_actions`).
+    /// The body is not read.
+    pub async fn check_key(&self) -> KeyCheck {
+        let response = self
+            .http
+            .get(format!("{}/v1/models", self.base_url))
+            .bearer_auth(self.api_key.expose())
+            .timeout(KEY_CHECK_TIMEOUT.min(self.timeouts.embedding))
+            .send()
+            .await;
+        match response.map(|r| r.status().as_u16()) {
+            Ok(200..=299) => KeyCheck::Accepted,
+            Ok(status @ (401 | 403)) => KeyCheck::Refused(status),
+            Ok(status) => KeyCheck::Inconclusive(Some(status)),
+            Err(_) => KeyCheck::Inconclusive(None),
+        }
     }
 
     /// Runs the attempts of a call, records each of them and sums usage and cost.
@@ -2289,5 +2323,33 @@ mod tests {
             .await;
         structured_call(&client(&server), &pool).await.unwrap();
         assert!(refusal_rows(&pool).await.is_empty());
+    }
+
+    #[tokio::test]
+    async fn the_key_check_bills_nothing_and_reads_the_status_only() {
+        let server = MockServer::start().await;
+        Mock::given(method("GET"))
+            .and(path("/v1/models"))
+            .and(header("authorization", "Bearer test-key"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(json!({ "data": [] })))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(401))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(path("/v1/models"))
+            .respond_with(ResponseTemplate::new(503))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        let client = client(&server);
+        assert_eq!(client.check_key().await, KeyCheck::Accepted);
+        assert_eq!(client.check_key().await, KeyCheck::Refused(401));
+        assert_eq!(client.check_key().await, KeyCheck::Inconclusive(Some(503)));
+        // Nothing mounted any more: another status, no conclusion either.
+        assert_eq!(client.check_key().await, KeyCheck::Inconclusive(Some(404)));
     }
 }

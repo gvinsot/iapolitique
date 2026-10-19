@@ -1096,6 +1096,52 @@
         ]
       }
     },
+    "/api/admin/provider-alerts/mistral/check": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Checks the Mistral API key now (see the module documentation).",
+        "operationId": "checkAdminMistralKey",
+        "responses": {
+          "200": {
+            "description": "Résultat de la vérification.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminMistralKeyCheck"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Aucune clé configurée pour l'api (`mistral_key_missing`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
     "/api/admin/replies/{id}": {
       "put": {
         "tags": [
@@ -3941,6 +3987,43 @@
           }
         }
       },
+      "AdminMistralKeyCheck": {
+        "type": "object",
+        "description": "What a key check found and did.",
+        "required": [
+          "result",
+          "http_status",
+          "alert_cleared",
+          "jobs_due",
+          "message"
+        ],
+        "properties": {
+          "result": {
+            "$ref": "#/components/schemas/MistralKeyCheckResult"
+          },
+          "http_status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32",
+            "description": "HTTP status answered by Mistral (`null`: no answer)."
+          },
+          "alert_cleared": {
+            "type": "boolean",
+            "description": "The `mistral_auth` alert was in progress and is now closed."
+          },
+          "jobs_due": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Mistral jobs that waited for the key and are now due."
+          },
+          "message": {
+            "type": "string",
+            "description": "French message to display as is."
+          }
+        }
+      },
       "AdminPurposeCost": {
         "type": "object",
         "description": "AI calls and estimated costs of one purpose.",
@@ -6184,6 +6267,15 @@
             "description": "Full text of every file of `prompts/` (to display as plain text)."
           }
         }
+      },
+      "MistralKeyCheckResult": {
+        "type": "string",
+        "description": "Result of a key check.",
+        "enum": [
+          "ok",
+          "refused",
+          "unavailable"
+        ]
       },
       "OriginalText": {
         "type": "object",

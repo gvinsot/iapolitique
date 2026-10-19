@@ -630,6 +630,14 @@ def auth_refused_phase(api: Api, mock: str, state_path: str) -> None:
         expect(step in ("accepted", "second_opinion", "dedup"),
                f"idea waits for Mistral in its current step ({step})")
 
+    # « Vérifier la clé Mistral maintenant »: still refused, one call that bills nothing, and
+    # the check is journaled.
+    status, check = api.admin_call("POST", "/provider-alerts/mistral/check")
+    expect(status == 200 and check["result"] == "refused" and check["http_status"] == 401
+           and check["alert_cleared"] is False, "admin key check: still refused (HTTP 401)")
+    status, page = api.admin_call("GET", "/actions?action=provider_alert.mistral_check")
+    expect(status == 200 and page["total"] >= 1, "key check journaled")
+
     # The operator fixes the key: nothing runs before the retry delay.
     mock_auth(mock, None)
     time.sleep(5)

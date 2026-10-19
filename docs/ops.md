@@ -135,7 +135,8 @@ Effets d'une rotation : `ADMIN_API_TOKEN` doit être ressaisi dans l'administrat
 ### 2.1 Rotation de la clé Mistral (secret Docker immuable)
 
 **Quand** : clé compromise, révoquée ou expirée, ou alerte « Clé Mistral refusée depuis le … »
-au tableau de bord admin (HTTP 401/403 de Mistral, AGENTS.md §6.4 ; le worker journalise aussi un
+au tableau de bord admin (son bouton « Vérifier la clé Mistral maintenant » confirme le refus
+sans attendre) (HTTP 401/403 de Mistral, AGENTS.md §6.4 ; le worker journalise aussi un
 `ERROR` par heure). Pendant l'alerte rien n'échoue : les jobs IA attendent (15 min puis jusqu'à
 1 h) et l'api ne tente plus le second avis en ligne.
 
@@ -167,9 +168,15 @@ contrairement aux autres secrets, inutile de passer les services à 0 réplique.
    valeur et le remonte dans les deux services.
 5. Vérifier : `docker secret inspect -f '{{.CreatedAt}}' iapolitique_MISTRAL_API_KEY` (date du
    jour), `get_service_tasks` sur `iapolitique_api` et `iapolitique_worker` (tâches `Running`),
-   puis l'alerte disparaît du tableau de bord au premier appel accepté (au plus 1 h). Relancer
-   alors les idées passées en `analysis_failed` avant la panne : bouton « Relancer toutes les
-   analyses échouées » du tableau de bord (`POST /api/admin/ideas/reanalyze-failed`).
+   puis cliquer **« Vérifier la clé Mistral maintenant »** sur l'alerte du tableau de bord
+   (`POST /api/admin/provider-alerts/mistral/check`, un `GET /v1/models` qui ne facture rien,
+   consigné au journal admin) : « Clé Mistral acceptée » clôt l'alerte et relance aussitôt les
+   jobs IA qui attendaient la clé ; « toujours refusée (HTTP 401/403) » signale une clé encore
+   fausse (reprendre les étapes 2 à 4) ; « vérification impossible » (Mistral ne répond pas)
+   invite à réessayer. Sans ce bouton, l'alerte disparaît au premier appel accepté d'un job (au
+   plus 1 h). Relancer alors les idées passées en `analysis_failed` avant la panne : bouton
+   « Relancer toutes les analyses échouées » du tableau de bord
+   (`POST /api/admin/ideas/reanalyze-failed`).
 6. Révoquer l'ancienne clé dans la console Mistral.
 
 Variantes :

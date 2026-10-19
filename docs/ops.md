@@ -208,7 +208,9 @@ redéploiement.
 - `get_service_tasks("iapolitique_api")` : état des tâches Swarm (redémarrages, échecs de
   healthcheck) ;
 - `get_pipeline_status("iapolitique")`, `get_pipeline_history()` puis `get_pipeline_run(id)` :
-  sortie des étapes build, test, QA et déploiement (dont les résultats de `cargo test`).
+  sortie des étapes build, test, QA et déploiement (dont les résultats des tests backend :
+  `devops/run-tests.sh` lance un à un les exécutables de test compilés au build de l'image,
+  `==> Running …` puis `==> … FAILED` ou `==> All N test executables passed.`).
 
 **Sur un manager** :
 
@@ -234,10 +236,19 @@ Mêmes contrôles que l'étape de test de PulsarCD, depuis `devops/` avec un `.e
 `.env.example`) :
 
 ```bash
-docker compose -f docker-compose.swarm.yml build test     # lint, typecheck, Vitest, build, fmt, clippy
-docker compose -f docker-compose.swarm.yml run --rm test  # cargo test contre test-db
+docker compose -f docker-compose.swarm.yml build test     # lint, typecheck, Vitest, build, fmt, clippy, compilation des tests, cargo deny
+docker compose -f docker-compose.swarm.yml run --rm test  # tests backend (exécutables précompilés) contre test-db
 docker compose -f docker-compose.swarm.yml down
 ```
+
+L'image de test ne contient ni cargo ni `target/` : `run --rm test` exécute
+`devops/run-tests.sh`, qui lance chaque exécutable de test compilé au build (`test-bin/`, AGENTS.md
+§13.5), même après un échec, et sort en erreur si l'un d'eux échoue. Seuls des options de libtest
+et des filtres de noms de tests peuvent lui être passés, transmis à chaque exécutable (premier
+`--` retiré) : `run --rm test -- --nocapture`, `run --rm test scoring`. Les options de cargo
+(`--lib`, `-p`, `--no-fail-fast`…) ne s'appliquent plus ; pour elles, lancer `cargo test` en local
+(§13.5 d'AGENTS.md). Toute modification du code backend demande de reconstruire l'image (`build
+test`) avant `run`.
 
 `test-db` est un service global contraint sur une étiquette qu'aucun nœud ne porte : le swarm
 ne le démarre jamais, alors que `docker compose run` le lance comme dépendance de `test`.

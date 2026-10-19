@@ -56,6 +56,53 @@ BUDGET_IDEA = (
     "régulation automatique du chauffage et l'extinction de l'éclairage la nuit, afin de "
     "diminuer durablement les factures d'électricité et de gaz des ministères."
 )
+# About 3,900 characters: the longest kind of text the decision service sees (AGENTS.md §5.3).
+LONG_IDEA = " ".join([
+    "Créer un service national de gestion de la flotte automobile des administrations de l'État,",
+    "chargé d'acheter, d'entretenir, de partager et de revendre les véhicules de service des",
+    "ministères et de leurs opérateurs, aujourd'hui gérés séparément par chaque administration.",
+    "Chaque ministère dispose de son propre parc, de ses propres contrats d'entretien et de ses",
+    "propres règles d'usage, ce qui conduit à des taux d'utilisation faibles, à des véhicules",
+    "immobilisés la plupart du temps et à des coûts de gestion dispersés entre de nombreux",
+    "services. Le service national tiendrait un inventaire unique des véhicules, mesurerait leur",
+    "utilisation réelle grâce aux carnets de bord déjà tenus, et mettrait en commun les véhicules",
+    "sous-utilisés entre les administrations d'une même ville au moyen d'un outil de réservation",
+    "partagé. Les véhicules dont l'usage resterait trop faible après mutualisation seraient",
+    "revendus aux enchères publiques, et les déplacements correspondants seraient assurés par",
+    "des véhicules partagés, des transports en commun ou des locations de courte durée lorsque",
+    "cela revient moins cher. Les contrats d'entretien, d'assurance et de carburant seraient",
+    "regroupés dans des marchés nationaux allotis par région pour rester accessibles aux",
+    "garages et entreprises locales, avec des prix négociés sur des volumes bien plus",
+    "importants qu'aujourd'hui. Le renouvellement des véhicules suivrait une règle commune",
+    "fondée sur le coût total de possession, en tenant compte du kilométrage, de l'âge, des",
+    "frais d'entretien et de la consommation, au lieu de calendriers fixes propres à chaque",
+    "ministère. Les véhicules opérationnels des forces de sécurité, des services de secours et",
+    "des armées resteraient hors du périmètre, de même que les véhicules spécialisés dont",
+    "l'usage ne peut pas être partagé. La mise en place se ferait en deux temps : d'abord un",
+    "inventaire complet et la mutualisation dans quelques grandes villes pilotes, puis une",
+    "généralisation progressive sur trois ans, avec un bilan public annuel des économies",
+    "constatées, du nombre de véhicules revendus et du taux d'utilisation moyen des véhicules",
+    "conservés. Les agents chargés aujourd'hui de la gestion des parcs dans chaque ministère",
+    "seraient affectés au nouveau service ou à d'autres missions, sans suppression brutale de",
+    "postes, et formés aux nouveaux outils de réservation et de suivi. Les économies attendues",
+    "viennent de la baisse du nombre de véhicules à acheter, assurer et entretenir, des",
+    "meilleurs prix obtenus sur les contrats regroupés et des recettes de revente des véhicules",
+    "inutiles. Un suivi par la direction du budget permettrait de vérifier chaque année que les",
+    "crédits correspondants sont bien réduits dans les budgets des ministères concernés, et",
+    "que les économies ne sont pas compensées par une hausse des frais de déplacement",
+    "remboursés aux agents. Les collectivités territoriales qui le souhaitent pourraient",
+    "adhérer au dispositif par convention, afin de partager les mêmes marchés et les mêmes",
+    "outils, ce qui augmenterait encore les volumes négociés et la taille du parc partagé dans",
+    "les villes où l'État et les collectivités disposent de nombreux bâtiments voisins.",
+    "Enfin, les données d'utilisation anonymisées seraient publiées en données ouvertes afin",
+    "que chacun puisse suivre l'évolution du parc et des coûts au fil des années.",
+    "Les premiers résultats des villes pilotes serviraient à ajuster les règles de partage, la",
+    "durée de conservation des véhicules et le découpage des lots avant la généralisation, et",
+    "un comité réunissant les ministères concernés validerait chaque étape au vu de ces",
+    "résultats, afin que la qualité du service rendu aux agents et aux usagers soit préservée",
+    "pendant toute la transition et que les besoins particuliers des territoires ruraux, où",
+    "les transports en commun sont rares, soient pris en compte dans la taille des parcs locaux.",
+])
 INSULTING_IDEA = (
     "Les fonctionnaires sont tous des connards et des parasites inutiles, il faut virer ces "
     "abrutis sans discussion, ces ordures coûtent bien trop cher aux contribuables honnêtes."
@@ -207,6 +254,14 @@ def main_phase(api: Api) -> None:
            and len(detail["analysis"]["sources"]) == 2, "idea detail with AI marking and sources")
     expect(detail["original"]["personal_data_masked"] in (True, False)
            and detail["score"]["label"] == "score calculé par algorithme", "detail score label")
+
+    # 1b. A long idea is settled (by the synchronous call or by the screening job), never stuck.
+    expect(3_500 <= len(LONG_IDEA) <= 4_000, f"long idea of {len(LONG_IDEA)} characters")
+    status, answer = api.submit_idea(LONG_IDEA)
+    expect(status == 201, f"long idea answered 201 ({status})")
+    print(f"      synchronous outcome of the long idea: {answer['status']}")
+    wait_for("long idea leaves `submitted`",
+             lambda: api.track(answer["tracking_token"])["status"] != "submitted", timeout=240)
 
     # 2. Insulting idea: refused with a statement of reasons.
     status, answer = api.submit_idea(INSULTING_IDEA)

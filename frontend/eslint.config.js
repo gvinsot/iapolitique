@@ -1,6 +1,7 @@
 import js from "@eslint/js";
 import prettier from "eslint-config-prettier";
 import jsxA11y from "eslint-plugin-jsx-a11y";
+import react from "eslint-plugin-react";
 import reactHooks from "eslint-plugin-react-hooks";
 import reactRefresh from "eslint-plugin-react-refresh";
 import { defineConfig, globalIgnores } from "eslint/config";
@@ -19,6 +20,8 @@ export default defineConfig([
       reactRefresh.configs.vite,
       jsxA11y.flatConfigs.strict,
     ],
+    plugins: { react },
+    settings: { react: { version: "detect" } },
     languageOptions: {
       ecmaVersion: 2023,
       globals: globals.browser,
@@ -35,6 +38,27 @@ export default defineConfig([
       ],
       "@typescript-eslint/restrict-template-expressions": ["error", { allowNumber: true }],
       "no-console": ["error", { allow: ["warn", "error"] }],
+      // AGENTS.md §14.1 (XSS): React escapes every text; nothing may bypass it. The JSON-LD of
+      // components/ideas/ai-generated-notice.tsx is a text child, escaped by aiJsonLdScript.
+      "react/no-danger": "error",
+      "react/no-danger-with-children": "error",
+      "react/jsx-no-script-url": "error",
+      "react/jsx-no-target-blank": [
+        "error",
+        { allowReferrer: false, enforceDynamicLinks: "always" },
+      ],
+      "no-restricted-properties": [
+        "error",
+        ...["innerHTML", "outerHTML", "insertAdjacentHTML"].map((property) => ({
+          property,
+          message: "AGENTS.md §14.1: render text with React, never HTML.",
+        })),
+        ...["write", "writeln"].map((property) => ({
+          object: "document",
+          property,
+          message: "AGENTS.md §14.1: render text with React, never HTML.",
+        })),
+      ],
     },
   },
   {
@@ -48,6 +72,8 @@ export default defineConfig([
     files: ["**/*.test.{ts,tsx}", "src/test/**/*.{ts,tsx}"],
     rules: {
       "@typescript-eslint/no-non-null-assertion": "off",
+      // Tests read the rendered markup (innerHTML) to prove it is escaped.
+      "no-restricted-properties": "off",
     },
   },
   {

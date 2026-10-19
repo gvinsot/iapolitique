@@ -52,7 +52,10 @@ export function SourcesList({ sources, className }: { sources: Source[]; classNa
                   {source.used_for}
                 </p>
               ) : null}
-              {url ? <p className="text-xs break-all text-muted-foreground">{url}</p> : null}
+              {/* Any other scheme (javascript:, data:…) is shown as plain text, never a link. */}
+              {source.url ? (
+                <p className="text-xs break-all text-muted-foreground">{url ?? source.url}</p>
+              ) : null}
             </div>
           </li>
         );

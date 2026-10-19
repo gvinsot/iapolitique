@@ -982,12 +982,19 @@ dispensent d'aucune des mesures ci-dessous.
   autorisé, aucun autre outil ni appel de fonction. Un texte qui tente de modifier les règles
   de l'analyse est refusé, et une analyse dont le contenu contredit le schéma est rejetée.
 - **XSS** : React échappe tout ; `dangerouslySetInnerHTML` est interdit (règle ESLint
-  `react/no-danger` en erreur), sauf le JSON-LD sérialisé par une fonction unique qui échappe
-  `<`, `>`, `&`, U+2028 et U+2029. Aucun rendu Markdown ou HTML de contenu venant des visiteurs ou
-  de l'IA : texte brut uniquement (les prompts de la page Méthodologie sont affichés en `<pre>`).
-  Les URL de sources ne sont rendues en lien que si leur schéma est `https:` (ou `http:`), avec
-  `rel="noopener noreferrer nofollow ugc"` et `target="_blank"` ; `javascript:`, `data:` et
-  autres sont affichées en texte.
+  `react/no-danger` en erreur, avec `react/no-danger-with-children`, `react/jsx-no-script-url`,
+  `react/jsx-no-target-blank` et `no-restricted-properties` sur `innerHTML`, `outerHTML`,
+  `insertAdjacentHTML`, `document.write`). Seule exception admise : le JSON-LD, sérialisé par une
+  fonction unique (`aiJsonLdScript`) qui échappe `<`, `>`, `&`, U+2028 et U+2029 ; il est
+  aujourd'hui rendu comme texte enfant de `<script>`, sans `dangerouslySetInnerHTML`. Aucun rendu
+  Markdown ou HTML de contenu venant des visiteurs ou de l'IA : texte brut uniquement (les prompts
+  de la page Méthodologie sont affichés en `<pre>`). Les URL de sources ne sont rendues en lien
+  que si leur schéma est `https:` (ou `http:`), avec `rel="noopener noreferrer nofollow ugc"` et
+  `target="_blank"` ; `javascript:`, `data:` et autres sont affichées en texte. Le test
+  `src/test/xss-guards.test.ts` vérifie en plus, dans les sources : aucun puits HTML ni code
+  dynamique, aucune règle XSS désactivée, aucune dépendance de rendu Markdown/HTML, et le
+  stockage navigateur limité au thème, aux liens de suivi (`localStorage`) et au jeton admin
+  (`sessionStorage`).
 - **CSV / formules** : dans les exports CSV, toute cellule commençant par `=`, `+`, `-`, `@`,
   tabulation ou retour chariot est préfixée par `'` ; encodage UTF-8 avec BOM, séparateur
   documenté, guillemets RFC 4180.

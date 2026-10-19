@@ -297,6 +297,11 @@ mod tests {
         let (response, json) = send(get_req("/panic")).await;
         assert_eq!(response.status(), StatusCode::INTERNAL_SERVER_ERROR);
         assert_eq!(json["error"]["code"], "internal_error");
+        // Generic message: nothing of the panic payload reaches the client.
+        assert_eq!(
+            json["error"]["message"],
+            "Erreur interne, veuillez réessayer plus tard."
+        );
         security::assert_security_headers(response.headers(), "500");
     }
 

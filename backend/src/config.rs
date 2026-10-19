@@ -167,7 +167,23 @@ pub struct WorkerConfig {
 #[derive(Debug, Clone)]
 pub struct DecisionServiceConfig {
     pub url: String,
+    /// `DECISION_SERVICE_TIMEOUT_SECS`: synchronous screening by the api, while the author waits.
     pub timeout: Duration,
+    /// `DECISION_SERVICE_JOB_TIMEOUT_SECS`: screening retried by the worker's `screen_*` jobs.
+    /// Longer, so that a long text slowed down by concurrent requests is settled (AGENTS.md
+    /// §5.3) instead of timing out at every attempt.
+    pub job_timeout: Duration,
+}
+
+impl DecisionServiceConfig {
+    /// The same service with the timeout of the worker's jobs.
+    pub fn for_jobs(&self) -> Self {
+        Self {
+            url: self.url.clone(),
+            timeout: self.job_timeout,
+            job_timeout: self.job_timeout,
+        }
+    }
 }
 
 #[derive(Debug, Clone)]
@@ -289,7 +305,18 @@ impl Config {
                 5u64,
                 1..=60,
             )),
+            job_timeout: Duration::from_secs(env.parse_in(
+                "DECISION_SERVICE_JOB_TIMEOUT_SECS",
+                30u64,
+                1..=120,
+            )),
         };
+        if decision_service.job_timeout < decision_service.timeout {
+            env.problem(
+                "DECISION_SERVICE_JOB_TIMEOUT_SECS must not be below DECISION_SERVICE_TIMEOUT_SECS"
+                    .to_owned(),
+            );
+        }
 
         let analysis_model = env.string("MISTRAL_ANALYSIS_MODEL", "mistral-large-latest");
         let review_model = env.string("MISTRAL_REVIEW_MODEL", &analysis_model);
@@ -639,6 +666,10 @@ mod tests {
             "http://llamacpp-decision-service:8000/v1/systemone"
         );
         assert_eq!(config.decision_service.timeout, Duration::from_secs(5));
+        assert_eq!(config.decision_service.job_timeout, Duration::from_secs(30));
+        let jobs = config.decision_service.for_jobs();
+        assert_eq!(jobs.timeout, Duration::from_secs(30));
+        assert_eq!(jobs.url, config.decision_service.url);
         assert_eq!(config.log.format, LogFormat::Json);
         assert!(config.public_host.is_none());
     }
@@ -796,9 +827,17 @@ mod tests {
             ("DECISION_SERVICE_URL", "llamacpp:8000"),
             ("LOG_FORMAT", "xml"),
             ("RATE_LIMIT_IDEAS_PER_HOUR", "50"),
+            ("DECISION_SERVICE_TIMEOUT_SECS", "20"),
+            ("DECISION_SERVICE_JOB_TIMEOUT_SECS", "10"),
         ]);
         let err = Config::from_lookup(Role::Api, lookup(&env)).unwrap_err();
-        assert_eq!(err.problems.len(), 7, "{err}");
+        assert_eq!(err.problems.len(), 8, "{err}");
+        assert!(
+            err.problems
+                .iter()
+                .any(|p| p.contains("DECISION_SERVICE_JOB_TIMEOUT_SECS")),
+            "{err}"
+        );
     }
 
     #[test]

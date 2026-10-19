@@ -67,8 +67,9 @@ pub async fn run_worker(config: Config) -> anyhow::Result<()> {
     let ctx = JobContext {
         pool: pool.clone(),
         config: Arc::clone(&config),
+        // Screening retries are not awaited by anyone: they get the longer job timeout.
         screener: Screener::new(
-            DecisionClient::new(&config.decision_service)
+            DecisionClient::new(&config.decision_service.for_jobs())
                 .context("cannot build the decision service client")?,
             Arc::clone(&prompts),
         ),

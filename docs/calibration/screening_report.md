@@ -312,6 +312,10 @@ tous les cas sauf neuf, tous refusés à raison :
   jamais. Le délai doit être configurable et dimensionné sur ces mesures (par exemple 20 s pour
   le job de filtrage, l'auteur voyant « en cours de vérification »), ou le texte envoyé au
   service doit être limité. Décision à prendre côté backend (contrat AGENTS.md §5.3).
+  **Retenu (2026-10-19)** : le filtrage synchrone de l'api garde 5 s
+  (`DECISION_SERVICE_TIMEOUT_SECS`, l'auteur attend), les jobs `screen_*` du worker ont 30 s
+  (`DECISION_SERVICE_JOB_TIMEOUT_SECS`) ; une idée longue est donc réglée par le job lancé
+  60 s après le dépôt au lieu d'expirer à chaque tentative.
 
 ## 4. Seuils retenus
 

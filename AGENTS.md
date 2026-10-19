@@ -261,9 +261,13 @@ n'appeler que `/v1/systemone`.
   deux : **zone grise** → second avis Mistral avec la même grille (`prompts/second_opinion.md`).
 - Motif de refus = premier critère en échec selon l'ordre ci-dessus ; libellés en français
   définis dans `screening.yaml`.
-- `state` limité au texte (masqué) de l'idée (< 2 000 tokens). Timeout 5 s ; si le service est
-  indisponible, l'idée reste en `submitted`, un job réessaie, et l'auteur est informé via son lien
-  de suivi. Jobs `screen_idea` / `screen_contribution` / `screen_report` : backoff exponentiel
+- `state` limité au texte (masqué) de l'idée (< 2 000 tokens). Timeout 5 s pour le filtrage
+  synchrone de l'api (`DECISION_SERVICE_TIMEOUT_SECS`), 30 s pour les jobs de filtrage du worker
+  (`DECISION_SERVICE_JOB_TIMEOUT_SECS`) : le service traite les requêtes presque en série et une
+  idée de 4 000 caractères prend 4 s seule, 17 s quand quatre dépôts arrivent ensemble
+  (`docs/calibration/screening_report.md` §3.3). Si le service est indisponible ou trop lent,
+  l'idée reste en `submitted`, un job réessaie (le premier 60 s plus tard), et l'auteur est
+  informé via son lien de suivi. Jobs `screen_idea` / `screen_contribution` / `screen_report` : backoff exponentiel
   plafonné à 1 h, 20 tentatives (une panne d'environ une demi-journée), puis `dead` (admin). Le
   job `second_opinion` (5 tentatives) échoue définitivement sur une erreur Mistral non
   transitoire (4xx hors 408/429) ; le texte reste alors en `second_opinion` jusqu'à l'admin.
@@ -786,7 +790,8 @@ configuration liste tous les problèmes et empêche le démarrage) :
 | `TRUSTED_PROXY_HOPS` | 1 | nombre de proxys (Traefik) qui ajoutent à `X-Forwarded-For` |
 | `DATABASE_MAX_CONNECTIONS`, `DATABASE_ACQUIRE_TIMEOUT_SECS` | 10, 5 | pool PostgreSQL |
 | `WORKER_CONCURRENCY`, `WORKER_POLL_INTERVAL_MS`, `JOB_LOCK_TIMEOUT_SECS` | 2, 2000, 300 | file de jobs |
-| `DECISION_SERVICE_URL`, `DECISION_SERVICE_TIMEOUT_SECS` | `http://llamacpp-decision-service:8000/v1/systemone`, 5 | modèle de décision |
+| `DECISION_SERVICE_URL`, `DECISION_SERVICE_TIMEOUT_SECS` | `http://llamacpp-decision-service:8000/v1/systemone`, 5 | modèle de décision ; délai du filtrage synchrone de l'api (1 à 60 s) |
+| `DECISION_SERVICE_JOB_TIMEOUT_SECS` | 30 | délai du filtrage par les jobs `screen_*` du worker (1 à 120 s, au moins `DECISION_SERVICE_TIMEOUT_SECS`) |
 | `MISTRAL_API_BASE_URL` | `https://api.mistral.ai` | surchargeable pour les tests |
 | `MISTRAL_ANALYSIS_MODEL`, `MISTRAL_REVIEW_MODEL`, `MISTRAL_EMBED_MODEL` | `mistral-large-latest`, = analyse, `mistral-embed` | modèles |
 | `MISTRAL_DAILY_BUDGET_EUR` | 5 | plafond journalier (décimal, `.` ou `,`) |

@@ -898,6 +898,7 @@ mod tests {
         DecisionClient::new(&DecisionServiceConfig {
             url: format!("{}/v1/systemone", server.uri()),
             timeout,
+            job_timeout: timeout,
         })
         .unwrap()
     }
@@ -983,6 +984,7 @@ mod tests {
             // Port 9 (discard) on localhost: nothing listens.
             url: "http://127.0.0.1:9/v1/systemone".into(),
             timeout: Duration::from_secs(2),
+            job_timeout: Duration::from_secs(2),
         })
         .unwrap();
         let err = client.ask(&json!("x"), &Map::new()).await.unwrap_err();

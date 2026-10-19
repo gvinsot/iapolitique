@@ -1,11 +1,15 @@
-import { FileCode2Icon } from "lucide-react";
 import { Link } from "react-router";
 
+import { $api } from "@/api/client";
+import { errorMessage } from "@/api/errors";
 import { paths } from "@/app/paths";
 import { PageHeader } from "@/components/common/page-header";
-import { EmptyState } from "@/components/common/states";
+import { ErrorState, ListSkeleton } from "@/components/common/states";
 import { Container } from "@/components/layout/container";
+import { MethodologyInForce } from "@/components/methodology/methodology-in-force";
 import { useDocumentTitle } from "@/hooks/use-document-title";
+import { usePageDescription } from "@/hooks/use-page-meta";
+import { RULES_SCORE_ANCHOR } from "@/lib/rules";
 
 const tableOfContents = [
   ["filtrage", "Le filtrage"],
@@ -16,8 +20,29 @@ const tableOfContents = [
   ["production", "Textes en vigueur"],
 ] as const;
 
+/** Texts in force, read from the API (AGENTS.md §6.5): never copied into the site. */
+function TextsInForce() {
+  const query = $api.useQuery("get", "/api/methodology", {}, { staleTime: 5 * 60_000 });
+  if (query.isPending) return <ListSkeleton rows={2} label="Chargement des textes en vigueur…" />;
+  if (query.isError) {
+    return (
+      <ErrorState
+        title="Les textes en vigueur n’ont pas pu être chargés"
+        message={errorMessage(query.error)}
+        onRetry={() => {
+          void query.refetch();
+        }}
+      />
+    );
+  }
+  return <MethodologyInForce methodology={query.data} />;
+}
+
 export function MethodologyPage() {
   useDocumentTitle("Méthodologie");
+  usePageDescription(
+    "Prompts, grille de filtrage, seuils et formule du score d’iapolitique, tels qu’utilisés en production et versionnés.",
+  );
 
   return (
     <>
@@ -37,7 +62,11 @@ export function MethodologyPage() {
           <ul>
             <li>ne cherche pas à manipuler une intelligence artificielle ;</li>
             <li>est respectueuse (ni insulte, ni haine, ni incitation à la violence) ;</li>
-            <li>ne vise pas nommément un parti, un élu, une personne ou un groupe ;</li>
+            <li>
+              ne vise pas nommément un parti, un élu, une personne ou un groupe, et ne fait campagne
+              ni pour ni contre un candidat ou un parti ;
+            </li>
+            <li>ne permet de reconnaître aucun particulier (nom, signature, poste précis) ;</li>
             <li>
               propose une mesure qui réduit une dépense ou augmente une recette d’une administration
               publique française ;
@@ -97,22 +126,13 @@ export function MethodologyPage() {
           </p>
 
           <h2 id="production">6. Textes en vigueur</h2>
-          <EmptyState
-            headingLevel={3}
-            icon={FileCode2Icon}
-            title="Prompts, grille et formule en production"
-            description={
-              <>
-                Les textes exacts des prompts, de la grille de filtrage, de la taxonomie et de la
-                formule de score seront affichés ici tels qu’utilisés en production, avec leurs
-                versions. Pour comprendre la démarche d’ensemble, consultez la page{" "}
-                <Link to={paths.about} className="font-medium text-primary underline">
-                  À propos
-                </Link>
-                .
-              </>
-            }
-          />
+          <p>
+            Les textes ci-dessous sont lus en direct depuis le service : ce sont exactement ceux
+            qu’utilisent le filtrage et l’analyse, avec leurs versions. Le détail des paramètres du
+            score figure aussi dans les{" "}
+            <Link to={`${paths.terms}#${RULES_SCORE_ANCHOR}`}>règles du site</Link>.
+          </p>
+          <TextsInForce />
         </article>
 
         <nav aria-label="Sommaire" className="hidden lg:block">

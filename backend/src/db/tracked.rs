@@ -14,6 +14,7 @@
 //!   the admin journal records `escalation.deleted_by_author` (identifiers only).
 //! - **contribution**: the contribution row and its history; its neutral summary is removed from
 //!   the analyses of the idea, and the exports are regenerated if it had been taken into account.
+//!   A merged duplicate's summary likewise leaves the analyses of the idea it was merged into.
 //! - **report**: the report row, its history and the reporter's contact.
 //!
 //! In every case the pending review request, the queued jobs about the erased texts and the
@@ -237,6 +238,18 @@ async fn delete_idea(conn: &mut PgConnection, id: Uuid) -> sqlx::Result<()> {
     delete_tokens(conn, TargetKind::Contribution, &contributions).await?;
     delete_tokens(conn, TargetKind::Report, &reports).await?;
 
+    // A merged duplicate: the summary of its text leaves the analyses of the parent (PRIV-7).
+    if let Some(parent) = parent {
+        let doublons = ids(
+            conn,
+            "SELECT id FROM contributions WHERE source_idea_id = $1",
+            id,
+        )
+        .await?;
+        for doublon in doublons {
+            remove_considered(conn, parent, doublon).await?;
+        }
+    }
     // Foreign keys without cascade first: the contributions (including the duplicates merged
     // into this idea, and the one this idea became if it was merged), then the duplicates.
     sqlx::query("DELETE FROM contributions WHERE idea_id = $1 OR source_idea_id = $1")
@@ -265,6 +278,26 @@ async fn delete_idea(conn: &mut PgConnection, id: Uuid) -> sqlx::Result<()> {
     Ok(())
 }
 
+/// Removes the neutral summary of contribution `contribution` from `contributions_considered` in
+/// every analysis of `idea_id`.
+async fn remove_considered(
+    conn: &mut PgConnection,
+    idea_id: Uuid,
+    contribution: Uuid,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE analyses SET content = jsonb_set(content, '{contributions_considered}',
+             coalesce((SELECT jsonb_agg(e) FROM jsonb_array_elements(content->'contributions_considered') e
+                       WHERE e->>'contribution_id' IS DISTINCT FROM $2), '[]'::jsonb))
+         WHERE idea_id = $1 AND jsonb_typeof(content->'contributions_considered') = 'array'",
+    )
+    .bind(idea_id)
+    .bind(contribution.to_string())
+    .execute(&mut *conn)
+    .await
+    .map(|_| ())
+}
+
 async fn delete_contribution(conn: &mut PgConnection, id: Uuid) -> sqlx::Result<()> {
     let row: Option<(String, Uuid)> =
         sqlx::query_as("SELECT status, idea_id FROM contributions WHERE id = $1 FOR UPDATE")
@@ -276,16 +309,7 @@ async fn delete_contribution(conn: &mut PgConnection, id: Uuid) -> sqlx::Result<
     };
     erase_traces(conn, TargetKind::Contribution, &[id]).await?;
     // The neutral summary written by an analysis goes with the contribution.
-    sqlx::query(
-        "UPDATE analyses SET content = jsonb_set(content, '{contributions_considered}',
-             coalesce((SELECT jsonb_agg(e) FROM jsonb_array_elements(content->'contributions_considered') e
-                       WHERE e->>'contribution_id' IS DISTINCT FROM $2), '[]'::jsonb))
-         WHERE idea_id = $1 AND jsonb_typeof(content->'contributions_considered') = 'array'",
-    )
-    .bind(idea_id)
-    .bind(id.to_string())
-    .execute(&mut *conn)
-    .await?;
+    remove_considered(conn, idea_id, id).await?;
     sqlx::query("DELETE FROM contributions WHERE id = $1")
         .bind(id)
         .execute(&mut *conn)

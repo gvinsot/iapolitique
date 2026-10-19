@@ -576,3 +576,78 @@ async fn deleting_an_escalated_idea_leaves_a_trace_for_the_admin(pool: PgPool) {
         .await;
     assert_eq!(count(&pool, "SELECT count(*) FROM admin_actions").await, 1);
 }
+
+/// PRIV-7: the author of a merged duplicate who deletes it also removes the neutral summary of
+/// its text from every analysis of the parent idea.
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn deleting_a_merged_duplicate_removes_its_summary_from_the_parent(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), false, &[]).await;
+    let idea = published_idea(&pool, "mutualiser-achats").await;
+    let duplicate: Uuid = sqlx::query_scalar(
+        "INSERT INTO ideas (original_text, status, parent_idea_id)
+         VALUES ('Même idée.', 'merged', $1) RETURNING id",
+    )
+    .bind(idea)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let doublon: Uuid = sqlx::query_scalar(
+        "INSERT INTO contributions (idea_id, kind, source_idea_id) VALUES ($1, 'doublon', $2)
+         RETURNING id",
+    )
+    .bind(idea)
+    .bind(duplicate)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    // Two analysis versions mention it.
+    let first: Uuid = sqlx::query_scalar("SELECT current_analysis_id FROM ideas WHERE id = $1")
+        .bind(idea)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    sqlx::query(
+        "INSERT INTO analyses
+         SELECT (jsonb_populate_record(NULL::analyses, to_jsonb(a)
+                 || jsonb_build_object('id', gen_random_uuid(), 'version', a.version + 1))).*
+         FROM analyses a WHERE a.id = $1",
+    )
+    .bind(first)
+    .execute(&pool)
+    .await
+    .unwrap();
+    sqlx::query(
+        "UPDATE analyses SET content = jsonb_build_object('contributions_considered',
+             jsonb_build_array(
+                 jsonb_build_object('contribution_id', $1::text, 'summary', 'Même idée.'),
+                 jsonb_build_object('contribution_id', 'autre', 'summary', 'Autre')))
+         WHERE idea_id = $2",
+    )
+    .bind(doublon)
+    .bind(idea)
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    let token = token_for(&pool, TargetKind::Idea, duplicate).await;
+    assert_eq!(
+        app.post("/api/track/delete", &json!({ "token": token }))
+            .await
+            .0,
+        StatusCode::OK
+    );
+    let considered: Vec<Value> = sqlx::query_scalar(
+        "SELECT content->'contributions_considered' FROM analyses WHERE idea_id = $1",
+    )
+    .bind(idea)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(considered.len(), 2);
+    for list in considered {
+        assert_eq!(
+            list,
+            json!([{ "contribution_id": "autre", "summary": "Autre" }])
+        );
+    }
+}

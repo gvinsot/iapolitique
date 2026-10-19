@@ -480,7 +480,8 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
   - **Suppression** (`db::tracked`), immédiate et dans une transaction : idée → la ligne et tout
     ce qui s'y rattache (historique, analyses, embedding, contributions et signalements
     d'autres visiteurs, doublons fusionnés ; leurs jetons deviennent inconnus), un doublon
-    fusionné quitte aussi l'idée parente (compteur de propositions décrémenté), une idée
+    fusionné quitte aussi l'idée parente (compteur de propositions décrémenté, résumé de son
+    texte retiré de `contributions_considered` de toutes ses analyses), une idée
     publiée ou masquée quitte le site et les exports sont régénérés (job `generate_exports`),
     une escalade en attente part avec l'idée mais laisse dans le journal admin l'action
     `escalation.deleted_by_author` (identifiants de l'idée et de l'escalade, date, aucun texte) ;

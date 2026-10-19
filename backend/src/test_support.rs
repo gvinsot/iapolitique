@@ -173,11 +173,7 @@ pub fn mistral_client(config: &Config) -> Option<MistralClient> {
                 base_delay: Duration::from_millis(5),
                 max_delay: Duration::from_millis(20),
             })
-            .with_timeouts(Timeouts {
-                chat: Duration::from_secs(5),
-                conversation: Duration::from_secs(5),
-                embedding: Duration::from_secs(5),
-            })
+            .with_timeouts(Timeouts::uniform(Duration::from_secs(5)))
     })
 }
 

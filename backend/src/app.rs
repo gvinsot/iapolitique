@@ -92,7 +92,22 @@ pub async fn run_worker(config: Config) -> anyhow::Result<()> {
 /// The Mistral client, `None` without `MISTRAL_API_KEY`.
 fn mistral_client(config: &Config) -> anyhow::Result<Option<MistralClient>> {
     match MistralClient::new(&config.mistral) {
-        Ok(client) => Ok(Some(client)),
+        Ok(client) => {
+            // Not every model accepts `reasoning_effort` (§6.1): name what is sent, so that a
+            // refusal (HTTP 400) is easy to trace back to its setting.
+            let effort = |e: Option<crate::domain::types::ReasoningEffort>| {
+                e.map_or("(omitted)", |e| e.as_str())
+            };
+            let mistral = &config.mistral;
+            tracing::info!(
+                analysis_model = %mistral.analysis_model,
+                analysis_reasoning_effort = effort(mistral.analysis_reasoning_effort),
+                review_model = %mistral.review_model,
+                review_reasoning_effort = effort(mistral.review_reasoning_effort),
+                "Mistral client ready"
+            );
+            Ok(Some(client))
+        }
         Err(MistralError::MissingApiKey) => Ok(None),
         Err(err) => Err(err).context("cannot build the Mistral client"),
     }

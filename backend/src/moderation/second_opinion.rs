@@ -210,6 +210,7 @@ pub async fn run_inline(
         })
         .with_timeouts(Timeouts {
             chat: INLINE_CALL_TIMEOUT,
+            reasoning_chat: INLINE_CALL_TIMEOUT,
             ..Timeouts::default()
         });
     match budget::status(pool, daily_budget).await {

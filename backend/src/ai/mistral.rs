@@ -32,7 +32,7 @@ use super::prompts::{OutputSchema, RenderedPrompt};
 use crate::config::{MistralConfig, MistralPrices, Secret};
 use crate::db::{self, ai_calls::NewAiCall, provider_alerts};
 use crate::domain::money::MicroEur;
-use crate::domain::types::{AiCallStatus, AiProvider, AiPurpose, TargetKind};
+use crate::domain::types::{AiCallStatus, AiProvider, AiPurpose, ReasoningEffort, TargetKind};
 
 /// Dimensions of `mistral-embed` vectors (`idea_embeddings.embedding vector(1024)`).
 pub const EMBEDDING_DIMENSIONS: usize = 1024;
@@ -75,12 +75,17 @@ impl RetryPolicy {
     }
 }
 
-/// Per-request timeouts: web research and long analyses take minutes.
+/// Per-request timeouts: web research and long analyses take minutes, longer still when the
+/// model thinks first (`reasoning_effort` `high`, §6.1).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Timeouts {
     pub chat: Duration,
     pub conversation: Duration,
     pub embedding: Duration,
+    /// Chat completion with `reasoning_effort` `high`.
+    pub reasoning_chat: Duration,
+    /// Conversation with `reasoning_effort` `high`.
+    pub reasoning_conversation: Duration,
 }
 
 impl Default for Timeouts {
@@ -89,6 +94,48 @@ impl Default for Timeouts {
             chat: Duration::from_secs(180),
             conversation: Duration::from_secs(300),
             embedding: Duration::from_secs(30),
+            reasoning_chat: Duration::from_secs(360),
+            reasoning_conversation: Duration::from_secs(480),
+        }
+    }
+}
+
+impl Timeouts {
+    /// The same timeout for every request (tests, inline calls).
+    pub fn uniform(timeout: Duration) -> Self {
+        Self {
+            chat: timeout,
+            conversation: timeout,
+            embedding: timeout,
+            reasoning_chat: timeout,
+            reasoning_conversation: timeout,
+        }
+    }
+
+    fn longest(&self) -> Duration {
+        [
+            self.chat,
+            self.conversation,
+            self.embedding,
+            self.reasoning_chat,
+            self.reasoning_conversation,
+        ]
+        .into_iter()
+        .max()
+        .unwrap_or_default()
+    }
+
+    fn chat(&self, effort: Option<ReasoningEffort>) -> Duration {
+        match effort {
+            Some(ReasoningEffort::High) => self.reasoning_chat,
+            _ => self.chat,
+        }
+    }
+
+    fn conversation(&self, effort: Option<ReasoningEffort>) -> Duration {
+        match effort {
+            Some(ReasoningEffort::High) => self.reasoning_conversation,
+            _ => self.conversation,
         }
     }
 }
@@ -262,6 +309,8 @@ pub struct MistralClient {
     analysis_model: String,
     review_model: String,
     embed_model: String,
+    analysis_effort: Option<ReasoningEffort>,
+    review_effort: Option<ReasoningEffort>,
     prices: MistralPrices,
     retry: RetryPolicy,
     timeouts: Timeouts,
@@ -272,8 +321,7 @@ impl MistralClient {
     pub fn new(config: &MistralConfig) -> Result<Self, MistralError> {
         let api_key = config.api_key.clone().ok_or(MistralError::MissingApiKey)?;
         let timeouts = Timeouts::default();
-        let longest = timeouts.conversation.max(timeouts.chat);
-        let http = super::http_client(longest).map_err(|_| MistralError::Unreachable)?;
+        let http = super::http_client(timeouts.longest()).map_err(|_| MistralError::Unreachable)?;
         Ok(Self {
             http,
             base_url: config.base_url.trim_end_matches('/').to_owned(),
@@ -281,6 +329,8 @@ impl MistralClient {
             analysis_model: config.analysis_model.clone(),
             review_model: config.review_model.clone(),
             embed_model: config.embed_model.clone(),
+            analysis_effort: config.analysis_reasoning_effort,
+            review_effort: config.review_reasoning_effort,
             prices: config.prices.clone(),
             retry: RetryPolicy::default(),
             timeouts,
@@ -301,6 +351,14 @@ impl MistralClient {
         match tier {
             ModelTier::Analysis => &self.analysis_model,
             ModelTier::Review => &self.review_model,
+        }
+    }
+
+    /// `reasoning_effort` sent with the calls of `tier`; `None`: omitted (Mistral's default).
+    pub fn reasoning_effort(&self, tier: ModelTier) -> Option<ReasoningEffort> {
+        match tier {
+            ModelTier::Analysis => self.analysis_effort,
+            ModelTier::Review => self.review_effort,
         }
     }
 
@@ -335,7 +393,8 @@ impl MistralClient {
         schema: &OutputSchema,
         check: impl Fn(&T) -> Result<(), String>,
     ) -> Result<Completion<T>, MistralError> {
-        let body = json!({
+        let effort = self.reasoning_effort(tier);
+        let mut body = json!({
             "model": self.model(tier),
             "messages": [
                 { "role": "system", "content": prompt.system },
@@ -348,9 +407,13 @@ impl MistralClient {
             "temperature": STRUCTURED_TEMPERATURE,
             "stream": false,
         });
+        // A top-level field of chat completions.
+        if let Some(effort) = effort {
+            body["reasoning_effort"] = json!(effort.as_str());
+        }
         self.run(pool, ctx, Some(tier), || async {
             let (response, http_status) = match self
-                .post("/v1/chat/completions", &body, self.timeouts.chat)
+                .post("/v1/chat/completions", &body, self.timeouts.chat(effort))
                 .await
             {
                 Ok(ok) => ok,
@@ -389,7 +452,8 @@ impl MistralClient {
         tier: ModelTier,
         prompt: &RenderedPrompt,
     ) -> Result<Completion<Research>, MistralError> {
-        let body = json!({
+        let effort = self.reasoning_effort(tier);
+        let mut body = json!({
             "model": self.model(tier),
             "instructions": prompt.system,
             "inputs": prompt.user,
@@ -398,9 +462,17 @@ impl MistralClient {
             "store": false,
             "stream": false,
         });
+        // Conversations take it among the completion arguments.
+        if let Some(effort) = effort {
+            body["completion_args"]["reasoning_effort"] = json!(effort.as_str());
+        }
         self.run(pool, ctx, Some(tier), || async {
             let (response, http_status) = match self
-                .post("/v1/conversations", &body, self.timeouts.conversation)
+                .post(
+                    "/v1/conversations",
+                    &body,
+                    self.timeouts.conversation(effort),
+                )
                 .await
             {
                 Ok(ok) => ok,
@@ -931,13 +1003,23 @@ mod tests {
     }
 
     fn client(server: &MockServer) -> MistralClient {
+        client_with(server, &[])
+    }
+
+    /// The test client, with extra variables.
+    fn client_with(server: &MockServer, extra: &[(&str, &str)]) -> MistralClient {
         let base = server.uri();
-        let config = Config::from_lookup(Role::Worker, |key| match key {
-            "DATABASE_CONNECTION_STRING" => Some("postgres://unused/db".into()),
-            "MISTRAL_API_KEY" => Some("test-key".into()),
-            "MISTRAL_API_BASE_URL" => Some(base.clone()),
-            "MISTRAL_REVIEW_MODEL" => Some("mistral-medium-latest".into()),
-            _ => None,
+        let config = Config::from_lookup(Role::Worker, |key| {
+            if let Some((_, value)) = extra.iter().find(|(k, _)| *k == key) {
+                return Some((*value).to_owned());
+            }
+            match key {
+                "DATABASE_CONNECTION_STRING" => Some("postgres://unused/db".into()),
+                "MISTRAL_API_KEY" => Some("test-key".into()),
+                "MISTRAL_API_BASE_URL" => Some(base.clone()),
+                "MISTRAL_REVIEW_MODEL" => Some("mistral-medium-latest".into()),
+                _ => None,
+            }
         })
         .unwrap();
         MistralClient::new(&config.mistral)
@@ -947,11 +1029,7 @@ mod tests {
                 base_delay: Duration::from_millis(5),
                 max_delay: Duration::from_millis(50),
             })
-            .with_timeouts(Timeouts {
-                chat: Duration::from_millis(500),
-                conversation: Duration::from_millis(500),
-                embedding: Duration::from_millis(500),
-            })
+            .with_timeouts(Timeouts::uniform(Duration::from_millis(500)))
     }
 
     fn second_opinion_prompt() -> RenderedPrompt {
@@ -1032,6 +1110,8 @@ mod tests {
             .and(header("authorization", "Bearer test-key"))
             .and(body_partial_json(json!({
                 "model": "mistral-medium-latest",
+                // MISTRAL_REVIEW_REASONING_EFFORT defaults to `none`.
+                "reasoning_effort": "none",
                 "response_format": {
                     "type": "json_schema",
                     "json_schema": { "name": "second_opinion", "strict": true,
@@ -1344,6 +1424,8 @@ mod tests {
             .and(body_partial_json(json!({
                 "model": "mistral-large-latest",
                 "tools": [{ "type": "web_search" }],
+                // MISTRAL_ANALYSIS_REASONING_EFFORT defaults to `high`, inside completion_args.
+                "completion_args": { "temperature": 0.3, "reasoning_effort": "high" },
                 "store": false
             })))
             .respond_with(ResponseTemplate::new(200).set_body_json(conversation_response()))
@@ -1561,6 +1643,129 @@ mod tests {
         assert_eq!(calls[0]["output_tokens"], 2_500);
         let seen = format!("{completion:?} {} {logs}", Value::Array(calls));
         assert!(!seen.contains(THINKING_MARKER), "{seen}");
+    }
+
+    async fn structured_with_tier(
+        client: &MistralClient,
+        pool: &PgPool,
+        tier: ModelTier,
+    ) -> Result<Completion<SecondOpinion>, MistralError> {
+        let schema = test_prompts().second_opinion.output_schema.clone().unwrap();
+        client
+            .structured::<SecondOpinion>(
+                pool,
+                &ctx(),
+                tier,
+                &second_opinion_prompt(),
+                &schema,
+                |_| Ok(()),
+            )
+            .await
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn reasoning_effort_is_sent_per_tier(pool: PgPool) {
+        let server = MockServer::start().await;
+        Mock::given(path("/v1/chat/completions"))
+            .and(body_partial_json(json!({
+                "model": "mistral-large-latest",
+                "reasoning_effort": "high"
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(fixture("chat_high")))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(path("/v1/chat/completions"))
+            .and(body_partial_json(json!({
+                "model": "mistral-medium-latest",
+                "reasoning_effort": "high"
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(fixture("chat_high")))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = client_with(
+            &server,
+            &[
+                ("MISTRAL_ANALYSIS_REASONING_EFFORT", "high"),
+                ("MISTRAL_REVIEW_REASONING_EFFORT", "HIGH"),
+            ],
+        );
+        assert_eq!(
+            client.reasoning_effort(ModelTier::Review),
+            Some(ReasoningEffort::High)
+        );
+        for tier in [ModelTier::Analysis, ModelTier::Review] {
+            let completion = structured_with_tier(&client, &pool, tier).await.unwrap();
+            assert_eq!(completion.value.decision, Decision::Accept, "{tier:?}");
+        }
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn empty_reasoning_effort_is_omitted(pool: PgPool) {
+        let server = MockServer::start().await;
+        let without_effort = |request: &wiremock::Request| {
+            let body: Value = serde_json::from_slice(&request.body).unwrap();
+            body.get("reasoning_effort").is_none()
+                && body.pointer("/completion_args/reasoning_effort").is_none()
+        };
+        Mock::given(path("/v1/chat/completions"))
+            .and(without_effort)
+            .respond_with(ResponseTemplate::new(200).set_body_json(fixture("chat_none")))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(path("/v1/conversations"))
+            .and(without_effort)
+            .and(body_partial_json(
+                json!({ "completion_args": { "temperature": 0.3 } }),
+            ))
+            .respond_with(ResponseTemplate::new(200).set_body_json(fixture("conversation_none")))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = client_with(
+            &server,
+            &[
+                ("MISTRAL_ANALYSIS_REASONING_EFFORT", ""),
+                ("MISTRAL_REVIEW_REASONING_EFFORT", ""),
+            ],
+        );
+        assert_eq!(client.reasoning_effort(ModelTier::Analysis), None);
+        structured_with_tier(&client, &pool, ModelTier::Review)
+            .await
+            .unwrap();
+        let prompt = test_prompts()
+            .analysis_research
+            .render(
+                &PromptVars::new()
+                    .set("today", "2026-10-19")
+                    .set("idea_text", "Idée"),
+            )
+            .unwrap();
+        client
+            .research(
+                &pool,
+                &CallContext::new(AiPurpose::AnalysisResearch),
+                ModelTier::Analysis,
+                &prompt,
+            )
+            .await
+            .unwrap();
+    }
+
+    #[test]
+    fn thinking_gets_longer_timeouts() {
+        let timeouts = Timeouts::default();
+        let high = Some(ReasoningEffort::High);
+        assert_eq!(timeouts.chat(high), Duration::from_secs(360));
+        assert_eq!(timeouts.conversation(high), Duration::from_secs(480));
+        for effort in [None, Some(ReasoningEffort::Off)] {
+            assert_eq!(timeouts.chat(effort), Duration::from_secs(180));
+            assert_eq!(timeouts.conversation(effort), Duration::from_secs(300));
+        }
+        // The client-wide bound never cuts a request short.
+        assert_eq!(timeouts.longest(), Duration::from_secs(480));
     }
 
     #[test]

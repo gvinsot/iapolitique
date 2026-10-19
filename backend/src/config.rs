@@ -13,6 +13,7 @@ use std::str::FromStr;
 use std::time::Duration;
 
 use crate::domain::money::{MicroEur, parse_eur_to_micro};
+use crate::domain::types::ReasoningEffort;
 
 /// Directory where Docker Swarm mounts secrets.
 pub const DEFAULT_SECRETS_DIR: &str = "/run/secrets";
@@ -203,6 +204,11 @@ pub struct MistralConfig {
     pub analysis_model: String,
     pub review_model: String,
     pub embed_model: String,
+    /// `MISTRAL_ANALYSIS_REASONING_EFFORT`: research and structuring of analyses (§6.1). `None`:
+    /// the parameter is omitted (Mistral's default, undocumented).
+    pub analysis_reasoning_effort: Option<ReasoningEffort>,
+    /// `MISTRAL_REVIEW_REASONING_EFFORT`: second opinions and report reviews.
+    pub review_reasoning_effort: Option<ReasoningEffort>,
     pub daily_budget: MicroEur,
     pub prices: MistralPrices,
 }
@@ -357,6 +363,10 @@ impl Config {
             analysis_model,
             review_model,
             embed_model: env.string("MISTRAL_EMBED_MODEL", "mistral-embed"),
+            analysis_reasoning_effort: env
+                .reasoning_effort("MISTRAL_ANALYSIS_REASONING_EFFORT", ReasoningEffort::High),
+            review_reasoning_effort: env
+                .reasoning_effort("MISTRAL_REVIEW_REASONING_EFFORT", ReasoningEffort::Off),
             daily_budget: env.eur("MISTRAL_DAILY_BUDGET_EUR", "5"),
             prices,
         };
@@ -542,6 +552,29 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
             }
         }
         origins
+    }
+
+    /// A Mistral `reasoning_effort` (§6.1). Unlike the other variables, an empty value is not
+    /// "unset": unset gives `default`, empty gives `None` (the parameter is omitted and Mistral
+    /// applies its own default); otherwise `high` or `none`, in any case.
+    fn reasoning_effort(&mut self, key: &str, default: ReasoningEffort) -> Option<ReasoningEffort> {
+        let Some(raw) = (self.lookup)(key) else {
+            return Some(default);
+        };
+        let value = raw.trim();
+        if value.is_empty() {
+            return None;
+        }
+        match value.to_ascii_lowercase().parse() {
+            Ok(effort) => Some(effort),
+            Err(_) => {
+                self.problem(format!(
+                    "{key}: expected `high`, `none` or an empty value (parameter omitted: Mistral's                      default), got `{}`",
+                    value.chars().take(40).collect::<String>()
+                ));
+                Some(default)
+            }
+        }
     }
 
     fn url(&mut self, key: &str, default: &str) -> String {
@@ -802,6 +835,63 @@ mod tests {
             config.decision_service.url,
             "http://192.168.1.27:8001/v1/systemone"
         );
+    }
+
+    #[test]
+    fn reasoning_efforts_default_and_can_be_omitted() {
+        let config = Config::from_lookup(Role::Worker, lookup(&api_env())).unwrap();
+        assert_eq!(
+            config.mistral.analysis_reasoning_effort,
+            Some(ReasoningEffort::High)
+        );
+        assert_eq!(
+            config.mistral.review_reasoning_effort,
+            Some(ReasoningEffort::Off)
+        );
+
+        let mut env = api_env();
+        env.extend([
+            ("MISTRAL_ANALYSIS_REASONING_EFFORT", " NONE "),
+            ("MISTRAL_REVIEW_REASONING_EFFORT", "high"),
+        ]);
+        let config = Config::from_lookup(Role::Worker, lookup(&env)).unwrap();
+        assert_eq!(
+            config.mistral.analysis_reasoning_effort,
+            Some(ReasoningEffort::Off)
+        );
+        assert_eq!(
+            config.mistral.review_reasoning_effort,
+            Some(ReasoningEffort::High)
+        );
+
+        // Set but empty: the parameter is omitted (Mistral's default), unlike an unset variable.
+        let mut env = api_env();
+        env.extend([
+            ("MISTRAL_ANALYSIS_REASONING_EFFORT", ""),
+            ("MISTRAL_REVIEW_REASONING_EFFORT", "  "),
+        ]);
+        let config = Config::from_lookup(Role::Worker, lookup(&env)).unwrap();
+        assert_eq!(config.mistral.analysis_reasoning_effort, None);
+        assert_eq!(config.mistral.review_reasoning_effort, None);
+    }
+
+    #[test]
+    fn unknown_reasoning_efforts_are_refused() {
+        // `medium`, `low`… exist for other models but Mistral documents only `high` and `none`
+        // for its own.
+        let mut env = api_env();
+        env.extend([
+            ("MISTRAL_ANALYSIS_REASONING_EFFORT", "medium"),
+            ("MISTRAL_REVIEW_REASONING_EFFORT", "true"),
+        ]);
+        let err = Config::from_lookup(Role::Worker, lookup(&env)).unwrap_err();
+        assert_eq!(err.problems.len(), 2, "{err}");
+        assert!(
+            err.problems[0].starts_with("MISTRAL_ANALYSIS_REASONING_EFFORT: expected `high`"),
+            "{err}"
+        );
+        assert!(err.problems[0].ends_with("got `medium`"), "{err}");
+        assert!(err.problems[1].starts_with("MISTRAL_REVIEW_REASONING_EFFORT"));
     }
 
     #[test]

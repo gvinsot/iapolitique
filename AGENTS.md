@@ -368,6 +368,18 @@ version de prompt (l'admin peut relancer manuellement).
 - Modèle d'analyse : `mistral-large-latest` (variable `MISTRAL_ANALYSIS_MODEL`). Second avis et
   revue de signalement : même variable par défaut, surchargeable (`MISTRAL_REVIEW_MODEL`).
   Embeddings : `mistral-embed`.
+- **Effort de raisonnement** (`reasoning_effort`, décision de l'éditeur) : `high` pour les deux
+  étapes de l'analyse (`MISTRAL_ANALYSIS_REASONING_EFFORT`), `none` pour le second avis et la
+  revue de signalement (`MISTRAL_REVIEW_REASONING_EFFORT`) ; valeurs admises `high`, `none`, ou
+  vide (variable définie mais vide : paramètre omis, défaut de Mistral, non documenté). Jamais
+  pour les embeddings. Envoyé au premier niveau en chat completions, dans `completion_args` en
+  Conversations. Mistral ne le documente que pour certains modèles (`mistral-large-4-0`,
+  `mistral-medium-3-5`, `mistral-small-latest` à la date de la décision) : un modèle qui le
+  refuse répond HTTP 400 (échec non transitoire, `analysis_failed`) ; changer alors de modèle
+  ou vider la variable. Le worker journalise au démarrage modèles et efforts envoyés. Délais
+  par requête (`ai::mistral::Timeouts`) : chat 180 s et Conversations 300 s, portés à 360 s et
+  480 s avec l'effort `high` (la réflexion allonge la réponse) ; le verrou du job est
+  entretenu pendant ce temps (heartbeat, `JOB_LOCK_TIMEOUT_SECS`).
 - **Recherche web obligatoire** pour le chiffrage (outil `web_search` de l'API Agents /
   Conversations de Mistral). Vérifier la documentation Mistral en vigueur au moment de
   l'implémentation (noms d'outils, sortie structurée).
@@ -817,6 +829,7 @@ décidée par l'humain.
 - Variables non sensibles : `TRAEFIK_HOST`, `ADMIN_HOST`, `ALLOWED_DEV_ORIGINS` (dev uniquement), `LLM_NETWORK`, `DECISION_SERVICE_URL`,
   `DECISION_SERVICE_TIMEOUT_SECS`, `DECISION_SERVICE_JOB_TIMEOUT_SECS`, `MISTRAL_API_BASE_URL`,
   `MISTRAL_ANALYSIS_MODEL`, `MISTRAL_REVIEW_MODEL`, `MISTRAL_EMBED_MODEL`,
+  `MISTRAL_ANALYSIS_REASONING_EFFORT`, `MISTRAL_REVIEW_REASONING_EFFORT`,
   `MISTRAL_DAILY_BUDGET_EUR`, prix unitaires Mistral, `DEDUP_SIMILARITY_THRESHOLD`, limites de
   rate limit, `RUST_LOG`, `DATABASE_MAX_CONNECTIONS`, `WORKER_CONCURRENCY`, `TRUSTED_PROXY_HOPS`,
   et pour PulsarCD seul `DEPLOY_HEALTHCHECK_PATH`, `DEPLOY_CONVERGE_TIMEOUT`. Toute variable de
@@ -888,6 +901,7 @@ configuration liste tous les problèmes et empêche le démarrage) :
 | `DECISION_SERVICE_JOB_TIMEOUT_SECS` | 30 | délai du filtrage par les jobs `screen_*` du worker (1 à 120 s, au moins `DECISION_SERVICE_TIMEOUT_SECS`) |
 | `MISTRAL_API_BASE_URL` | `https://api.mistral.ai` | surchargeable pour les tests |
 | `MISTRAL_ANALYSIS_MODEL`, `MISTRAL_REVIEW_MODEL`, `MISTRAL_EMBED_MODEL` | `mistral-large-latest`, = analyse, `mistral-embed` | modèles |
+| `MISTRAL_ANALYSIS_REASONING_EFFORT`, `MISTRAL_REVIEW_REASONING_EFFORT` | `high`, `none` | `reasoning_effort` envoyé à Mistral (§6.1) : analyse (recherche et structuration) ; second avis et revue de signalement. `high` ou `none` (casse indifférente), toute autre valeur est une erreur de configuration. **Exception à la règle du vide** : variable absente = défaut, variable définie mais vide = paramètre omis (défaut de Mistral) ; le compose les passe donc avec `${VAR-défaut}` (sans `:`) |
 | `MISTRAL_DAILY_BUDGET_EUR` | 5 | plafond journalier (décimal, `.` ou `,`) |
 | `MISTRAL_ANALYSIS_INPUT_EUR_PER_MTOK`, `MISTRAL_ANALYSIS_OUTPUT_EUR_PER_MTOK` | 2, 6 | prix par million de tokens |
 | `MISTRAL_REVIEW_INPUT_EUR_PER_MTOK`, `MISTRAL_REVIEW_OUTPUT_EUR_PER_MTOK` | = analyse | idem pour second avis et revue |

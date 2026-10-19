@@ -116,13 +116,38 @@ pub fn connect_options(
     Ok(options)
 }
 
-/// Opens the pool, retrying for about a minute so that a restarting database does not make the
-/// service crash-loop immediately.
-pub async fn connect(config: &DatabaseConfig, application_name: &str) -> anyhow::Result<PgPool> {
-    let options = connect_options(config.connection_string.expose(), application_name)?;
-    let pool_options = PgPoolOptions::new()
+/// Pool options: size, acquire timeout and, unless `statement_timeout` is zero, the
+/// `statement_timeout` of every connection (AGENTS.md §14.5): a runaway query is cancelled by
+/// PostgreSQL (`57014`, answered `503` by the api) instead of holding a connection.
+pub fn pool_options(config: &DatabaseConfig, statement_timeout: Duration) -> PgPoolOptions {
+    let options = PgPoolOptions::new()
         .max_connections(config.max_connections)
         .acquire_timeout(config.acquire_timeout);
+    if statement_timeout.is_zero() {
+        return options;
+    }
+    let millis = statement_timeout.as_millis().to_string();
+    options.after_connect(move |conn, _meta| {
+        let millis = millis.clone();
+        Box::pin(async move {
+            sqlx::query("SELECT set_config('statement_timeout', $1, false)")
+                .bind(millis)
+                .execute(conn)
+                .await
+                .map(|_| ())
+        })
+    })
+}
+
+/// Opens the pool, retrying for about a minute so that a restarting database does not make the
+/// service crash-loop immediately. `statement_timeout`: see [`pool_options`] (zero: none).
+pub async fn connect(
+    config: &DatabaseConfig,
+    application_name: &str,
+    statement_timeout: Duration,
+) -> anyhow::Result<PgPool> {
+    let options = connect_options(config.connection_string.expose(), application_name)?;
+    let pool_options = pool_options(config, statement_timeout);
 
     let mut delay = Duration::from_millis(500);
     let mut attempt = 1u32;
@@ -141,13 +166,25 @@ pub async fn connect(config: &DatabaseConfig, application_name: &str) -> anyhow:
 }
 
 /// Applies pending migrations. sqlx takes a PostgreSQL advisory lock, so concurrent replicas
-/// starting together apply them only once.
+/// starting together apply them only once. They run on a dedicated connection without
+/// `statement_timeout` (an index build may be long), closed afterwards so that the setting never
+/// leaks into the pool.
 pub async fn migrate(pool: &PgPool) -> anyhow::Result<()> {
-    MIGRATOR
-        .run(pool)
+    let mut conn = pool
+        .acquire()
         .await
-        .context("database migration failed (is the `vector` extension pre-created?)")?;
-    Ok(())
+        .context("cannot connect to the database")?
+        .detach();
+    sqlx::query("SET statement_timeout = 0")
+        .execute(&mut conn)
+        .await
+        .context("cannot disable statement_timeout for the migrations")?;
+    let result = MIGRATOR
+        .run(&mut conn)
+        .await
+        .context("database migration failed (is the `vector` extension pre-created?)");
+    let _ = sqlx::Connection::close(conn).await;
+    result.map(|_| ())
 }
 
 /// Readiness probe: the database answers a trivial query.
@@ -221,3 +258,64 @@ mod tests {
 
 #[cfg(test)]
 mod schema_tests;
+
+#[cfg(test)]
+mod timeout_tests {
+    use super::*;
+    use crate::config::Secret;
+
+    fn database_config() -> DatabaseConfig {
+        DatabaseConfig {
+            connection_string: Secret::new("postgres://unused/db"),
+            max_connections: 2,
+            acquire_timeout: Duration::from_secs(5),
+            statement_timeout: Duration::from_secs(10),
+            job_statement_timeout: Duration::from_secs(120),
+        }
+    }
+
+    #[sqlx::test(migrations = false)]
+    async fn the_pool_cancels_long_statements(pool: PgPool) {
+        let options = (*pool.connect_options()).clone();
+        let limited = pool_options(&database_config(), Duration::from_millis(300))
+            .connect_with(options.clone())
+            .await
+            .unwrap();
+        let timeout: String = sqlx::query_scalar("SHOW statement_timeout")
+            .fetch_one(&limited)
+            .await
+            .unwrap();
+        assert_eq!(timeout, "300ms");
+        let err = sqlx::query("SELECT pg_sleep(2)")
+            .execute(&limited)
+            .await
+            .unwrap_err();
+        let code = err
+            .as_database_error()
+            .and_then(|db| db.code())
+            .map(|code| code.into_owned());
+        assert_eq!(code.as_deref(), Some("57014"));
+        let api = crate::http::error::ApiError::from(err);
+        assert_eq!(api.status, axum::http::StatusCode::SERVICE_UNAVAILABLE);
+        assert_eq!(api.code, "database_unavailable");
+
+        // Migrations are not bound by it, and do not change the pool's setting.
+        migrate(&limited).await.unwrap();
+        let timeout: String = sqlx::query_scalar("SHOW statement_timeout")
+            .fetch_one(&limited)
+            .await
+            .unwrap();
+        assert_eq!(timeout, "300ms");
+
+        // Zero: no timeout (the `migrate` command).
+        let unlimited = pool_options(&database_config(), Duration::ZERO)
+            .connect_with(options)
+            .await
+            .unwrap();
+        let timeout: String = sqlx::query_scalar("SHOW statement_timeout")
+            .fetch_one(&unlimited)
+            .await
+            .unwrap();
+        assert_eq!(timeout, "0");
+    }
+}

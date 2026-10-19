@@ -141,7 +141,7 @@ async fn run(command: Command, config: Config) -> anyhow::Result<()> {
         Command::Api => app::run_api(config).await,
         Command::Worker => app::run_worker(config).await,
         Command::Migrate => {
-            let pool = db::connect(&config.database, "iapolitique-migrate").await?;
+            let pool = db::connect(&config.database, "iapolitique-migrate", Duration::ZERO).await?;
             db::migrate(&pool).await?;
             tracing::info!("migrations applied");
             pool.close().await;

@@ -38,7 +38,12 @@ pub async fn wait_for_shutdown(mut shutdown: watch::Receiver<bool>) {
 pub async fn run_worker(config: Config) -> anyhow::Result<()> {
     let prompts = load_prompts(&config)?;
     let config = Arc::new(config);
-    let pool = db::connect(&config.database, "iapolitique-worker").await?;
+    let pool = db::connect(
+        &config.database,
+        "iapolitique-worker",
+        config.database.job_statement_timeout,
+    )
+    .await?;
     // Normally done by the api; harmless here (advisory lock) and avoids a worker running
     // against a schema it does not know when it starts first.
     db::migrate(&pool).await?;
@@ -150,7 +155,12 @@ pub async fn run_api(config: Config) -> anyhow::Result<()> {
         );
     }
     let config = Arc::new(config);
-    let pool = db::connect(&config.database, "iapolitique-api").await?;
+    let pool = db::connect(
+        &config.database,
+        "iapolitique-api",
+        config.database.statement_timeout,
+    )
+    .await?;
     db::migrate(&pool).await?;
     tracing::info!("database migrations up to date");
 

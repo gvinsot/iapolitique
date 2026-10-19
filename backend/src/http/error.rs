@@ -167,7 +167,15 @@ impl From<sqlx::Error> for ApiError {
     fn from(err: sqlx::Error) -> Self {
         // Database messages never contain user data at this level, only identifiers.
         tracing::error!(error = %err, "database error");
+        // `57014 query_canceled`: the statement exceeded `statement_timeout` (§14.5), the
+        // database is overloaded; like a saturated pool, a temporary unavailability.
+        let canceled =
+            matches!(&err, sqlx::Error::Database(db) if db.code().as_deref() == Some("57014"));
         match err {
+            _ if canceled => Self::service_unavailable(
+                "database_unavailable",
+                "Service momentanément indisponible, veuillez réessayer plus tard.",
+            ),
             sqlx::Error::PoolTimedOut => Self::service_unavailable(
                 "database_unavailable",
                 "Service momentanément indisponible, veuillez réessayer plus tard.",

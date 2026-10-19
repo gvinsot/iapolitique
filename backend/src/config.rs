@@ -139,6 +139,11 @@ pub struct DatabaseConfig {
     pub connection_string: Secret,
     pub max_connections: u32,
     pub acquire_timeout: Duration,
+    /// `DATABASE_STATEMENT_TIMEOUT_SECS`: `statement_timeout` of the api's connections (§14.5).
+    pub statement_timeout: Duration,
+    /// `DATABASE_JOB_STATEMENT_TIMEOUT_SECS`: `statement_timeout` of the worker's connections,
+    /// longer (exports, purge, dashboards of the jobs).
+    pub job_statement_timeout: Duration,
 }
 
 #[derive(Debug, Clone)]
@@ -262,6 +267,16 @@ impl Config {
                 "DATABASE_ACQUIRE_TIMEOUT_SECS",
                 5u64,
                 1..=120,
+            )),
+            statement_timeout: Duration::from_secs(env.parse_in(
+                "DATABASE_STATEMENT_TIMEOUT_SECS",
+                10u64,
+                1..=600,
+            )),
+            job_statement_timeout: Duration::from_secs(env.parse_in(
+                "DATABASE_JOB_STATEMENT_TIMEOUT_SECS",
+                120u64,
+                1..=3_600,
             )),
         };
 
@@ -712,6 +727,11 @@ mod tests {
         assert_eq!(jobs.url, config.decision_service.url);
         assert_eq!(config.log.format, LogFormat::Json);
         assert!(config.http.allowed_dev_origins.is_empty());
+        assert_eq!(config.database.statement_timeout, Duration::from_secs(10));
+        assert_eq!(
+            config.database.job_statement_timeout,
+            Duration::from_secs(120)
+        );
         assert!(config.public_host.is_none());
     }
 

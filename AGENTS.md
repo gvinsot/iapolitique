@@ -793,6 +793,7 @@ configuration liste tous les problèmes et empêche le démarrage) :
 | `HTTP_REQUEST_TIMEOUT_SECS`, `HTTP_BODY_LIMIT_BYTES` | 30, 65536 | limites HTTP |
 | `TRUSTED_PROXY_HOPS` | 1 | nombre de proxys (Traefik) qui ajoutent à `X-Forwarded-For` |
 | `DATABASE_MAX_CONNECTIONS`, `DATABASE_ACQUIRE_TIMEOUT_SECS` | 10, 5 | pool PostgreSQL |
+| `DATABASE_STATEMENT_TIMEOUT_SECS`, `DATABASE_JOB_STATEMENT_TIMEOUT_SECS` | 10, 120 | `statement_timeout` des connexions de l'api et du worker (§14.5) ; une requête annulée (`57014`) répond `503 database_unavailable` ; les migrations s'exécutent sans limite |
 | `WORKER_CONCURRENCY`, `WORKER_POLL_INTERVAL_MS`, `JOB_LOCK_TIMEOUT_SECS` | 2, 2000, 300 | file de jobs |
 | `DECISION_SERVICE_URL`, `DECISION_SERVICE_TIMEOUT_SECS` | `http://llamacpp-decision-service:8000/v1/systemone`, 5 | modèle de décision ; délai du filtrage synchrone de l'api (1 à 60 s) |
 | `DECISION_SERVICE_JOB_TIMEOUT_SECS` | 30 | délai du filtrage par les jobs `screen_*` du worker (1 à 120 s, au moins `DECISION_SERVICE_TIMEOUT_SECS`) |
@@ -1052,7 +1053,9 @@ gabarit et de la configuration, sans donnée personnelle dans le dépôt) et une
 ### 14.5 Abus et déni de service
 
 ALTCHA, rate limits (§7.2), `HTTP_BODY_LIMIT_BYTES`, `HTTP_REQUEST_TIMEOUT_SECS`, sémaphore du
-modèle de décision, budget Mistral (§6.4), `statement_timeout` PostgreSQL côté application,
+modèle de décision, budget Mistral (§6.4), `statement_timeout` PostgreSQL côté application
+(`DATABASE_STATEMENT_TIMEOUT_SECS` pour l'api, `DATABASE_JOB_STATEMENT_TIMEOUT_SECS` pour le worker,
+posé à chaque connexion du pool ; migrations sur une connexion dédiée sans limite),
 concurrence du worker bornée, pagination bornée, regex à temps linéaire uniquement (crate
 `regex`), taille maximale des réponses IA acceptées, exports servis depuis la base (pas de
 génération à la demande).

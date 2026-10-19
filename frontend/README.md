@@ -40,7 +40,9 @@ src/
 │   ├── ui/         primitives shadcn/ui (Radix), adaptées aux jetons et au français
 │   ├── layout/     en-tête, pied de page, lien d'évitement, gestion du focus
 │   ├── common/     en-têtes de page, états vides / erreur / chargement
-│   ├── ideas/      composants métier (formulaire de dépôt, filtres du classement)
+│   ├── ideas/      composants métier (classement, page d'une idée, formulaires)
+│   ├── admin/      tableaux et formulaires de l'administration
+│   ├── tracking/   suivi d'un envoi, exposé des motifs, lien de suivi
 │   └── theme/      thème clair / sombre
 ├── hooks/          hooks transverses
 ├── lib/            fonctions pures testées (format, validation, filtres, libellés)
@@ -64,8 +66,18 @@ src/
   `try/catch`. Tout nouvel usage est décrit dans `/confidentialite`.
 - **Lien de suivi** : le jeton est toujours dans le fragment (`/suivi#<jeton>`) et n'est envoyé à
   l'API que dans le corps d'un `POST` ; l'ancien format `/suivi/<jeton>` est redirigé côté client.
-- **Endpoints sans types générés** (`/api/legal`, `/api/track…`, dépôts) : `src/api/json-fetch.ts`
-  avec validation à l'exécution, à remplacer par `apiClient` quand la spec les contient.
+- **Types d'API** : alias nommés des types générés dans `src/api/types.ts` ; les modèles
+  d'affichage de `src/lib` (`idea-model`, `tracking-model`…) en sont des alias. Les libellés des
+  énumérations viennent de `GET /api/taxonomy` (`useTaxonomyLabels`), avec `src/lib/labels.ts`
+  comme repli typé.
+- **Métadonnées** : `useDocumentTitle`, `usePageDescription` et `useCanonicalLink`
+  (`src/hooks/use-page-meta.ts`) remplacent les valeurs par défaut d'`index.html` le temps de
+  la page.
+- **Tests** : les appels sont simulés par `stubFetch` et `apiRoutes` (`src/test/api-routes.ts`,
+  table « MÉTHODE /chemin » → réponse) ; une requête non prévue échoue comme une coupure réseau.
+  Le défi ALTCHA de test est dans `src/test/altcha.ts`.
+- **Développement local de bout en bout** : api, worker, données de démonstration et serveur
+  Vite sont décrits dans `backend/dev/README.md`.
 - **Accessibilité** : un seul `<h1>` par page, `useDocumentTitle` sur chaque page, libellés sur
   tous les champs, contrastes vérifiés par `src/styles/contrast.test.ts`.
 - **Textes** : interface en français (apostrophe typographique ’), code et commentaires en anglais.

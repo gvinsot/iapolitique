@@ -192,7 +192,7 @@ text_enum! {
 
 text_enum! {
     /// `reasoning_effort` sent to Mistral (§6.1): how much the model thinks before answering.
-    /// Recorded in `ai_calls` and published on the methodology page; `None` (an `Option`) means
+    /// Recorded in `ai_calls` and published on the methodology page; no value (`null`) means
     /// the parameter is omitted and Mistral applies its own default.
     pub enum ReasoningEffort {
         /// Full thinking before the answer (a `thinking` chunk, more output tokens).

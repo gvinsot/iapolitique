@@ -478,7 +478,9 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
 ### 6.4 Budget
 
 - Chaque appel IA est enregistré (`ai_calls` : usage, modèle, tokens, nombre de recherches web,
-  coût estimé, version de prompt, idée, latence, statut).
+  coût estimé, version de prompt, idée, latence, statut, effort de raisonnement envoyé —
+  `reasoning_effort`, `NULL` s'il est omis ou sans objet). Le tableau des coûts de l'admin
+  ventile par usage, fournisseur et effort de raisonnement.
 - Plafond journalier `MISTRAL_DAILY_BUDGET_EUR` (prix unitaires en variables d'environnement
   car ils changent). Plafond atteint : les jobs restent en file jusqu'au lendemain (minuit
   Europe/Paris) ; les seconds avis attendent aussi (l'auteur voit « en cours de vérification »).

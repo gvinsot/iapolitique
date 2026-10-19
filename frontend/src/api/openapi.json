@@ -3947,6 +3947,7 @@
         "required": [
           "purpose",
           "provider",
+          "reasoning_effort",
           "calls_today",
           "calls_month",
           "today_eur",
@@ -3960,6 +3961,17 @@
           "provider": {
             "type": "string",
             "description": "`decision_service` or `mistral`."
+          },
+          "reasoning_effort": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReasoningEffort",
+                "description": "`reasoning_effort` sent to Mistral (§6.1): `high`, `none`, or `null` when omitted or not\napplicable. A purpose whose effort changed during the month has one row per effort."
+              },
+              {
+                "type": "null"
+              }
+            ]
           },
           "calls_today": {
             "type": "integer",
@@ -6208,6 +6220,14 @@
             "description": "Day these counters were computed (Europe/Paris)."
           }
         }
+      },
+      "ReasoningEffort": {
+        "type": "string",
+        "description": "`reasoning_effort` sent to Mistral (§6.1): how much the model thinks before answering.\nRecorded in `ai_calls` and published on the methodology page; no value (`null`) means\nthe parameter is omitted and Mistral applies its own default.",
+        "enum": [
+          "high",
+          "none"
+        ]
       },
       "RejectionReason": {
         "type": "object",

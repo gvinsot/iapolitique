@@ -24,7 +24,7 @@ import {
 } from "@/test/fixtures/admin";
 import { renderComponent } from "@/test/render-component";
 
-import { JobsTable } from "./admin-lists";
+import { CostsTable, JobsTable } from "./admin-lists";
 import { DashboardQueues, DashboardTiles } from "./dashboard-tiles";
 import {
   EscalationsTable,
@@ -319,6 +319,16 @@ describe("JobsTable", () => {
     expect(screen.getByText("Abandonné")).toBeInTheDocument();
     await user.click(screen.getByRole("button", { name: "Relancer le job n° 42" }));
     expect(onRetry).toHaveBeenCalledWith(42);
+  });
+});
+
+describe("CostsTable", () => {
+  it("shows the reasoning effort of each row", () => {
+    renderComponent(<CostsTable costs={dashboardFixture.ai_costs} />);
+    const research = screen.getByRole("row", { name: /Analyse : recherche web/ });
+    expect(within(research).getByText("Élevé (high)")).toBeInTheDocument();
+    const screening = screen.getByRole("row", { name: /Filtrage/ });
+    expect(within(screening).getByText("—")).toBeInTheDocument();
   });
 });
 

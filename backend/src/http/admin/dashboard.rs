@@ -11,6 +11,7 @@ use utoipa::ToSchema;
 use super::euros;
 use crate::ai::budget;
 use crate::db::{dashboard, provider_alerts};
+use crate::domain::types::ReasoningEffort;
 use crate::http::AppState;
 use crate::http::error::{ApiError, ErrorBody};
 use crate::jobs::queue;
@@ -66,6 +67,10 @@ pub struct AdminPurposeCost {
     pub purpose: String,
     /// `decision_service` or `mistral`.
     pub provider: String,
+    /// `reasoning_effort` sent to Mistral (§6.1): `high`, `none`, or `null` when omitted or not
+    /// applicable. A purpose whose effort changed during the month has one row per effort.
+    #[schema(required = true)]
+    pub reasoning_effort: Option<ReasoningEffort>,
     pub calls_today: i64,
     pub calls_month: i64,
     pub today_eur: f64,
@@ -224,6 +229,7 @@ pub async fn dashboard(State(state): State<AppState>) -> Result<Json<AdminDashbo
         .map(|c| AdminPurposeCost {
             purpose: c.purpose,
             provider: c.provider,
+            reasoning_effort: c.reasoning_effort.and_then(|e| e.parse().ok()),
             calls_today: c.calls_today,
             calls_month: c.calls_month,
             today_eur: euros(c.cost_today_micro_eur),

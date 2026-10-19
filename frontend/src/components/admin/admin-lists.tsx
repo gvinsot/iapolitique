@@ -15,6 +15,7 @@ import {
   jobKindLabels,
   jobStatusLabels,
   labelFor,
+  reasoningEffortLabels,
   rightOfReplyDeadline,
 } from "@/lib/admin-model";
 import { formatDate, formatDateTime, formatEurosPrecise, formatInteger } from "@/lib/format";
@@ -112,6 +113,7 @@ export function CostsTable({ costs }: { costs: AdminAiCosts }) {
       headers={[
         "Usage",
         "Fournisseur",
+        "Raisonnement",
         "Appels (jour)",
         "Coût (jour)",
         "Appels (mois)",
@@ -122,7 +124,7 @@ export function CostsTable({ costs }: { costs: AdminAiCosts }) {
     >
       {costs.by_purpose.map((row) => (
         <tr
-          key={`${row.provider}-${row.purpose}`}
+          key={`${row.provider}-${row.purpose}-${row.reasoning_effort ?? ""}`}
           className="border-b tabular-nums last:border-b-0"
         >
           <th scope="row" className="px-4 py-2 text-left font-medium">
@@ -131,6 +133,7 @@ export function CostsTable({ costs }: { costs: AdminAiCosts }) {
           <td className="px-4 py-2">
             {row.provider === "mistral" ? "Mistral AI" : "Modèle de décision (local)"}
           </td>
+          <td className="px-4 py-2">{labelFor(reasoningEffortLabels, row.reasoning_effort)}</td>
           <td className="px-4 py-2">{formatInteger(row.calls_today)}</td>
           <td className="px-4 py-2">{formatEurosPrecise(row.today_eur)}</td>
           <td className="px-4 py-2">{formatInteger(row.calls_month)}</td>

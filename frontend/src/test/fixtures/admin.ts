@@ -51,6 +51,7 @@ export const dashboardFixture: AdminDashboard = {
       {
         purpose: "analysis_research",
         provider: "mistral",
+        reasoning_effort: "high",
         calls_today: 4,
         calls_month: 60,
         today_eur: 1.2,
@@ -59,6 +60,7 @@ export const dashboardFixture: AdminDashboard = {
       {
         purpose: "screening",
         provider: "decision_service",
+        reasoning_effort: null,
         calls_today: 40,
         calls_month: 900,
         today_eur: 0,

@@ -7,7 +7,7 @@ use sqlx::{PgExecutor, PgPool};
 use uuid::Uuid;
 
 use crate::domain::money::MicroEur;
-use crate::domain::types::{AiCallStatus, AiProvider, AiPurpose, TargetKind};
+use crate::domain::types::{AiCallStatus, AiProvider, AiPurpose, ReasoningEffort, TargetKind};
 
 /// A call to record.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -24,6 +24,8 @@ pub struct NewAiCall {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub web_search_count: u64,
+    /// `reasoning_effort` sent to Mistral (§6.1); `None` when omitted or not applicable.
+    pub reasoning_effort: Option<ReasoningEffort>,
     pub cost: MicroEur,
     pub latency: Duration,
     pub status: AiCallStatus,
@@ -46,6 +48,7 @@ impl NewAiCall {
             input_tokens: 0,
             output_tokens: 0,
             web_search_count: 0,
+            reasoning_effort: None,
             cost: MicroEur::ZERO,
             latency: Duration::ZERO,
             status: AiCallStatus::Success,
@@ -66,8 +69,8 @@ pub async fn insert<'e>(executor: impl PgExecutor<'e>, call: &NewAiCall) -> sqlx
     let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO ai_calls (provider, purpose, model, target_kind, target_id, idea_id, job_id,
              prompt_version, input_tokens, output_tokens, web_search_count, cost_micro_eur,
-             latency_ms, status, http_status, error_code)
-         VALUES ($1, $2, $3, $4, $5, (SELECT id FROM ideas WHERE id = $6::uuid), $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+             latency_ms, status, http_status, error_code, reasoning_effort)
+         VALUES ($1, $2, $3, $4, $5, (SELECT id FROM ideas WHERE id = $6::uuid), $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
          RETURNING id",
     )
     .bind(call.provider.as_str())
@@ -91,6 +94,7 @@ pub async fn insert<'e>(executor: impl PgExecutor<'e>, call: &NewAiCall) -> sqlx
             .map(|s| i16::try_from(s).unwrap_or(i16::MAX)),
     )
     .bind(call.error_code.as_deref())
+    .bind(call.reasoning_effort.map(ReasoningEffort::as_str))
     .fetch_one(executor)
     .await?;
     Ok(id)

@@ -149,6 +149,12 @@ async fn dashboard_summarizes_queues_rates_and_costs(pool: PgPool) {
     .execute(&pool)
     .await
     .unwrap();
+    sqlx::query(
+        "UPDATE ai_calls SET reasoning_effort = 'high' WHERE purpose = 'analysis_structuring'",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
     sqlx::query("INSERT INTO ideas (original_text, status) VALUES ('Texte.', 'analysis_failed')")
         .execute(&pool)
         .await
@@ -180,6 +186,14 @@ async fn dashboard_summarizes_queues_rates_and_costs(pool: PgPool) {
         .unwrap();
     assert_eq!(structuring["calls_today"], 2);
     assert_eq!(structuring["today_eur"], 0.5);
+    assert_eq!(structuring["reasoning_effort"], "high");
+    let research = costs["by_purpose"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|p| p["purpose"] == "analysis_research")
+        .unwrap();
+    assert!(research["reasoning_effort"].is_null());
 }
 
 #[sqlx::test(migrator = "crate::db::MIGRATOR")]

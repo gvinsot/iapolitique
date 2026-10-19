@@ -67,8 +67,8 @@ use crate::domain::rules::RuleReference;
 use crate::domain::status::{IdeaStatus, ReportStatus};
 use crate::domain::types::{
     AdminLevel, Confidence, ContributionKind, CriterionVerdict, Decision, EscalationOutcome,
-    IdeaKind, ImpactDirection, LabelVerdict, LegalVehicle, ReportReason, ReviewOutcome,
-    ReviewRequestStatus, ReviewResolution, ScreeningOutcome, TargetKind,
+    IdeaKind, ImpactDirection, LabelVerdict, LegalVehicle, ReasoningEffort, ReportReason,
+    ReviewOutcome, ReviewRequestStatus, ReviewResolution, ScreeningOutcome, TargetKind,
 };
 use crate::jobs::{JobKind, JobStatus};
 use crate::moderation::statement::{Measure, StatementOfReasons};
@@ -162,6 +162,7 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         IdeaSort,
         IdeaKind,
         Confidence,
+        ReasoningEffort,
         LegalVehicle,
         ImpactDirection,
         ContributionKind,

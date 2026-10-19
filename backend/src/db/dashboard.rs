@@ -45,18 +45,21 @@ pub async fn screening_counts(
     .await
 }
 
-/// AI calls and estimated costs (micro-euros) of one purpose, today and this month.
+/// AI calls and estimated costs (micro-euros) of one purpose and reasoning effort, today and
+/// this month.
 #[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
 pub struct PurposeCosts {
     pub purpose: String,
     pub provider: String,
+    /// `high`, `none`, or `None` (omitted or not applicable).
+    pub reasoning_effort: Option<String>,
     pub calls_today: i64,
     pub calls_month: i64,
     pub cost_today_micro_eur: i64,
     pub cost_month_micro_eur: i64,
 }
 
-/// Costs of the current Paris month, by purpose and provider.
+/// Costs of the current Paris month, by purpose, provider and reasoning effort.
 pub async fn costs_by_purpose(pool: &PgPool) -> sqlx::Result<Vec<PurposeCosts>> {
     sqlx::query_as(
         "WITH bounds AS (
@@ -65,7 +68,7 @@ pub async fn costs_by_purpose(pool: &PgPool) -> sqlx::Result<Vec<PurposeCosts>> 
                     date_trunc('month', now() AT TIME ZONE 'Europe/Paris')
                         AT TIME ZONE 'Europe/Paris' AS month_start
          )
-         SELECT c.purpose, c.provider,
+         SELECT c.purpose, c.provider, c.reasoning_effort,
                 count(*) FILTER (WHERE c.created_at >= b.day_start) AS calls_today,
                 count(*) AS calls_month,
                 coalesce(sum(c.cost_micro_eur) FILTER (WHERE c.created_at >= b.day_start), 0)
@@ -73,8 +76,8 @@ pub async fn costs_by_purpose(pool: &PgPool) -> sqlx::Result<Vec<PurposeCosts>> 
                 coalesce(sum(c.cost_micro_eur), 0)::bigint AS cost_month_micro_eur
          FROM ai_calls c CROSS JOIN bounds b
          WHERE c.created_at >= b.month_start
-         GROUP BY c.purpose, c.provider
-         ORDER BY c.purpose, c.provider",
+         GROUP BY c.purpose, c.provider, c.reasoning_effort
+         ORDER BY c.purpose, c.provider, c.reasoning_effort NULLS FIRST",
     )
     .fetch_all(pool)
     .await

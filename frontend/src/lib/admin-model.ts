@@ -125,6 +125,12 @@ export const aiPurposeLabels: Record<string, string> = {
   report_review: "Revue des signalements",
 };
 
+/** `reasoning_effort` sent to Mistral (AGENTS.md §6.1); no value: omitted or not applicable. */
+export const reasoningEffortLabels: Record<string, string> = {
+  high: "Élevé (high)",
+  none: "Minimal (none)",
+};
+
 /** A label from a map, or the raw key when the backend sent a value unknown here. */
 export function labelFor(labels: Record<string, string>, key: string | null | undefined): string {
   if (!key) return "—";

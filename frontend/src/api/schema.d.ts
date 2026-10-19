@@ -1220,6 +1220,7 @@ export interface components {
             purpose: string;
             /** @description `decision_service` or `mistral`. */
             provider: string;
+            reasoning_effort: components["schemas"]["ReasoningEffort"] | null;
             /** Format: int64 */
             calls_today: number;
             /** Format: int64 */
@@ -2051,6 +2052,13 @@ export interface components {
              */
             computed_on: string;
         };
+        /**
+         * @description `reasoning_effort` sent to Mistral (§6.1): how much the model thinks before answering.
+         *     Recorded in `ai_calls` and published on the methodology page; no value (`null`) means
+         *     the parameter is omitted and Mistral applies its own default.
+         * @enum {string}
+         */
+        ReasoningEffort: "high" | "none";
         /** @description A refusal reason of the screening grid and the rule it applies. */
         RejectionReason: {
             code: string;
@@ -2480,6 +2488,7 @@ export type SchemaMethodologyFileKind = components['schemas']['MethodologyFileKi
 export type SchemaMethodologyResponse = components['schemas']['MethodologyResponse'];
 export type SchemaOriginalText = components['schemas']['OriginalText'];
 export type SchemaPublicStats = components['schemas']['PublicStats'];
+export type SchemaReasoningEffort = components['schemas']['ReasoningEffort'];
 export type SchemaRejectionReason = components['schemas']['RejectionReason'];
 export type SchemaReportReason = components['schemas']['ReportReason'];
 export type SchemaReportStatus = components['schemas']['ReportStatus'];

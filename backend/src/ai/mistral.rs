@@ -558,6 +558,7 @@ impl MistralClient {
                 input_tokens: attempt.usage.input_tokens,
                 output_tokens: attempt.usage.output_tokens,
                 web_search_count: attempt.usage.web_searches,
+                reasoning_effort: tier.and_then(|tier| self.reasoning_effort(tier)),
                 cost,
                 latency,
                 status: attempt
@@ -1142,6 +1143,7 @@ mod tests {
         assert_eq!(calls[0]["prompt_version"], "1.0.0");
         assert_eq!(calls[0]["target_kind"], "idea");
         assert_eq!(calls[0]["http_status"], 200);
+        assert_eq!(calls[0]["reasoning_effort"], "none");
     }
 
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]
@@ -1461,6 +1463,7 @@ mod tests {
         let calls = calls(&pool).await;
         assert_eq!(calls[0]["web_search_count"], 2);
         assert_eq!(calls[0]["purpose"], "analysis_research");
+        assert_eq!(calls[0]["reasoning_effort"], "high");
     }
 
     #[test]
@@ -1752,6 +1755,9 @@ mod tests {
             )
             .await
             .unwrap();
+        let calls = calls(&pool).await;
+        assert_eq!(calls.len(), 2);
+        assert!(calls.iter().all(|c| c["reasoning_effort"].is_null()));
     }
 
     #[test]
@@ -1848,7 +1854,10 @@ mod tests {
         assert!((completion.value[1][0] - 0.1).abs() < 1e-6);
         // 0.1 €/Mtok.
         assert_eq!(completion.cost, MicroEur(100_000));
-        assert_eq!(calls(&pool).await[0]["model"], "mistral-embed");
+        let calls = calls(&pool).await;
+        assert_eq!(calls[0]["model"], "mistral-embed");
+        // Never sent with embeddings.
+        assert_eq!(calls[0]["reasoning_effort"], Value::Null);
     }
 
     #[test]

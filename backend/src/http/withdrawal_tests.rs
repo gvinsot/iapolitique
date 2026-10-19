@@ -265,6 +265,16 @@ async fn a_withdrawn_idea_leaves_every_public_surface(pool: PgPool) {
         .await,
         1
     );
+    // Due now with the top priority: a withdrawn idea never stays downloadable (§7.4).
+    assert_eq!(
+        count(
+            &pool,
+            "SELECT count(*) FROM jobs WHERE kind = 'generate_exports' AND status = 'queued'
+               AND run_after <= now() AND priority = 60"
+        )
+        .await,
+        1
+    );
 
     // Gone from the public site, the API and the exports, with what was attached to it.
     let (list, search, detail, stats, exported) = public_view(&app).await;

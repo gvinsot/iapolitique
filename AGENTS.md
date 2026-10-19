@@ -418,9 +418,10 @@ version de prompt (l'admin peut relancer manuellement).
     `ideas.contribution_count` compte les contributions intégrées hors doublons ;
   - le budget est vérifié avant chaque appel (l'idée reste `analyzing` jusqu'au lendemain) ;
     des entrées arrivées pendant l'analyse la relancent aussitôt (même clé de dédoublonnage) ;
-  - une publication (comme un masquage ou une suppression) programme la régénération des
-    exports (job `generate_exports`, clé `generate_exports`, différé de 2 min pour regrouper
-    les changements).
+  - une publication programme la régénération des exports (job `generate_exports`, clé
+    `generate_exports`, différé de 2 min pour regrouper les changements) ; un masquage (quel
+    qu'en soit le motif, escalade comprise), un retrait ou une suppression par l'auteur la
+    demande **aussitôt**, sans regroupement (§7.4).
 
 ### 6.2 Contenu de l'analyse
 
@@ -498,7 +499,9 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
   `analysis_failed` avant la correction se relancent en masse
   (`POST /api/admin/ideas/reanalyze-failed`, §13.2). Remplacer la clé (secret Docker immuable) :
   `docs/ops.md` §2.1.
-- Priorité de la file : second avis > signalement > nouvelle idée > contribution > relance admin.
+- Priorité de la file : second avis > signalement > nouvelle idée > contribution > relance admin
+  (au-dessus de tout : la régénération des exports après un masquage, un retrait ou une
+  suppression, §7.4 ; en dessous : purge et autres régénérations).
 - QA : plafond bien plus bas (dans `.env.qa`).
 
 ### 6.5 Versionnement et méthodologie publique
@@ -644,10 +647,21 @@ Pas d'API publique documentée au MVP.
 - **Exclus** : idées refusées, masquées, retirées par leur auteur ou en attente, jetons et hash,
   journaux de filtrage,
   signalements, coordonnées, horodatages fins (dates au jour près).
-- Régénéré chaque nuit et après tout masquage ou suppression ; fichiers datés et versionnés.
+- Régénéré chaque nuit, après toute publication et **aussitôt** après tout masquage, retrait
+  ou suppression : une idée masquée ou retirée ne reste jamais téléchargeable ; fichiers datés
+  et versionnés.
 - Mise en œuvre (`jobs/exports.rs`, `db/exports.rs`) : job `generate_exports` chaque nuit à
-  04:15 (Europe/Paris) et 2 min après toute publication, ré-analyse, masquage ou suppression
-  (clé `generate_exports`). Une génération écrit quatre lignes dans `exports` (même
+  04:15 (Europe/Paris) et 2 min après toute publication ou ré-analyse (clé `generate_exports`,
+  `pipeline::exports_job` : les changements arrivés entre-temps sont regroupés). Un masquage
+  (admin, revue de signalement, escalade), un retrait ou une suppression par l'auteur appelle
+  `pipeline::regenerate_exports_now` dans sa transaction : une génération en file devient due
+  aussitôt avec la priorité la plus haute (`priority::URGENT_EXPORTS`), sinon un job urgent sans
+  clé est créé (une génération déjà en cours a pu lire l'idée avant le changement). Avant
+  d'écrire ses fichiers, une génération verrouille (`FOR SHARE`) les idées qu'elle exporte et
+  vérifie qu'elles sont toutes encore publiées (`db::exports::still_published`) ; sinon elle
+  recommence (3 fois, puis le job repasse 10 s plus tard sans consommer de tentative) : aucune
+  génération enregistrée ne contient une idée qui n'était plus publiée à ce moment. Une
+  génération écrit quatre lignes dans `exports` (même
   `generation_id`, `export_schema_version` = `EXPORT_SCHEMA_VERSION`, actuellement `1.0`) :
   `json` (`ideas.json` : `metadata`, `licence_text`, `ideas`), `csv` (`ideas.csv`, colonnes
   fixes, listes jointes par « | »), `license` (texte officiel Etalab embarqué depuis

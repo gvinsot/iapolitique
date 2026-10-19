@@ -247,3 +247,127 @@ fn the_handler_runs_every_night() {
     // Changes regenerate the exports through the same kind, debounced.
     assert_eq!(pipeline::exports_job().kind, JobKind::GenerateExports);
 }
+
+/// Kind, priority, due now, dedupe key of the queued or running export jobs, oldest first.
+async fn export_jobs(pool: &PgPool) -> Vec<(String, i16, bool, Option<String>)> {
+    sqlx::query_as(
+        "SELECT status, priority, run_after <= now(), dedupe_key FROM jobs
+         WHERE kind = 'generate_exports' ORDER BY id",
+    )
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn content_leaving_the_site_regenerates_the_exports_right_away(pool: PgPool) {
+    use crate::jobs::priority::{MAINTENANCE, URGENT_EXPORTS};
+    let mut conn = pool.acquire().await.unwrap();
+    // Nothing queued: an urgent job, due now, without dedupe key.
+    assert!(
+        pipeline::regenerate_exports_now(&mut conn)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    assert_eq!(
+        export_jobs(&pool).await,
+        vec![("queued".into(), URGENT_EXPORTS, true, None)]
+    );
+    // A publication meanwhile keeps its grouping (and is absorbed by nothing: other key).
+    sqlx::query("DELETE FROM jobs")
+        .execute(&pool)
+        .await
+        .unwrap();
+    queue::enqueue(&pool, &pipeline::exports_job())
+        .await
+        .unwrap();
+    assert_eq!(
+        export_jobs(&pool).await,
+        vec![(
+            "queued".into(),
+            MAINTENANCE,
+            false,
+            Some(pipeline::EXPORTS_KEY.into())
+        )]
+    );
+    // A queued regeneration that has not read anything yet is brought forward.
+    assert_eq!(
+        pipeline::regenerate_exports_now(&mut conn).await.unwrap(),
+        None
+    );
+    assert_eq!(
+        export_jobs(&pool).await,
+        vec![(
+            "queued".into(),
+            URGENT_EXPORTS,
+            true,
+            Some(pipeline::EXPORTS_KEY.into())
+        )]
+    );
+    // A running one may have read the idea already: another one is enqueued after it.
+    queue::claim(&pool, "test-worker", &[JobKind::GenerateExports])
+        .await
+        .unwrap()
+        .unwrap();
+    assert!(
+        pipeline::regenerate_exports_now(&mut conn)
+            .await
+            .unwrap()
+            .is_some()
+    );
+    let jobs = export_jobs(&pool).await;
+    assert_eq!(jobs.len(), 2);
+    assert_eq!(jobs[1], ("queued".into(), URGENT_EXPORTS, true, None));
+}
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn a_generation_never_stores_an_idea_that_left_the_site(pool: PgPool) {
+    let first = published_idea(&pool, "premiere").await;
+    let second = published_idea(&pool, "seconde").await;
+    let ids = [first, second];
+    let mut tx = pool.begin().await.unwrap();
+    assert!(exports::still_published(&mut tx, &ids).await.unwrap());
+    // A masking that comes while the generation is stored waits for it, then regenerates.
+    let hide = tokio::spawn({
+        let pool = pool.clone();
+        async move {
+            sqlx::query("UPDATE ideas SET status = 'hidden', hidden_at = now() WHERE id = $1")
+                .bind(first)
+                .execute(&pool)
+                .await
+                .unwrap();
+        }
+    });
+    tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+    assert!(
+        !hide.is_finished(),
+        "the masking must wait for the stored generation"
+    );
+    tx.commit().await.unwrap();
+    hide.await.unwrap();
+
+    // Masked before the generation is stored: the generation is stale.
+    let mut tx = pool.begin().await.unwrap();
+    assert!(!exports::still_published(&mut tx, &ids).await.unwrap());
+    assert!(exports::still_published(&mut tx, &[second]).await.unwrap());
+    // A vanished idea too.
+    assert!(
+        !exports::still_published(&mut tx, &[second, uuid::Uuid::new_v4()])
+            .await
+            .unwrap()
+    );
+    tx.rollback().await.unwrap();
+
+    // The handler exports what is still published.
+    let app = TestApp::new(pool.clone(), false, &[]).await;
+    run(&app).await;
+    let document: Value = serde_json::from_slice(&latest(&pool).await["json"]).unwrap();
+    let slugs: Vec<&str> = document["ideas"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|idea| idea["slug"].as_str().unwrap())
+        .collect();
+    assert_eq!(slugs, vec!["seconde"]);
+}

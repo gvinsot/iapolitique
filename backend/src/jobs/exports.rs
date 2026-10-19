@@ -1,5 +1,8 @@
-//! Open data exports (AGENTS.md §7.4), job `generate_exports`: every night, and 2 minutes after
-//! a publication, a masking or a deletion (debounced, [`pipeline::exports_job`]).
+//! Open data exports (AGENTS.md §7.4), job `generate_exports`: every night, 2 minutes after a
+//! publication or a re-analysis (debounced, [`pipeline::exports_job`]), and right away, with the
+//! top priority, after a masking, a withdrawal or a deletion
+//! ([`pipeline::regenerate_exports_now`]). A generation is stored only if every idea it holds is
+//! still published at that moment ([`exports::still_published`]), otherwise it starts again.
 //!
 //! One generation stores four files in `exports` (served from the database by the api):
 //!
@@ -20,7 +23,7 @@
 
 use std::collections::BTreeMap;
 
-use chrono::NaiveDate;
+use chrono::{NaiveDate, Utc};
 use serde_json::{Map, Value, json};
 use uuid::Uuid;
 
@@ -418,6 +421,12 @@ pub fn build(
     ]
 }
 
+/// Generations started again when ideas leave the site while they are built; beyond, the job
+/// runs again a moment later.
+pub const MAX_STALE_GENERATIONS: u32 = 3;
+/// Delay before that next run (no attempt consumed).
+pub const STALE_RETRY: chrono::Duration = chrono::Duration::seconds(10);
+
 /// Handler of [`JobKind::GenerateExports`].
 #[derive(Debug, Default, Clone, Copy)]
 pub struct ExportsHandler;
@@ -439,28 +448,38 @@ impl JobHandler for ExportsHandler {
                 .public_host
                 .as_deref()
                 .unwrap_or(DEFAULT_PUBLIC_HOST);
-            let ideas = exports::published_ideas(pool).await?;
-            let contributions = exports::integrated_contributions(pool).await?;
-            let today = exports::today(pool).await?;
-            let files = build(host, today, &ideas, &contributions);
-            let mut tx = pool.begin().await?;
-            let generation = exports::insert(
-                &mut tx,
-                &files,
-                ideas.len(),
-                SCORING_VERSION,
-                EXPORT_SCHEMA_VERSION,
-            )
-            .await?;
-            tx.commit().await?;
-            tracing::info!(
-                generation_id = %generation,
-                ideas = ideas.len(),
-                json_bytes = files[0].content.len(),
-                csv_bytes = files[1].content.len(),
-                "open data exports generated"
-            );
-            Ok(JobOutcome::Done)
+            for _ in 0..MAX_STALE_GENERATIONS {
+                let ideas = exports::published_ideas(pool).await?;
+                let contributions = exports::integrated_contributions(pool).await?;
+                let today = exports::today(pool).await?;
+                let files = build(host, today, &ideas, &contributions);
+                let ids: Vec<Uuid> = ideas.iter().map(|idea| idea.id).collect();
+                let mut tx = pool.begin().await?;
+                // An idea masked or withdrawn since it was read must not be stored (§7.4).
+                if !exports::still_published(&mut tx, &ids).await? {
+                    tx.rollback().await?;
+                    tracing::info!("an exported idea left the site meanwhile: exports rebuilt");
+                    continue;
+                }
+                let generation = exports::insert(
+                    &mut tx,
+                    &files,
+                    ideas.len(),
+                    SCORING_VERSION,
+                    EXPORT_SCHEMA_VERSION,
+                )
+                .await?;
+                tx.commit().await?;
+                tracing::info!(
+                    generation_id = %generation,
+                    ideas = ideas.len(),
+                    json_bytes = files[0].content.len(),
+                    csv_bytes = files[1].content.len(),
+                    "open data exports generated"
+                );
+                return Ok(JobOutcome::Done);
+            }
+            Ok(JobOutcome::RetryAt(Utc::now() + STALE_RETRY))
         })
     }
 }

@@ -6,6 +6,7 @@ use serde_json::{Value, json};
 use sqlx::PgPool;
 use uuid::Uuid;
 
+use crate::jobs::priority;
 use crate::test_support::{
     IdeaSpec, TestApp, admin_actions, admin_call, admin_get, idea_with_status, listed_idea,
 };
@@ -33,6 +34,17 @@ async fn queued_jobs(pool: &PgPool) -> Vec<(String, Value)> {
         .fetch_all(pool)
         .await
         .unwrap()
+}
+
+/// Whether the queued regeneration of the exports is due now, and its priority.
+async fn exports_job_due(pool: &PgPool) -> (bool, i16) {
+    sqlx::query_as(
+        "SELECT run_after <= now(), priority FROM jobs
+         WHERE kind = 'generate_exports' AND status = 'queued'",
+    )
+    .fetch_one(pool)
+    .await
+    .unwrap()
 }
 
 /// A refused idea with its screening.
@@ -132,6 +144,11 @@ async fn hides_republishes_and_reanalyzes_ideas(pool: PgPool) {
     assert_eq!(body["status"], "hidden");
     assert_eq!(body["hidden_reason"], "admin");
     assert_eq!(queued_jobs(&pool).await[0].0, "generate_exports");
+    // Out of the exports right away, not two minutes later (§7.4).
+    assert_eq!(
+        exports_job_due(&pool).await,
+        (true, priority::URGENT_EXPORTS)
+    );
     let (status, body) = post(&app, &hide, Some(reason.clone())).await;
     assert_eq!(status, StatusCode::CONFLICT);
     assert_eq!(body["error"]["code"], "idea_not_published");
@@ -147,9 +164,15 @@ async fn hides_republishes_and_reanalyzes_ideas(pool: PgPool) {
         crate::test_support::get_json(&app.router, "/api/ideas/mutualiser-les-achats", &[]).await;
     assert_eq!(public, StatusCode::NOT_FOUND);
 
+    sqlx::query("DELETE FROM jobs WHERE kind = 'generate_exports'")
+        .execute(&pool)
+        .await
+        .unwrap();
     let (status, body) = post(&app, &republish, Some(reason.clone())).await;
     assert_eq!(status, StatusCode::OK, "{body}");
     assert_eq!(body["status"], "published");
+    // A publication keeps the two-minute grouping.
+    assert_eq!(exports_job_due(&pool).await, (false, priority::MAINTENANCE));
     assert_eq!(body["hidden_reason"], Value::Null);
     assert_eq!(body["hidden_at"], Value::Null);
     let (status, body) = post(&app, &republish, Some(reason)).await;

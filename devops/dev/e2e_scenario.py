@@ -426,6 +426,13 @@ def main_phase(api: Api) -> None:
            "report outcome visible on the tracking page")
     status, _ = api.get(f"/api/ideas/{slug_a}")
     expect(status == 404, "escalated idea hidden from the portal")
+    # A masking regenerates the exports right away, with the top priority (no 2-minute grouping,
+    # AGENTS.md §7.4): the hidden idea leaves the downloadable files within seconds.
+    def export_without_a() -> Any:
+        status, _, raw = api.request("GET", api.public + "/api/exports/ideas.json")
+        return status == 200 and slug_a.encode() not in raw
+    wait_for("hidden escalated idea out of the exports within seconds", export_without_a,
+             timeout=60, interval=1)
     hidden = api.track(token_a)
     expect(hidden["status"] == "hidden" and hidden["decision"]["measure"] == "hidden",
            "author sees the masking with its statement")
@@ -457,12 +464,9 @@ def main_phase(api: Api) -> None:
            "admin reads the sealed copy of the withdrawn escalated idea")
     status, page = api.admin_call("GET", f"/actions?action=escalation.seal_read&target_id={eid}")
     expect(status == 200 and page["total"] >= 1, "sealed copy read journaled")
-    # Exports are regenerated 2 minutes after a change (EXPORTS_DEBOUNCE, AGENTS.md §7.4).
-    def export_without_a() -> Any:
-        status, _, raw = api.request("GET", api.public + "/api/exports/ideas.json")
-        return status == 200 and slug_a.encode() not in raw
+    # The withdrawal regenerates them right away too.
     wait_for("withdrawn escalated idea absent from the exports", export_without_a,
-             timeout=400, interval=10)
+             timeout=60, interval=1)
 
     # 9. Other admin endpoints.
     status, dash = api.admin_call("GET", "/dashboard")

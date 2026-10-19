@@ -242,6 +242,17 @@ async fn hide_and_escalate(pool: PgPool) {
             .iter()
             .any(|(kind, _, _)| kind == "generate_exports")
     );
+    // Masked: out of the exports right away, with the top priority (§7.4).
+    let (due, priority): (bool, i16) = sqlx::query_as(
+        "SELECT run_after <= now(), priority FROM jobs WHERE kind = 'generate_exports'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        (due, priority),
+        (true, crate::jobs::priority::URGENT_EXPORTS)
+    );
     let (escalations,): (i64,) = sqlx::query_as("SELECT count(*) FROM escalations")
         .fetch_one(&pool)
         .await

@@ -41,6 +41,9 @@ mod auth_tests;
 /// Queue priorities: a higher value is claimed first (AGENTS.md §6.4:
 /// second opinion > report > new idea > contribution > admin relaunch).
 pub mod priority {
+    /// Regeneration of the exports after content left the site (masking, withdrawal, deletion,
+    /// §7.4): above everything, so that it never stays downloadable behind a queue of analyses.
+    pub const URGENT_EXPORTS: i16 = 60;
     pub const SECOND_OPINION: i16 = 50;
     pub const REPORT: i16 = 40;
     pub const NEW_IDEA: i16 = 30;

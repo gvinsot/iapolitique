@@ -101,6 +101,7 @@ sont évaluées pour cette synthèse, selon l'impact et la facilité d'exploitat
 | INJ-2 | moyenne\* | Un texte de visiteur pouvait fermer sa balise de cadre dans le prompt | NFKC puis remplacement de tout chevron des valeurs substituées |
 | INJ-3 | moyenne\* | Une analyse pouvait citer des URL plantées par un visiteur ou une page web | Sources limitées aux pages consultées par la recherche ou à l'analyse remplacée |
 | RL-1 | moyenne\* | Table de limitation pleine : refus de tout nouveau visiteur ; comptage avant ALTCHA | Comptage après ALTCHA valide, une table par action, éviction des plus anciens |
+| EXP-2 | moyenne | Une idée masquée (signalement `contenu_problematique`, escalade, admin) ou retirée par son auteur restait téléchargeable dans les exports jusqu'à leur régénération, différée de 2 minutes pour regrouper les changements, voire au-delà si une génération en cours l'avait déjà lue | Corrigé le 2026-10-19 : régénération immédiate et prioritaire après tout masquage, retrait ou suppression (`pipeline::regenerate_exports_now`), sans regroupement ; une génération ne s'enregistre que si toutes ses idées sont encore publiées (`db::exports::still_published`, verrou `FOR SHARE`) ; `e2e.sh` vérifie la sortie des exports en quelques secondes |
 | EXP-1 | moyenne\* | Chaque téléchargement d'export chargeait une copie, et un `304` relisait le fichier : quelques dizaines de lecteurs lents dépassaient la mémoire de l'api | `304` sans lecture, une copie partagée en mémoire |
 | ZAP-1 | faible\* | Les erreurs `400 invalid_query` / `422 invalid_body` renvoyaient le texte anglais de serde, qui cite la valeur reçue (`unknown variant <script>…`) | Message français fixe, sans écho |
 | INJ-4, INJ-5, INJ-6 | faible\* | Caractères invisibles dans les textes, métacaractères `LIKE` après `unaccent`, caractères de contrôle et longueurs dans les sorties IA | Normalisation, `strpos`, `check_ai_text` et échec définitif sans relancer les appels payants |
@@ -265,11 +266,6 @@ bundle (pas de `package-lock.json` dans l'image) ; ils sont couverts en CI par `
 - **Bots qui résolvent ALTCHA et font tourner leurs IP (ALT-1, COST-1)** : ALTCHA ralentit les
   navigateurs, pas un script ; les limites par empreinte et le plafond journalier bornent le coût,
   mais une campagne distribuée peut retarder les analyses légitimes jusqu'au lendemain.
-- **Exports régénérés en différé** : un masquage (signalement `contenu_problematique`, admin) ou
-  un retrait par l'auteur retire aussitôt l'idée du site et de l'API, mais les fichiers d'export
-  ne sont régénérés que 2 minutes plus tard (job `generate_exports` regroupé, AGENTS.md §6.1) :
-  pendant cette fenêtre, la version précédente des exports, qui contient encore l'idée, reste
-  téléchargeable (vérifié par `e2e.sh`, qui attend la régénération).
 - **Contenu généré par l'IA (INJ-8)** : publié après contrôles structurels et sémantiques, sans
   modération du fond ; une injection indirecte réussie produirait une analyse fausse ou
   diffamatoire jusqu'à un signalement. Les signalements `contenu_problematique` masquent aussitôt.

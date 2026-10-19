@@ -147,6 +147,22 @@ pub async fn insert(
     Ok(generation_id)
 }
 
+/// Locks the exported ideas (`FOR SHARE`, in id order) until the end of the caller's
+/// transaction and tells whether they are all still published. A masking or a withdrawal
+/// committed since they were read makes the generation stale (the caller reads them again); one
+/// that comes later waits for the generation to be stored, then regenerates the exports itself
+/// (`pipeline::regenerate_exports_now`). So no stored generation holds an idea that was no longer
+/// published when it was stored (§7.4).
+pub async fn still_published(conn: &mut PgConnection, ids: &[Uuid]) -> sqlx::Result<bool> {
+    let published: Vec<bool> = sqlx::query_scalar(
+        "SELECT status = 'published' FROM ideas WHERE id = ANY($1) ORDER BY id FOR SHARE",
+    )
+    .bind(ids)
+    .fetch_all(&mut *conn)
+    .await?;
+    Ok(published.len() == ids.len() && published.into_iter().all(|p| p))
+}
+
 /// The latest generated file of a format, as served by the api, without its content: a
 /// conditional request is answered from it, and the content is read only when the api does not
 /// hold it already (EXP-1).

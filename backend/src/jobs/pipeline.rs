@@ -8,16 +8,17 @@
 //! | `dedup_idea` | [`IdeaPayload`] | `dedup_idea:<idea id>` |
 //! | `analyze_idea` | [`AnalyzePayload`] | `analyze_idea:<idea id>` |
 //! | `review_reports` | [`IdeaPayload`] | `review_reports:<idea id>` |
-//! | `generate_exports` | `{}` | `generate_exports` (debounced, [`EXPORTS_DEBOUNCE`]) |
+//! | `generate_exports` | `{}` | `generate_exports` (debounced, [`EXPORTS_DEBOUNCE`]); none when urgent ([`regenerate_exports_now`]) |
 //!
 //! The dedupe keys group the requests: a queued analysis of an idea absorbs the next
 //! contributions, a queued review absorbs the next reports (§5.6).
 
 use chrono::{DateTime, Duration, Utc};
 use serde::{Deserialize, Serialize};
+use sqlx::PgConnection;
 use uuid::Uuid;
 
-use super::{JobKind, NewJob, priority};
+use super::{JobKind, NewJob, priority, queue};
 use crate::domain::types::{AnalysisTrigger, TargetKind};
 
 /// Attempts of a screening retry: the backoff is capped at one hour, so a decision service
@@ -123,11 +124,47 @@ pub const EXPORTS_KEY: &str = "generate_exports";
 /// (several publications, a deletion…) are absorbed by the same queued job.
 pub const EXPORTS_DEBOUNCE: Duration = Duration::minutes(2);
 
-/// Regeneration of the open data exports after a publication, a masking or a deletion (§7.4).
+/// Regeneration of the open data exports after a publication or a re-analysis (§7.4),
+/// debounced: what is added to the site may wait two minutes. Content that leaves it goes
+/// through [`regenerate_exports_now`] instead.
 pub fn exports_job() -> NewJob {
     NewJob::new(JobKind::GenerateExports)
         .run_after(Utc::now() + EXPORTS_DEBOUNCE)
         .dedupe_key(EXPORTS_KEY)
+}
+
+/// Immediate regeneration of the exports, without dedupe key (see [`regenerate_exports_now`]).
+pub fn urgent_exports_job() -> NewJob {
+    NewJob::new(JobKind::GenerateExports).priority(priority::URGENT_EXPORTS)
+}
+
+/// Regenerates the exports right away, in the caller's transaction, after content left the
+/// site: an idea masked (whatever the reason, escalation included) or withdrawn by its author,
+/// a text deleted by its author (§7.4). A hidden or withdrawn idea must never stay
+/// downloadable, so the two-minute grouping of [`exports_job`] does not apply:
+///
+/// - a queued regeneration (debounced, nightly or urgent) becomes due now with the top
+///   priority ([`priority::URGENT_EXPORTS`]): it has not read the ideas yet;
+/// - otherwise a new urgent job is enqueued, without dedupe key, so that it is not absorbed by
+///   a generation already running, which may have read the idea before this change (that one
+///   also checks, before storing its files, that every idea it exports is still published:
+///   `db::exports::still_published`).
+///
+/// Returns the id of the enqueued job, `None` when a queued one was brought forward.
+pub async fn regenerate_exports_now(conn: &mut PgConnection) -> sqlx::Result<Option<i64>> {
+    let brought_forward = sqlx::query(
+        "UPDATE jobs SET run_after = least(run_after, now()), priority = greatest(priority, $2)
+         WHERE kind = $1 AND status = 'queued'",
+    )
+    .bind(JobKind::GenerateExports.as_str())
+    .bind(priority::URGENT_EXPORTS)
+    .execute(&mut *conn)
+    .await?
+    .rows_affected();
+    if brought_forward > 0 {
+        return Ok(None);
+    }
+    queue::enqueue(&mut *conn, &urgent_exports_job()).await
 }
 
 #[cfg(test)]

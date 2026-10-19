@@ -222,7 +222,8 @@ pub async fn hide(
             "Seule une idée publiée peut être masquée.",
         ));
     }
-    queue::enqueue(&mut *tx, &pipeline::exports_job()).await?;
+    // A masked idea never stays downloadable: no two-minute grouping (§7.4).
+    pipeline::regenerate_exports_now(&mut tx).await?;
     admin_actions::record(
         &mut tx,
         &NewAdminAction::new("idea.hide")

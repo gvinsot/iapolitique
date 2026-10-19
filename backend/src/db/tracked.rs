@@ -42,8 +42,7 @@ use super::status::{self, Change};
 use super::tracking::{self, TokenHash};
 use crate::domain::status::IdeaStatus;
 use crate::domain::types::{Actor, ReviewOutcome, ReviewRequestStatus, TargetKind};
-use crate::jobs::pipeline::exports_job;
-use crate::jobs::queue;
+use crate::jobs::pipeline::regenerate_exports_now;
 use crate::moderation::Target;
 
 /// State of a tracked text.
@@ -293,7 +292,7 @@ async fn delete_idea(conn: &mut PgConnection, id: Uuid) -> sqlx::Result<()> {
         .await?;
     }
     if matches!(status.as_str(), "published" | "hidden") || parent.is_some() {
-        queue::enqueue(&mut *conn, &exports_job()).await?;
+        regenerate_exports_now(&mut *conn).await?;
     }
     Ok(())
 }
@@ -360,7 +359,7 @@ async fn withdraw_idea(conn: &mut PgConnection, id: Uuid) -> sqlx::Result<bool> 
             "escalated idea withdrawn by its author: it stays in the escalation queue"
         );
     }
-    queue::enqueue(&mut *conn, &exports_job()).await?;
+    regenerate_exports_now(&mut *conn).await?;
     Ok(true)
 }
 
@@ -414,7 +413,7 @@ async fn delete_contribution(conn: &mut PgConnection, id: Uuid) -> sqlx::Result<
         .execute(&mut *conn)
         .await?;
     if status == "integrated" {
-        queue::enqueue(&mut *conn, &exports_job()).await?;
+        regenerate_exports_now(&mut *conn).await?;
     }
     Ok(())
 }

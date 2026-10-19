@@ -309,7 +309,8 @@ async fn apply(
                 .await
                 .map_err(status_error)?
             {
-                queue::enqueue(&mut *tx, &pipeline::exports_job()).await?;
+                // Masked (escalation included): out of the exports right away (§7.4).
+                pipeline::regenerate_exports_now(&mut tx).await?;
             }
         }
     }

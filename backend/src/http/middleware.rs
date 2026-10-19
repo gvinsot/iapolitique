@@ -17,12 +17,13 @@ use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
 use tower_http::LatencyUnit;
 use tower_http::catch_panic::CatchPanicLayer;
+use tower_http::classify::ServerErrorsFailureClass;
 use tower_http::compression::CompressionLayer;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::sensitive_headers::SetSensitiveRequestHeadersLayer;
 use tower_http::set_header::SetResponseHeaderLayer;
 use tower_http::timeout::TimeoutLayer;
-use tower_http::trace::{DefaultOnFailure, DefaultOnResponse, TraceLayer};
+use tower_http::trace::{DefaultOnResponse, TraceLayer};
 use tracing::{Level, Span};
 
 use super::error::ApiError;
@@ -94,6 +95,30 @@ fn make_span(request: &axum::http::Request<Body>) -> Span {
     )
 }
 
+/// Level of a failed response: `503` is an expected, temporary answer (exports not generated
+/// yet, service saturated or unavailable, each logged where it is decided), so it is a warning;
+/// any other server error (`500`, `504`, a failed body) is an error.
+fn failure_level(class: &ServerErrorsFailureClass) -> Level {
+    match class {
+        ServerErrorsFailureClass::StatusCode(status)
+            if *status == StatusCode::SERVICE_UNAVAILABLE =>
+        {
+            Level::WARN
+        }
+        _ => Level::ERROR,
+    }
+}
+
+/// Logs a failed response inside the request span (route template and request id only).
+fn log_failure(class: ServerErrorsFailureClass, latency: std::time::Duration, _span: &Span) {
+    let latency = format!("{} ms", latency.as_millis());
+    if failure_level(&class) == Level::WARN {
+        tracing::warn!(classification = %class, latency, "response failed");
+    } else {
+        tracing::error!(classification = %class, latency, "response failed");
+    }
+}
+
 /// Wraps a router with the shared layers.
 pub fn with_common_layers(router: Router, config: &HttpConfig) -> Router {
     router
@@ -115,7 +140,7 @@ pub fn with_common_layers(router: Router, config: &HttpConfig) -> Router {
                         .level(Level::INFO)
                         .latency_unit(LatencyUnit::Millis),
                 )
-                .on_failure(DefaultOnFailure::new().latency_unit(LatencyUnit::Millis)),
+                .on_failure(log_failure),
         )
         .layer(middleware::from_fn(request_id))
         .layer(SetSensitiveRequestHeadersLayer::new([
@@ -147,6 +172,26 @@ mod tests {
         config.request_timeout = Duration::from_millis(200);
         config.body_limit_bytes = 1024;
         config
+    }
+
+    #[test]
+    fn only_unexpected_server_errors_are_logged_as_errors() {
+        let class = |status| ServerErrorsFailureClass::StatusCode(status);
+        assert_eq!(
+            failure_level(&class(StatusCode::SERVICE_UNAVAILABLE)),
+            Level::WARN
+        );
+        for status in [
+            StatusCode::INTERNAL_SERVER_ERROR,
+            StatusCode::BAD_GATEWAY,
+            StatusCode::GATEWAY_TIMEOUT,
+        ] {
+            assert_eq!(failure_level(&class(status)), Level::ERROR, "{status}");
+        }
+        assert_eq!(
+            failure_level(&ServerErrorsFailureClass::Error("body".into())),
+            Level::ERROR
+        );
     }
 
     async fn panicking() -> &'static str {

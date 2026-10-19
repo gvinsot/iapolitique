@@ -1,161 +1,240 @@
 import { ExternalLinkIcon } from "lucide-react";
-import type { ReactNode } from "react";
 import { Link } from "react-router";
 
+import type {
+  AdminEscalation,
+  AdminIdea,
+  AdminReport,
+  AdminReviewRequest,
+  EscalationOutcome,
+  ReviewResolution,
+} from "@/api/types";
 import { paths } from "@/app/paths";
 import { Badge } from "@/components/ui/badge";
+import { useTaxonomyLabels } from "@/hooks/use-taxonomy";
 import {
-  escalationHoursLeft,
-  type EscalationRow,
-  type EscalationStatus,
-  type HiddenIdeaRow,
-  type HiddenOrigin,
-  type ReportRow,
-  type ReviewRequestRow,
+  escalationOutcomeLabels,
+  hiddenReasonLabels,
+  hoursUntil,
+  ideaStatusLabels,
+  labelFor,
+  reportStatusLabels,
+  reviewOutcomeLabels,
+  reviewResolutionLabels,
+  targetKindLabels,
 } from "@/lib/admin-model";
-import { formatDate } from "@/lib/format";
+import { formatDateTime, formatEuros, formatInteger } from "@/lib/format";
 import { PHAROS_URL } from "@/lib/legal";
-import { reportReasonLabels } from "@/lib/labels";
-import { ruleForReasonCode } from "@/lib/rules";
-import { trackedKindLabels } from "@/lib/tracking-model";
+import { labelOf } from "@/lib/taxonomy-labels";
 
 import { AsyncActionButton } from "./async-action-button";
+import { adminLinkClass, cellClass } from "./admin-styles";
+import { AdminIdeaLink, AdminTable, ConfirmDialog } from "./admin-ui";
 
-const linkClass = "font-medium text-primary underline underline-offset-4 hover:no-underline";
+const REASON_MAX_LENGTH = 1000;
+const NOTE_MAX_LENGTH = 2000;
 
-interface AdminTableProps {
-  caption: string;
-  headers: string[];
-  empty: string;
-  rowCount: number;
-  children: ReactNode;
+function Muted({ children = "—" }: { children?: string }) {
+  return <span className="text-muted-foreground">{children}</span>;
 }
 
-/** Captioned table, scrollable on small screens, with an empty state. */
-function AdminTable({ caption, headers, empty, rowCount, children }: AdminTableProps) {
-  return (
-    <div className="overflow-x-auto rounded-lg border">
-      <table className="w-full min-w-[40rem] border-collapse text-sm">
-        <caption className="border-b bg-muted/40 px-4 py-3 text-left font-semibold">
-          {caption}
-        </caption>
-        <thead>
-          <tr className="border-b text-left text-muted-foreground">
-            {headers.map((header) => (
-              <th key={header} scope="col" className="px-4 py-2 font-medium">
-                {header}
-              </th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rowCount === 0 ? (
-            <tr>
-              <td colSpan={headers.length} className="px-4 py-6 text-center text-muted-foreground">
-                {empty}
-              </td>
-            </tr>
-          ) : (
-            children
-          )}
-        </tbody>
-      </table>
-    </div>
-  );
+// --- Ideas -----------------------------------------------------------------------------------
+
+interface IdeasTableProps {
+  rows: AdminIdea[];
+  onHide: (id: string, reason: string) => Promise<void>;
+  onRepublish: (id: string, reason: string) => Promise<void>;
+  onReanalyze: (id: string) => Promise<void>;
 }
 
-const cellClass = "px-4 py-3 align-top";
-
-function IdeaLink({ slug, title }: { slug: string; title: string }) {
-  return (
-    <Link to={paths.idea(slug)} className={linkClass}>
-      {title}
-    </Link>
-  );
-}
-
-const hiddenOriginLabels: Record<HiddenOrigin, string> = {
-  report_review: "Revue de signalement (IA)",
-  escalation: "Escalade",
-  admin: "Action admin",
-};
-
-interface HiddenIdeasTableProps {
-  rows: HiddenIdeaRow[];
-  onRepublish: (slug: string) => Promise<void>;
-  onReanalyze: (slug: string) => Promise<void>;
-}
-
-/** Hidden ideas (AGENTS.md §8): republish or relaunch the analysis. */
-export function HiddenIdeasTable({ rows, onRepublish, onReanalyze }: HiddenIdeasTableProps) {
+/** Ideas of every status (AGENTS.md §8): hide, republish, relaunch an analysis, replies. */
+export function IdeasTable({ rows, onHide, onRepublish, onReanalyze }: IdeasTableProps) {
   return (
     <AdminTable
-      caption="Idées masquées"
-      headers={["Idée", "Masquée le", "Origine", "Motif", "Actions"]}
-      empty="Aucune idée masquée."
+      caption="Idées"
+      headers={["Idée", "Statut", "Texte (masqué)", "En attente", "Actions"]}
+      empty="Aucune idée ne correspond."
       rowCount={rows.length}
+      minWidth="min-w-[56rem]"
     >
-      {rows.map((row) => (
-        <tr key={row.slug} className="border-b last:border-b-0">
-          <td className={cellClass}>
-            <IdeaLink slug={row.slug} title={row.title} />
-          </td>
-          <td className={cellClass}>{formatDate(row.hidden_on)}</td>
-          <td className={cellClass}>{hiddenOriginLabels[row.origin]}</td>
-          <td className={cellClass}>{row.reason}</td>
-          <td className={cellClass}>
-            <div className="flex flex-wrap gap-2">
-              <AsyncActionButton
-                onAction={() => onRepublish(row.slug)}
-                aria-label={`Republier « ${row.title} »`}
-              >
-                Republier
-              </AsyncActionButton>
-              <AsyncActionButton
-                onAction={() => onReanalyze(row.slug)}
-                variant="ghost"
-                aria-label={`Relancer l’analyse de « ${row.title} »`}
-              >
-                Relancer l’analyse
-              </AsyncActionButton>
-            </div>
-          </td>
-        </tr>
-      ))}
+      {rows.map((row) => {
+        const name = row.title ?? row.id;
+        return (
+          <tr key={row.id} className="border-b last:border-b-0">
+            <td className={`${cellClass} max-w-xs`}>
+              <AdminIdeaLink idea={row} />
+              <p className="mt-1 text-xs text-muted-foreground">
+                Reçue le {formatDateTime(row.created_at)} · proposée {row.proposal_count} fois
+                {row.score_eur !== null ? ` · score ${formatEuros(row.score_eur)}` : null}
+              </p>
+            </td>
+            <td className={cellClass}>
+              <Badge variant={row.status === "hidden" ? "destructive" : "secondary"}>
+                {labelFor(ideaStatusLabels, row.status)}
+              </Badge>
+              <p className="mt-1 text-xs text-muted-foreground">
+                depuis le {formatDateTime(row.status_changed_at)}
+              </p>
+              {row.hidden_reason ? (
+                <p className="mt-1 text-xs">{labelFor(hiddenReasonLabels, row.hidden_reason)}</p>
+              ) : null}
+              {row.rejection_reason_code ? (
+                <p className="mt-1 font-mono text-xs">{row.rejection_reason_code}</p>
+              ) : null}
+            </td>
+            <td className={`${cellClass} max-w-sm`}>
+              <p className="line-clamp-4 text-pretty whitespace-pre-line">
+                {row.excerpt ?? "Texte purgé"}
+              </p>
+            </td>
+            <td className={cellClass}>
+              <ul className="space-y-1 text-xs">
+                {row.reports_pending > 0 ? (
+                  <li>{formatInteger(row.reports_pending)} signalement(s) à revoir</li>
+                ) : null}
+                {row.review_request_pending ? <li>Réexamen demandé</li> : null}
+                {row.escalation_pending ? (
+                  <li>
+                    <Badge variant="destructive">Escalade</Badge>
+                  </li>
+                ) : null}
+                {row.reports_pending === 0 &&
+                !row.review_request_pending &&
+                !row.escalation_pending ? (
+                  <li>
+                    <Muted />
+                  </li>
+                ) : null}
+              </ul>
+            </td>
+            <td className={cellClass}>
+              <div className="flex flex-wrap gap-2">
+                {row.status === "published" ? (
+                  <ConfirmDialog
+                    trigger="Masquer"
+                    triggerLabel={`Masquer « ${name} »`}
+                    title="Masquer cette idée"
+                    description="L’idée quitte le site et les exports suivants. Elle pourra être republiée."
+                    confirm="Masquer l’idée"
+                    field={{
+                      label: "Motif",
+                      required: true,
+                      maxLength: REASON_MAX_LENGTH,
+                      help: "Consigné dans le journal d’administration, jamais montré à l’auteur.",
+                    }}
+                    onConfirm={(reason) => onHide(row.id, reason ?? "")}
+                  />
+                ) : null}
+                {row.status === "hidden" ? (
+                  <ConfirmDialog
+                    trigger="Republier"
+                    triggerLabel={`Republier « ${name} »`}
+                    title="Republier cette idée"
+                    description="L’idée revient sur le site et dans les exports suivants."
+                    confirm="Republier l’idée"
+                    field={{ label: "Motif", required: true, maxLength: REASON_MAX_LENGTH }}
+                    onConfirm={(reason) => onRepublish(row.id, reason ?? "")}
+                  />
+                ) : null}
+                {["published", "hidden", "analysis_failed"].includes(row.status) ? (
+                  <AsyncActionButton
+                    variant="ghost"
+                    onAction={() => onReanalyze(row.id)}
+                    aria-label={`Relancer l’analyse de « ${name} »`}
+                  >
+                    Relancer l’analyse
+                  </AsyncActionButton>
+                ) : null}
+                {row.status === "published" || row.status === "hidden" ? (
+                  <Link
+                    to={paths.admin.replies(row.id)}
+                    className="inline-flex h-8 items-center px-2 text-sm font-medium text-primary underline underline-offset-4"
+                    aria-label={`Droits de réponse de « ${name} »`}
+                  >
+                    Droits de réponse
+                  </Link>
+                ) : null}
+              </div>
+            </td>
+          </tr>
+        );
+      })}
     </AdminTable>
   );
 }
 
-const outcomeLabels = { maintain: "Maintenue", update: "Mise à jour", hide: "Masquée" } as const;
+// --- Reports ---------------------------------------------------------------------------------
 
-/** Reports and the outcome of their AI review. */
-export function ReportsTable({ rows }: { rows: ReportRow[] }) {
+/** Reports with the reporter's optional contact (never published) and their AI review. */
+export function ReportsTable({ rows }: { rows: AdminReport[] }) {
+  const labels = useTaxonomyLabels();
   return (
     <AdminTable
       caption="Signalements"
-      headers={["Idée", "Motif", "Précision", "Reçu le", "Revue IA"]}
-      empty="Aucun signalement."
+      headers={["Idée", "Motif et précision", "Signalant", "Statut", "Revue IA"]}
+      empty="Aucun signalement ne correspond."
       rowCount={rows.length}
+      minWidth="min-w-[56rem]"
     >
       {rows.map((row) => (
         <tr key={row.id} className="border-b last:border-b-0">
-          <td className={cellClass}>
-            <IdeaLink slug={row.idea_slug} title={row.idea_title} />
+          <td className={`${cellClass} max-w-xs`}>
+            <AdminIdeaLink idea={row.idea} />
+            <p className="mt-1 text-xs text-muted-foreground">
+              Reçu le {formatDateTime(row.created_at)}
+            </p>
           </td>
-          <td className={cellClass}>{reportReasonLabels[row.reason]}</td>
-          <td className={`${cellClass} max-w-xs text-pretty`}>
-            {row.details ?? <span className="text-muted-foreground">—</span>}
+          <td className={`${cellClass} max-w-sm`}>
+            <p className="font-medium">{labelOf(labels.reportReasons, row.reason)}</p>
+            <p className="text-pretty whitespace-pre-line">
+              {row.details ?? <Muted>Sans précision</Muted>}
+            </p>
           </td>
-          <td className={cellClass}>{formatDate(row.received_on)}</td>
           <td className={cellClass}>
-            <div className="flex flex-wrap gap-1">
-              {row.outcome ? (
-                <Badge variant="secondary">{outcomeLabels[row.outcome]}</Badge>
-              ) : (
-                <Badge variant="outline">En attente</Badge>
-              )}
-              {row.escalate ? <Badge variant="destructive">Escaladé</Badge> : null}
-            </div>
+            {row.reporter_name || row.reporter_email ? (
+              <>
+                {row.reporter_name ? <p>{row.reporter_name}</p> : null}
+                {row.reporter_email ? (
+                  <a href={`mailto:${row.reporter_email}`} className={adminLinkClass}>
+                    {row.reporter_email}
+                  </a>
+                ) : null}
+              </>
+            ) : (
+              <Muted>Anonyme</Muted>
+            )}
+            <p className="mt-1 text-xs text-muted-foreground">
+              {row.good_faith ? "Bonne foi déclarée" : "Sans déclaration de bonne foi"}
+            </p>
+          </td>
+          <td className={cellClass}>
+            <Badge variant="secondary">{labelFor(reportStatusLabels, row.status)}</Badge>
+            {row.rejection_reason_code ? (
+              <p className="mt-1 font-mono text-xs">{row.rejection_reason_code}</p>
+            ) : null}
+          </td>
+          <td className={`${cellClass} max-w-sm`}>
+            {row.review ? (
+              <div className="space-y-1">
+                <div className="flex flex-wrap gap-1">
+                  <Badge variant="secondary">
+                    {labelFor(reviewOutcomeLabels, row.review.outcome)}
+                  </Badge>
+                  {row.review.escalate ? <Badge variant="destructive">Escaladé</Badge> : null}
+                </div>
+                <p className="text-pretty">{row.review.explanation}</p>
+                {row.review.corrections ? (
+                  <p className="text-xs text-muted-foreground">
+                    Corrections : {row.review.corrections}
+                  </p>
+                ) : null}
+                <p className="text-xs text-muted-foreground">
+                  {formatDateTime(row.review.reviewed_at)}
+                </p>
+              </div>
+            ) : (
+              <Muted>Pas encore examiné</Muted>
+            )}
           </td>
         </tr>
       ))}
@@ -163,16 +242,11 @@ export function ReportsTable({ rows }: { rows: ReportRow[] }) {
   );
 }
 
-const escalationStatusLabels: Record<EscalationStatus, string> = {
-  pending: "À traiter",
-  transmitted: "Transmis à PHAROS",
-  dismissed: "Classé sans suite",
-};
+// --- Escalations -----------------------------------------------------------------------------
 
 interface EscalationsTableProps {
-  rows: EscalationRow[];
-  onMarkTransmitted: (id: string) => Promise<void>;
-  onDismiss: (id: string) => Promise<void>;
+  rows: AdminEscalation[];
+  onHandle: (id: string, outcome: EscalationOutcome, note: string | null) => Promise<void>;
   /** Injected for tests; defaults to the current time. */
   now?: Date;
 }
@@ -181,63 +255,89 @@ interface EscalationsTableProps {
  * Serious content hidden at once by the report review (AGENTS.md §7.5): to be examined by a
  * human and, if needed, reported by hand to PHAROS within 24 hours.
  */
-export function EscalationsTable({
-  rows,
-  onMarkTransmitted,
-  onDismiss,
-  now = new Date(),
-}: EscalationsTableProps) {
+export function EscalationsTable({ rows, onHandle, now = new Date() }: EscalationsTableProps) {
   return (
     <div className="space-y-2">
       <p className="text-sm text-muted-foreground">
         Signalement manuel :{" "}
-        <a href={PHAROS_URL} rel="noreferrer" className={linkClass}>
+        <a href={PHAROS_URL} target="_blank" rel="noopener noreferrer" className={adminLinkClass}>
           plateforme PHAROS
           <ExternalLinkIcon className="ml-1 inline size-3.5" aria-hidden="true" />
+          <span className="sr-only"> (nouvelle fenêtre)</span>
         </a>
+        . L’idée reste masquée quelle que soit l’issue ; la republier se fait depuis la liste des
+        idées.
       </p>
       <AdminTable
         caption="File d’escalade"
-        headers={["Idée", "Explication de la revue", "Délai", "Statut", "Actions"]}
+        headers={["Idée", "Explication de la revue", "Délai", "Issue", "Actions"]}
         empty="Aucune escalade."
         rowCount={rows.length}
+        minWidth="min-w-[52rem]"
       >
         {rows.map((row) => {
-          const hoursLeft = escalationHoursLeft(row.escalated_at, now);
           const pending = row.status === "pending";
+          const hoursLeft = hoursUntil(row.due_at, now);
+          const name = row.idea.title ?? row.idea.id;
           return (
             <tr key={row.id} className="border-b last:border-b-0">
-              <td className={cellClass}>
-                <IdeaLink slug={row.idea_slug} title={row.idea_title} />
+              <td className={`${cellClass} max-w-xs`}>
+                <AdminIdeaLink idea={row.idea} />
+                <p className="mt-1 text-xs text-muted-foreground">
+                  Escaladée le {formatDateTime(row.created_at)}
+                </p>
               </td>
-              <td className={`${cellClass} max-w-sm text-pretty`}>{row.explanation}</td>
+              <td className={`${cellClass} max-w-sm text-pretty`}>
+                {row.review_explanation ?? <Muted />}
+              </td>
               <td className={cellClass}>
                 {!pending ? (
-                  "—"
+                  <Muted />
                 ) : hoursLeft < 0 ? (
                   <Badge variant="destructive">Hors délai de 24 h</Badge>
                 ) : (
                   `${Math.floor(hoursLeft)} h restantes`
                 )}
               </td>
-              <td className={cellClass}>{escalationStatusLabels[row.status]}</td>
+              <td className={cellClass}>
+                {pending ? (
+                  <Badge variant="outline">À traiter</Badge>
+                ) : (
+                  <>
+                    <p>{labelFor(escalationOutcomeLabels, row.outcome)}</p>
+                    <p className="text-xs text-muted-foreground">
+                      {formatDateTime(row.handled_at)}
+                    </p>
+                    {row.note ? <p className="text-xs">{row.note}</p> : null}
+                  </>
+                )}
+              </td>
               <td className={cellClass}>
                 {pending ? (
                   <div className="flex flex-wrap gap-2">
-                    <AsyncActionButton
-                      onAction={() => onMarkTransmitted(row.id)}
-                      variant="default"
-                      aria-label={`Marquer « ${row.idea_title} » comme transmis à PHAROS`}
-                    >
-                      Marquer comme transmis
-                    </AsyncActionButton>
-                    <AsyncActionButton
-                      onAction={() => onDismiss(row.id)}
-                      variant="ghost"
-                      aria-label={`Classer sans suite « ${row.idea_title} »`}
-                    >
-                      Classer sans suite
-                    </AsyncActionButton>
+                    <ConfirmDialog
+                      trigger="Transmis à PHAROS"
+                      triggerVariant="default"
+                      triggerLabel={`Marquer « ${name} » comme transmis à PHAROS`}
+                      title="Transmission à PHAROS"
+                      description="Confirmez que le contenu a été signalé sur la plateforme PHAROS."
+                      confirm="Enregistrer la transmission"
+                      field={{
+                        label: "Note (date, référence du signalement)",
+                        required: false,
+                        maxLength: NOTE_MAX_LENGTH,
+                      }}
+                      onConfirm={(note) => onHandle(row.id, "transmitted", note)}
+                    />
+                    <ConfirmDialog
+                      trigger="Classer sans suite"
+                      triggerLabel={`Classer sans suite « ${name} »`}
+                      title="Classer sans suite"
+                      description="Le contenu ne justifie pas de transmission. L’idée reste masquée."
+                      confirm="Classer sans suite"
+                      field={{ label: "Note", required: false, maxLength: NOTE_MAX_LENGTH }}
+                      onConfirm={(note) => onHandle(row.id, "dismissed", note)}
+                    />
                   </div>
                 ) : null}
               </td>
@@ -249,64 +349,107 @@ export function EscalationsTable({
   );
 }
 
+// --- Review requests -------------------------------------------------------------------------
+
 interface ReviewRequestsTableProps {
-  rows: ReviewRequestRow[];
-  /** The automated decision is confirmed. */
-  onUphold: (id: string) => Promise<void>;
-  /** The automated decision is reversed (text accepted, or idea republished). */
-  onOverturn: (id: string) => Promise<void>;
+  rows: AdminReviewRequest[];
+  onResolve: (id: string, resolution: ReviewResolution, note: string | null) => Promise<void>;
 }
 
+const measureLabels: Record<string, string> = {
+  rejected: "Refus par le filtrage",
+  hidden: "Masquage",
+};
+
 /** Human review requests sent from tracking links (AGENTS.md §7.1). */
-export function ReviewRequestsTable({ rows, onUphold, onOverturn }: ReviewRequestsTableProps) {
+export function ReviewRequestsTable({ rows, onResolve }: ReviewRequestsTableProps) {
   return (
     <AdminTable
       caption="Demandes de réexamen humain"
-      headers={["Envoi", "Décision contestée", "Message", "Demandé le", "Actions"]}
+      headers={["Texte", "Décision contestée", "Message de l’auteur", "Demandée le", "Actions"]}
       empty="Aucune demande de réexamen."
       rowCount={rows.length}
+      minWidth="min-w-[56rem]"
     >
-      {rows.map((row) => {
-        const rule = ruleForReasonCode(row.reason_code);
-        return (
-          <tr key={row.id} className="border-b last:border-b-0">
-            <td className={`${cellClass} max-w-sm`}>
-              <p className="font-medium">{trackedKindLabels[row.kind]}</p>
-              <p className="line-clamp-4 text-pretty whitespace-pre-line text-muted-foreground">
-                {row.text ?? "Texte supprimé"}
+      {rows.map((row) => (
+        <tr key={row.id} className="border-b last:border-b-0">
+          <td className={`${cellClass} max-w-sm`}>
+            <p className="font-medium">{labelFor(targetKindLabels, row.target_kind)}</p>
+            {row.idea ? (
+              <p className="text-xs">
+                Idée : <AdminIdeaLink idea={row.idea} />
               </p>
-            </td>
-            <td className={cellClass}>
-              {rule ? `Règle ${rule.number} : ${rule.title}` : row.reason_code}
-            </td>
-            <td className={`${cellClass} max-w-xs text-pretty`}>
-              {row.message ?? <span className="text-muted-foreground">—</span>}
-            </td>
-            <td className={cellClass}>{formatDate(row.requested_on)}</td>
-            <td className={cellClass}>
-              {row.status === "pending" ? (
-                <div className="flex flex-wrap gap-2">
-                  <AsyncActionButton
-                    onAction={() => onOverturn(row.id)}
-                    variant="default"
-                    aria-label={`Infirmer la décision (demande du ${formatDate(row.requested_on)})`}
-                  >
-                    Infirmer
-                  </AsyncActionButton>
-                  <AsyncActionButton
-                    onAction={() => onUphold(row.id)}
-                    aria-label={`Confirmer la décision (demande du ${formatDate(row.requested_on)})`}
-                  >
-                    Confirmer
-                  </AsyncActionButton>
-                </div>
-              ) : (
-                <Badge variant="secondary">Traitée</Badge>
-              )}
-            </td>
-          </tr>
-        );
-      })}
+            ) : null}
+            <p className="mt-1 line-clamp-6 text-pretty whitespace-pre-line text-muted-foreground">
+              {row.text ?? "Texte supprimé"}
+            </p>
+          </td>
+          <td className={cellClass}>
+            {row.decision ? (
+              <>
+                <p>{labelFor(measureLabels, row.decision.measure)}</p>
+                {row.decision.reason_code ? (
+                  <p className="font-mono text-xs">{row.decision.reason_code}</p>
+                ) : null}
+              </>
+            ) : (
+              <Muted>Plus de décision en vigueur</Muted>
+            )}
+            {row.target_status ? (
+              <p className="mt-1 text-xs text-muted-foreground">Statut : {row.target_status}</p>
+            ) : null}
+          </td>
+          <td className={`${cellClass} max-w-xs text-pretty whitespace-pre-line`}>
+            {row.message ?? <Muted />}
+          </td>
+          <td className={cellClass}>{formatDateTime(row.created_at)}</td>
+          <td className={cellClass}>
+            {row.status === "pending" ? (
+              <div className="flex flex-wrap gap-2">
+                <ConfirmDialog
+                  trigger="Infirmer"
+                  triggerVariant="default"
+                  triggerLabel={`Infirmer la décision (demande du ${formatDateTime(row.created_at)})`}
+                  title="Infirmer la décision automatique"
+                  description="Un texte refusé est accepté et reprend son parcours ; une idée masquée est republiée."
+                  confirm="Infirmer la décision"
+                  field={{
+                    label: "Note interne",
+                    required: false,
+                    maxLength: NOTE_MAX_LENGTH,
+                    help: "Jamais montrée à l’auteur.",
+                  }}
+                  onConfirm={(note) => onResolve(row.id, "overturned", note)}
+                />
+                <ConfirmDialog
+                  trigger="Confirmer"
+                  triggerLabel={`Confirmer la décision (demande du ${formatDateTime(row.created_at)})`}
+                  title="Confirmer la décision automatique"
+                  description="La décision reste en vigueur ; la purge du texte reprend."
+                  confirm="Confirmer la décision"
+                  field={{
+                    label: "Note interne",
+                    required: false,
+                    maxLength: NOTE_MAX_LENGTH,
+                    help: "Jamais montrée à l’auteur.",
+                  }}
+                  onConfirm={(note) => onResolve(row.id, "confirmed", note)}
+                />
+              </div>
+            ) : (
+              <>
+                <Badge variant="secondary">
+                  {labelFor(reviewResolutionLabels, row.resolution)}
+                </Badge>
+                <p className="mt-1 text-xs text-muted-foreground">
+                  {formatDateTime(row.handled_at)}
+                </p>
+                {row.note ? <p className="text-xs">{row.note}</p> : null}
+              </>
+            )}
+          </td>
+        </tr>
+      ))}
     </AdminTable>
   );
 }

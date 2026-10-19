@@ -17,10 +17,15 @@ import { cn } from "@/lib/utils";
 
 const adminNavItems = [
   { to: paths.admin.dashboard, label: "Tableau de bord", end: true },
-  { to: paths.admin.moderation, label: "Modération" },
+  { to: paths.admin.ideas, label: "Idées" },
+  { to: paths.admin.reports, label: "Signalements" },
+  { to: paths.admin.escalations, label: "Escalades" },
+  { to: paths.admin.reviewRequests, label: "Réexamens" },
   { to: paths.admin.decisions, label: "Décisions de filtrage" },
+  { to: paths.admin.jobs, label: "Jobs" },
   { to: paths.admin.costs, label: "Coûts IA" },
   { to: paths.admin.settings, label: "Réglages" },
+  { to: paths.admin.journal, label: "Journal" },
 ] as const;
 
 function AdminContent({

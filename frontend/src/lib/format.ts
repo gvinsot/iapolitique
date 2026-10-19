@@ -105,3 +105,16 @@ export function formatDate(value: string): string {
   if (Number.isNaN(date.getTime())) return value;
   return longDate.format(date);
 }
+
+const shortDateTime = new Intl.DateTimeFormat("fr-FR", {
+  dateStyle: "short",
+  timeStyle: "short",
+  timeZone: "Europe/Paris",
+});
+
+/** "19/10/2026 14:05" (Paris time), for administration timestamps; "—" when absent. */
+export function formatDateTime(value: string | null | undefined): string {
+  if (!value) return "—";
+  const date = new Date(value);
+  return Number.isNaN(date.getTime()) ? value : shortDateTime.format(date);
+}

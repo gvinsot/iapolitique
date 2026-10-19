@@ -28,10 +28,17 @@ describe("routes", () => {
 
   it.each([
     ["/admin", "Tableau de bord"],
-    ["/admin/moderation", "Modération"],
+    ["/admin/idees", "Idées"],
+    ["/admin/idees/01a15179-046d-7418-b8de-ce2167202085/reponses", "Droits de réponse"],
+    ["/admin/signalements", "Signalements"],
+    ["/admin/moderation", "Signalements"],
+    ["/admin/escalades", "Escalades"],
+    ["/admin/reexamens", "Réexamens"],
     ["/admin/decisions", "Décisions de filtrage"],
+    ["/admin/jobs", "Jobs"],
     ["/admin/couts", "Coûts IA"],
     ["/admin/reglages", "Réglages"],
+    ["/admin/journal", "Journal"],
   ])("%s renders its admin page once signed in", async (path, heading) => {
     storeAdminToken("jeton");
     stubFetch(adminApi("jeton"));

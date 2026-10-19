@@ -8,18 +8,25 @@ import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
 import { Label } from "@/components/ui/label";
 import { Textarea } from "@/components/ui/textarea";
-import { type RightOfReplyDraft, rightOfReplyDeadline } from "@/lib/admin-model";
+import type { AdminReplyContent } from "@/api/types";
+import { parisToday, rightOfReplyDeadline } from "@/lib/admin-model";
 import { formatDate } from "@/lib/format";
 import { formatCharacterCount, ideaTextLength } from "@/lib/idea-text";
 
-export const RIGHT_OF_REPLY_MAX_LENGTH = 5000;
+/** Limits of the API (AGENTS.md §13.2, POST /api/admin/ideas/{id}/replies). */
+export const RIGHT_OF_REPLY_MAX_LENGTH = 8000;
 export const RIGHT_OF_REPLY_AUTHOR_MAX_LENGTH = 200;
 
 interface RightOfReplyEditorProps {
-  idea: { slug: string; title: string };
-  initial?: RightOfReplyDraft | null;
-  onSubmit: (draft: RightOfReplyDraft) => Promise<void>;
-  /** Injected for tests; defaults to today. */
+  /** Title of the idea, for the accessible name of the form. */
+  ideaTitle: string;
+  initial?: AdminReplyContent | null;
+  onSubmit: (draft: AdminReplyContent) => Promise<void>;
+  submitLabel?: string;
+  successMessage?: string;
+  /** Empties the form after a successful submission (new reply). */
+  resetOnSuccess?: boolean;
+  /** Injected for tests; defaults to now. */
   today?: Date;
 }
 
@@ -29,7 +36,7 @@ interface DraftErrors {
   requested_on?: string;
 }
 
-function validateDraft(draft: RightOfReplyDraft): DraftErrors {
+function validateDraft(draft: AdminReplyContent, today: string): DraftErrors {
   const errors: DraftErrors = {};
   if (draft.author_label.trim() === "") {
     errors.author_label = "Indiquez comment la personne qui répond souhaite être désignée.";
@@ -41,6 +48,8 @@ function validateDraft(draft: RightOfReplyDraft): DraftErrors {
   }
   if (!/^\d{4}-\d{2}-\d{2}$/.test(draft.requested_on)) {
     errors.requested_on = "Indiquez la date de réception de la demande.";
+  } else if (draft.requested_on > today) {
+    errors.requested_on = "La date de réception ne peut pas être dans le futur.";
   }
   return errors;
 }
@@ -50,15 +59,18 @@ function validateDraft(draft: RightOfReplyDraft): DraftErrors {
  * published as received, within 3 days of the request. Shows the deadline and a preview.
  */
 export function RightOfReplyEditor({
-  idea,
+  ideaTitle,
   initial = null,
   onSubmit,
+  submitLabel = "Publier la réponse",
+  successMessage = "Réponse publiée sous l’idée.",
+  resetOnSuccess = false,
   today = new Date(),
 }: RightOfReplyEditorProps) {
   const id = useId();
-  const [draft, setDraft] = useState<RightOfReplyDraft>(
-    initial ?? { author_label: "", body: "", requested_on: today.toISOString().slice(0, 10) },
-  );
+  const todayOn = parisToday(today);
+  const empty: AdminReplyContent = { author_label: "", body: "", requested_on: todayOn };
+  const [draft, setDraft] = useState<AdminReplyContent>(initial ?? empty);
   const [errors, setErrors] = useState<DraftErrors>({});
   const [pending, setPending] = useState(false);
   const [status, setStatus] = useState<{ ok: boolean; message: string } | null>(null);
@@ -66,11 +78,11 @@ export function RightOfReplyEditor({
   const deadline = /^\d{4}-\d{2}-\d{2}$/.test(draft.requested_on)
     ? rightOfReplyDeadline(draft.requested_on)
     : null;
-  const overdue = deadline !== null && deadline < today.toISOString().slice(0, 10);
+  const overdue = deadline !== null && deadline < todayOn;
 
   const submit = async (event: SubmitEvent<HTMLFormElement>) => {
     event.preventDefault();
-    const found = validateDraft(draft);
+    const found = validateDraft(draft, todayOn);
     setErrors(found);
     setStatus(null);
     if (Object.keys(found).length > 0) return;
@@ -81,7 +93,8 @@ export function RightOfReplyEditor({
         author_label: draft.author_label.trim(),
         body: draft.body.trim(),
       });
-      setStatus({ ok: true, message: "Réponse publiée sous l’idée." });
+      setStatus({ ok: true, message: successMessage });
+      if (resetOnSuccess) setDraft(empty);
     } catch (cause) {
       setStatus({ ok: false, message: errorMessage(cause) });
     } finally {
@@ -100,7 +113,7 @@ export function RightOfReplyEditor({
         }}
         noValidate
         className="space-y-4"
-        aria-label={`Droit de réponse sur « ${idea.title} »`}
+        aria-label={`Droit de réponse sur « ${ideaTitle} »`}
       >
         <div className="grid gap-4 sm:grid-cols-2">
           <div className="space-y-2">
@@ -127,6 +140,7 @@ export function RightOfReplyEditor({
             <Input
               id={`${id}-requested`}
               type="date"
+              max={todayOn}
               value={draft.requested_on}
               onChange={(event) => {
                 setDraft({ ...draft, requested_on: event.target.value });
@@ -185,7 +199,7 @@ export function RightOfReplyEditor({
           ) : (
             <SendIcon aria-hidden="true" />
           )}
-          Publier la réponse
+          {submitLabel}
         </Button>
       </form>
 

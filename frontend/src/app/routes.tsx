@@ -84,15 +84,45 @@ export const routes: RouteObject[] = [
             }),
           },
           {
-            path: "moderation",
+            path: "idees",
             lazy: async () => ({
-              Component: (await import("@/pages/admin/admin-pages")).AdminModerationPage,
+              Component: (await import("@/pages/admin/admin-pages")).AdminIdeasPage,
+            }),
+          },
+          {
+            path: "idees/:id/reponses",
+            lazy: async () => ({
+              Component: (await import("@/pages/admin/admin-pages")).AdminRepliesPage,
+            }),
+          },
+          {
+            path: "signalements",
+            lazy: async () => ({
+              Component: (await import("@/pages/admin/admin-pages")).AdminReportsPage,
+            }),
+          },
+          {
+            path: "escalades",
+            lazy: async () => ({
+              Component: (await import("@/pages/admin/admin-pages")).AdminEscalationsPage,
+            }),
+          },
+          {
+            path: "reexamens",
+            lazy: async () => ({
+              Component: (await import("@/pages/admin/admin-pages")).AdminReviewRequestsPage,
             }),
           },
           {
             path: "decisions",
             lazy: async () => ({
               Component: (await import("@/pages/admin/admin-pages")).AdminDecisionsPage,
+            }),
+          },
+          {
+            path: "jobs",
+            lazy: async () => ({
+              Component: (await import("@/pages/admin/admin-pages")).AdminJobsPage,
             }),
           },
           {
@@ -105,6 +135,18 @@ export const routes: RouteObject[] = [
             path: "reglages",
             lazy: async () => ({
               Component: (await import("@/pages/admin/admin-pages")).AdminSettingsPage,
+            }),
+          },
+          {
+            path: "journal",
+            lazy: async () => ({
+              Component: (await import("@/pages/admin/admin-pages")).AdminJournalPage,
+            }),
+          },
+          {
+            path: "moderation",
+            lazy: async () => ({
+              Component: (await import("@/pages/admin/admin-pages")).AdminModerationRedirect,
             }),
           },
           { path: "*", Component: NotFoundPage },

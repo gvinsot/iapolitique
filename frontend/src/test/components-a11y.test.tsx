@@ -2,16 +2,24 @@ import { screen } from "@testing-library/react";
 import type { ReactNode } from "react";
 import { describe, expect, it, vi } from "vitest";
 
-import { DashboardTiles } from "@/components/admin/dashboard-tiles";
+import { ActionsTable, CostsTable, JobsTable, RepliesList } from "@/components/admin/admin-lists";
+import {
+  DashboardQueues,
+  DashboardTiles,
+  ScreeningRatesTable,
+} from "@/components/admin/dashboard-tiles";
 import {
   EscalationsTable,
-  HiddenIdeasTable,
+  IdeasTable,
   ReportsTable,
   ReviewRequestsTable,
 } from "@/components/admin/moderation-tables";
 import { RightOfReplyEditor } from "@/components/admin/right-of-reply-editor";
 import { ScreeningDecisions } from "@/components/admin/screening-decisions";
-import { ThresholdSettingsForm } from "@/components/admin/threshold-settings-form";
+import {
+  DedupThresholdForm,
+  ThresholdSettingsForm,
+} from "@/components/admin/threshold-settings-form";
 import { AiGenerated } from "@/components/ideas/ai-generated-notice";
 import { AssumptionsList, ProsCons } from "@/components/ideas/analysis-lists";
 import { ContributionForm } from "@/components/ideas/contribution-form";
@@ -30,13 +38,16 @@ import { TrackingStatus } from "@/components/tracking/tracking-status";
 
 import { audit } from "./axe";
 import {
-  dashboardStatsFixture,
+  actionsFixture,
+  dashboardFixture,
   escalationsFixture,
-  hiddenIdeasFixture,
+  ideasFixture,
+  jobsFixture,
+  repliesFixture,
   reportsFixture,
   reviewRequestsFixture,
-  screeningDecisionsFixture,
-  thresholdSettingsFixture,
+  screeningsFixture,
+  settingsFixture,
 } from "./fixtures/admin";
 import {
   analysisFixture,
@@ -114,19 +125,32 @@ describe("components accessibility audit", () => {
   it("administration components have no detectable violation", async () => {
     renderComponent(
       <Page>
-        <DashboardTiles stats={dashboardStatsFixture} />
-        <HiddenIdeasTable rows={hiddenIdeasFixture} onRepublish={vi.fn()} onReanalyze={vi.fn()} />
-        <ReportsTable rows={reportsFixture} />
-        <EscalationsTable
-          rows={escalationsFixture}
-          onMarkTransmitted={vi.fn()}
-          onDismiss={vi.fn()}
+        <DashboardTiles dashboard={dashboardFixture} />
+        <DashboardQueues queues={dashboardFixture.queues} />
+        <ScreeningRatesTable dashboard={dashboardFixture} />
+        <IdeasTable
+          rows={ideasFixture}
+          onHide={vi.fn()}
+          onRepublish={vi.fn()}
+          onReanalyze={vi.fn()}
         />
-        <ReviewRequestsTable rows={reviewRequestsFixture} onUphold={vi.fn()} onOverturn={vi.fn()} />
-        <ScreeningDecisions decisions={screeningDecisionsFixture} onLabel={vi.fn()} />
-        <ThresholdSettingsForm initial={thresholdSettingsFixture} onSubmit={vi.fn()} />
+        <ReportsTable rows={reportsFixture} />
+        <EscalationsTable rows={escalationsFixture} onHandle={vi.fn()} />
+        <ReviewRequestsTable rows={reviewRequestsFixture} onResolve={vi.fn()} />
+        <ScreeningDecisions screenings={screeningsFixture} onLabel={vi.fn()} onUnlabel={vi.fn()} />
+        <ThresholdSettingsForm settings={settingsFixture} onSave={vi.fn()} />
+        <DedupThresholdForm settings={settingsFixture} onSave={vi.fn()} />
+        <JobsTable rows={jobsFixture} onRetry={vi.fn()} />
+        <CostsTable costs={dashboardFixture.ai_costs} />
+        <ActionsTable rows={actionsFixture} />
+        <RepliesList
+          ideaTitle="Exemple"
+          replies={repliesFixture}
+          onUpdate={vi.fn()}
+          onDelete={vi.fn()}
+        />
         <RightOfReplyEditor
-          idea={{ slug: "exemple", title: "Exemple" }}
+          ideaTitle="Exemple"
           initial={{ author_label: "la mairie", body: "Réponse.", requested_on: "2026-10-18" }}
           onSubmit={vi.fn()}
         />

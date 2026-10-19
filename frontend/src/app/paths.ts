@@ -17,10 +17,18 @@ export const paths = {
   legacyTerms: "/cgu",
   admin: {
     dashboard: "/admin",
-    moderation: "/admin/moderation",
+    ideas: "/admin/idees",
+    replies: (ideaId: string) => `/admin/idees/${encodeURIComponent(ideaId)}/reponses`,
+    reports: "/admin/signalements",
+    escalations: "/admin/escalades",
+    reviewRequests: "/admin/reexamens",
     decisions: "/admin/decisions",
+    jobs: "/admin/jobs",
     costs: "/admin/couts",
     settings: "/admin/reglages",
+    journal: "/admin/journal",
+    /** Former address of the moderation page, redirected to `reports`. */
+    moderation: "/admin/moderation",
   },
 } as const;
 

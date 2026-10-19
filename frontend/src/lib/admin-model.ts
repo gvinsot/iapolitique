@@ -1,122 +1,140 @@
-import type { ReportReason } from "./labels";
-import type { ReviewOutcome, TrackedKind } from "./tracking-model";
+import type {
+  AdminCriterionThresholds,
+  AdminScreening,
+  AdminThresholdSection,
+  AdminThresholdsUpdate,
+  Decision,
+  EscalationOutcome,
+  IdeaStatus,
+  JobKind,
+  JobStatus,
+  LabelVerdict,
+  ReportStatus,
+  ReviewResolution,
+  ScreeningOutcome,
+  TargetKind,
+} from "@/api/types";
 
 /**
- * Display models of the administration (AGENTS.md §8), in the API's snake_case. Amounts of AI
- * costs are estimates in euros with decimals (prices per token), unlike idea amounts.
+ * Helpers and French labels of the administration (AGENTS.md §8, §13.2). The data itself uses
+ * the generated API types; AI costs are estimates in euros with decimals, unlike idea amounts.
  */
 
-export interface DashboardStats {
-  jobs: { queued: number; running: number; failed: number };
-  /** Screening outcomes over the last `window_days` days. */
-  screening: { window_days: number; accepted: number; rejected: number; gray_zone: number };
-  ai_costs: { today_eur: number; month_eur: number; daily_budget_eur: number };
-  escalations_pending: number;
-  review_requests_pending: number;
+export const targetKindLabels: Record<TargetKind, string> = {
+  idea: "Idée",
+  contribution: "Contribution",
+  report: "Signalement",
+};
+
+export const targetSectionLabels: Record<TargetKind, string> = {
+  idea: "Idées",
+  contribution: "Améliorations et objections",
+  report: "Signalements",
+};
+
+export const ideaStatusLabels: Record<IdeaStatus, string> = {
+  submitted: "En attente de filtrage",
+  screening: "En filtrage",
+  second_opinion: "Second avis en cours",
+  rejected: "Refusée",
+  purged: "Purgée",
+  accepted: "Acceptée",
+  dedup: "Recherche de doublons",
+  merged: "Fusionnée",
+  queued_analysis: "Analyse en file",
+  analyzing: "Analyse en cours",
+  analysis_failed: "Analyse en échec",
+  published: "Publiée",
+  hidden: "Masquée",
+};
+
+export const reportStatusLabels: Record<ReportStatus, string> = {
+  submitted: "En attente de filtrage",
+  screening: "En filtrage",
+  second_opinion: "Second avis en cours",
+  accepted: "En attente de revue",
+  rejected: "Refusé",
+  reviewed: "Examiné",
+  purged: "Purgé",
+};
+
+export const jobStatusLabels: Record<JobStatus, string> = {
+  queued: "En file",
+  running: "En cours",
+  succeeded: "Terminé",
+  dead: "Abandonné",
+};
+
+export const jobKindLabels: Record<JobKind, string> = {
+  screen_idea: "Filtrage d’une idée",
+  second_opinion: "Second avis",
+  dedup_idea: "Recherche de doublons",
+  analyze_idea: "Analyse",
+  screen_contribution: "Filtrage d’une contribution",
+  screen_report: "Filtrage d’un signalement",
+  review_reports: "Revue des signalements",
+  generate_exports: "Génération des exports",
+  purge: "Purge",
+};
+
+export const screeningOutcomeLabels: Record<ScreeningOutcome, string> = {
+  accepted: "Acceptée",
+  rejected: "Refusée",
+  gray_zone: "Zone grise",
+};
+
+export const decisionLabels: Record<Decision, string> = {
+  accept: "Accepter",
+  reject: "Refuser",
+};
+
+export const labelVerdictLabels: Record<LabelVerdict, string> = {
+  correct: "Décision juste",
+  incorrect: "Décision erronée",
+};
+
+export const escalationOutcomeLabels: Record<EscalationOutcome, string> = {
+  transmitted: "Transmis à PHAROS",
+  dismissed: "Classé sans suite",
+};
+
+export const reviewResolutionLabels: Record<ReviewResolution, string> = {
+  confirmed: "Décision confirmée",
+  overturned: "Décision infirmée",
+};
+
+export const hiddenReasonLabels: Record<string, string> = {
+  report_review: "Revue de signalement (IA)",
+  escalation: "Escalade (contenu grave)",
+  admin: "Action de l’administration",
+};
+
+export const reviewOutcomeLabels: Record<string, string> = {
+  maintain: "Maintenue",
+  update: "Mise à jour",
+  hide: "Masquée",
+};
+
+export const aiPurposeLabels: Record<string, string> = {
+  screening: "Filtrage (modèle de décision)",
+  second_opinion: "Second avis",
+  analysis_research: "Analyse : recherche web",
+  analysis_structuring: "Analyse : structuration",
+  embedding: "Embeddings (doublons)",
+  report_review: "Revue des signalements",
+};
+
+/** A label from a map, or the raw key when the backend sent a value unknown here. */
+export function labelFor(labels: Record<string, string>, key: string | null | undefined): string {
+  if (!key) return "—";
+  return Object.hasOwn(labels, key) ? (labels[key] ?? key) : key;
 }
 
-export type HiddenOrigin = "report_review" | "escalation" | "admin";
+const HOUR_MS = 60 * 60 * 1000;
 
-export interface HiddenIdeaRow {
-  slug: string;
-  title: string;
-  hidden_on: string;
-  origin: HiddenOrigin;
-  reason: string;
-}
-
-export interface ReportRow {
-  id: string;
-  idea_slug: string;
-  idea_title: string;
-  reason: ReportReason;
-  details: string | null;
-  received_on: string;
-  /** Raw report status (backend ReportStatus). */
-  status: string;
-  outcome: ReviewOutcome | null;
-  escalate: boolean;
-}
-
-export type EscalationStatus = "pending" | "transmitted" | "dismissed";
-
-export interface EscalationRow {
-  id: string;
-  idea_slug: string;
-  idea_title: string;
-  /** ISO date-time: the 24-hour target runs from here. */
-  escalated_at: string;
-  explanation: string;
-  status: EscalationStatus;
-}
-
-export interface ReviewRequestRow {
-  id: string;
-  kind: TrackedKind;
-  /** Masked original text, null once purged. */
-  text: string | null;
-  reason_code: string;
-  message: string | null;
-  requested_on: string;
-  status: "pending" | "done";
-}
-
-export type CriterionVerdict = "pass" | "fail" | "gray";
-export type DecisionLabel = "correct" | "incorrect";
-
-export interface CriterionScore {
-  key: string;
-  /** Probability of passing the criterion, 0 to 1 (AGENTS.md §13.4). */
-  probability: number;
-  reject_below: number;
-  accept_above: number;
-  verdict: CriterionVerdict;
-}
-
-export interface ScreeningDecisionRow {
-  id: string;
-  target: TrackedKind;
-  decided_at: string;
-  outcome: "accepted" | "rejected" | "gray_zone";
-  /** Text excerpt, null once purged (only scores remain for calibration). */
-  excerpt: string | null;
-  criteria: CriterionScore[];
-  grid_version: string;
-  label: DecisionLabel | null;
-}
-
-export interface CriterionThreshold {
-  key: string;
-  reject_below: number;
-  accept_above: number;
-}
-
-export interface ThresholdSettings {
-  idea: CriterionThreshold[];
-  contribution: CriterionThreshold[];
-  report: CriterionThreshold[];
-  dedup_similarity_threshold: number;
-}
-
-/** Right of reply as edited by the administrator (LCEN art. 1-1 III). */
-export interface RightOfReplyDraft {
-  author_label: string;
-  body: string;
-  /** Day the request was received, YYYY-MM-DD: publication is due within 3 days. */
-  requested_on: string;
-}
-
-/** Share of accepted decisions among clear-cut ones (gray zone excluded), or null. */
-export function acceptanceRate(screening: DashboardStats["screening"]): number | null {
-  const decided = screening.accepted + screening.rejected;
-  return decided === 0 ? null : screening.accepted / decided;
-}
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** Hours left before the 24-hour escalation target (negative once overdue). */
-export function escalationHoursLeft(escalatedAt: string, now: Date = new Date()): number {
-  return (Date.parse(escalatedAt) + DAY_MS - now.getTime()) / (60 * 60 * 1000);
+/** Hours left before the due time of an escalation (negative once overdue). */
+export function hoursUntil(dueAt: string, now: Date = new Date()): number {
+  return (Date.parse(dueAt) - now.getTime()) / HOUR_MS;
 }
 
 /** Last day to publish a right of reply: 3 days after the request (LCEN art. 1-1 III). */
@@ -126,20 +144,72 @@ export function rightOfReplyDeadline(requestedOn: string): string {
   return date.toISOString().slice(0, 10);
 }
 
+/** Today in Paris, `YYYY-MM-DD` (the API compares request days in Europe/Paris). */
+export function parisToday(now: Date = new Date()): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Europe/Paris" }).format(now);
+}
+
+/**
+ * The decision a labelled screening should have reached: `correct` keeps the decision reached,
+ * `incorrect` inverts it. Null when no decision was reached (service error, pending second
+ * opinion): the administrator must then say which decision was expected.
+ */
+export function expectedFromLabel(
+  screening: Pick<AdminScreening, "final_decision">,
+  label: LabelVerdict,
+): Decision | null {
+  if (!screening.final_decision) return null;
+  if (label === "correct") return screening.final_decision;
+  return screening.final_decision === "accept" ? "reject" : "accept";
+}
+
 /** French error for one criterion's thresholds, or null when valid. */
-export function validateThreshold(threshold: CriterionThreshold): string | null {
-  const { reject_below: reject, accept_above: accept } = threshold;
-  if (![reject, accept].every((value) => Number.isFinite(value) && value >= 0 && value <= 1)) {
+export function validateThresholds(rejectBelow: number, acceptAbove: number): string | null {
+  if (
+    ![rejectBelow, acceptAbove].every((value) => Number.isFinite(value) && value >= 0 && value <= 1)
+  ) {
     return "Les seuils sont des probabilités comprises entre 0 et 1.";
   }
-  if (reject > accept) {
+  if (rejectBelow > acceptAbove) {
     return "Le seuil de rejet doit être inférieur ou égal au seuil d’acceptation.";
   }
   return null;
 }
 
-export function validateDedupThreshold(value: number): string | null {
-  return Number.isFinite(value) && value >= 0.5 && value <= 1
+export function validateDedupThreshold(value: number, minimum: number): string | null {
+  return Number.isFinite(value) && value >= minimum && value <= 1
     ? null
-    : "Le seuil de similarité est compris entre 0,5 et 1.";
+    : `Le seuil de similarité est compris entre ${String(minimum).replace(".", ",")} et 1.`;
+}
+
+export interface ThresholdValues {
+  reject_below: number;
+  accept_above: number;
+}
+
+/**
+ * Body of PUT /api/admin/settings/screening-thresholds (AGENTS.md §13.6): only the thresholds
+ * that differ from screening.yaml are sent, so a value equal to the file's is not an override.
+ */
+export function thresholdOverrides(
+  sections: readonly AdminThresholdSection[],
+  values: (kind: TargetKind, criterion: AdminCriterionThresholds) => ThresholdValues,
+): AdminThresholdsUpdate {
+  const update: AdminThresholdsUpdate = {};
+  for (const section of sections) {
+    for (const criterion of section.criteria) {
+      const next = values(section.kind, criterion);
+      const override: { reject_below?: number; accept_above?: number } = {};
+      if (next.reject_below !== criterion.default_reject_below) {
+        override.reject_below = next.reject_below;
+      }
+      if (next.accept_above !== criterion.default_accept_above) {
+        override.accept_above = next.accept_above;
+      }
+      if (Object.keys(override).length > 0) {
+        update[section.kind] = { ...update[section.kind], [criterion.key]: override };
+      }
+    }
+  }
+  return update;
 }

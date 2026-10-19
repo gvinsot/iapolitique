@@ -539,11 +539,14 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
 - Contenus masqués (`hidden`) : texte purgé après 12 mois (`hidden → purged`, sauf réexamen
   humain en attente) avec tout ce qui en dérive : titre, résumé, slug, territoire, contenu
   textuel des analyses (montants, catégorie et scores gardés pour les statistiques),
-  explications des revues de signalement, embedding, jetons, droits de réponse ; ses contributions sont supprimées
+  explications des revues de signalement, embedding, jetons, droits de réponse, précision,
+  coordonnées et jetons de ses signalements quel que soit leur statut ; ses contributions sont supprimées
   et les doublons qui y ont été fusionnés purgés (`merged → purged`). L'exposé des motifs du
   masquage donne la date de purge.
 - Signalements : nom et e-mail facultatifs du signalant effacés 6 mois après le signalement ;
-  précision et jeton d'un signalement traité (`reviewed`) effacés 6 mois après la revue.
+  précision et jeton d'un signalement traité (`reviewed`) effacés 6 mois après la revue ; ceux d'un
+  signalement resté sans décision (`submitted`, `screening`, `second_opinion`, `accepted` : job
+  mort) effacés 6 mois après le signalement, son statut restant inchangé.
 - Contribution supprimée par son auteur : effacement immédiat (§7.1).
 - Demandes de réexamen humain : supprimées avec leur texte, et un an après leur traitement.
 - Job de purge quotidien dans le worker, testé.

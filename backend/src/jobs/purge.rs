@@ -13,7 +13,10 @@
 //!   are deleted (with their tracking tokens) and the duplicates merged into them are purged too.
 //! - Handled review requests are deleted one year after their handling.
 //! - Reports: the optional name and e-mail of the reporter are erased 6 months after the report;
-//!   reviewed reports lose their details and their tracking token 6 months after the review.
+//!   reviewed reports lose their details and their tracking token 6 months after the review;
+//!   reports that never reached a decision (stuck after a dead job) lose them 6 months after
+//!   the report; the reports of a purged hidden idea lose them with it, whatever their status
+//!   (the status itself is kept: the state machine has no `accepted → purged`).
 //! - Expired tracking tokens are deleted.
 //! - Rate limit salts and counters of previous days are destroyed (§7.2).
 //! - Finished jobs and superseded exports are removed after a while.
@@ -60,6 +63,10 @@ pub struct PurgeReport {
     pub report_contacts: i64,
     /// Reviewed reports whose details were erased.
     pub reviewed_reports: i64,
+    /// Reports of purged hidden ideas whose details, contact and token were erased.
+    pub hidden_idea_reports: i64,
+    /// Reports without a decision 6 months after their creation, details and token erased.
+    pub stale_reports: i64,
     pub tracking_tokens: i64,
     pub expired_tracking_tokens: i64,
     /// Review requests of purged texts and handled requests past their retention.
@@ -236,6 +243,28 @@ pub async fn run(pool: &PgPool) -> Result<PurgeReport, sqlx::Error> {
     report.reviewed_reports = reviewed;
     report.tracking_tokens += tokens;
 
+    // Backstop: a report stuck before its review (dead screening or review job) keeps neither
+    // its details nor its token beyond the retention of reports (PRIV-6).
+    let (stale, tokens): (i64, i64) = sqlx::query_as(
+        "WITH purged AS (
+             UPDATE reports SET details = NULL, details_purged_at = now()
+             WHERE status IN ('submitted', 'screening', 'second_opinion', 'accepted')
+               AND details_purged_at IS NULL
+               AND created_at < now() - make_interval(months => $1)
+             RETURNING id
+         ), tokens AS (
+             DELETE FROM tracking_tokens t USING purged p
+             WHERE t.target_kind = 'report' AND t.target_id = p.id
+             RETURNING 1
+         )
+         SELECT (SELECT count(*) FROM purged), (SELECT count(*) FROM tokens)",
+    )
+    .bind(REPORT_RETENTION_MONTHS)
+    .fetch_one(&mut *tx)
+    .await?;
+    report.stale_reports = stale;
+    report.tracking_tokens += tokens;
+
     report.review_requests += sqlx::query(
         "DELETE FROM review_requests
          WHERE status = 'done' AND handled_at < now() - make_interval(months => $1)",
@@ -395,6 +424,24 @@ async fn purge_hidden_ideas(
     let (tokens, requests) = erase_traces(conn, "idea", &purged).await?;
     report.tracking_tokens += tokens;
     report.review_requests += requests;
+
+    // Their reports, whatever their status (one stuck in `accepted` after a dead review job
+    // too): details, reporter contact, tokens, review requests and explanations (PRIV-6).
+    let reports: Vec<Uuid> = sqlx::query_scalar(
+        "UPDATE reports SET details = NULL,
+             details_purged_at = coalesce(details_purged_at, now()),
+             reporter_name = NULL, reporter_email = NULL,
+             reporter_purged_at = coalesce(reporter_purged_at, now())
+         WHERE idea_id = ANY($1)
+         RETURNING id",
+    )
+    .bind(&purged)
+    .fetch_all(&mut *conn)
+    .await?;
+    let (tokens, requests) = erase_traces(conn, "report", &reports).await?;
+    report.tracking_tokens += tokens;
+    report.review_requests += requests;
+    report.hidden_idea_reports = reports.len() as i64;
     Ok(())
 }
 
@@ -459,6 +506,8 @@ impl JobHandler for PurgeHandler {
                 hidden_idea_contributions = report.hidden_idea_contributions,
                 report_contacts = report.report_contacts,
                 reviewed_reports = report.reviewed_reports,
+                hidden_idea_reports = report.hidden_idea_reports,
+                stale_reports = report.stale_reports,
                 tracking_tokens = report.tracking_tokens,
                 expired_tracking_tokens = report.expired_tracking_tokens,
                 review_requests = report.review_requests,
@@ -709,6 +758,7 @@ mod tests {
         let report = run(&pool).await.unwrap();
         assert_eq!(report.report_contacts, 2);
         assert_eq!(report.reviewed_reports, 1);
+        assert_eq!(report.stale_reports, 1);
         assert_eq!(report.tracking_tokens, 1);
 
         type Row = (Uuid, Option<String>, Option<String>, Option<String>);
@@ -726,8 +776,9 @@ mod tests {
                 );
             } else {
                 assert_eq!((name, email), (None, None));
-                // Details of a report waiting for its review are kept.
-                assert_eq!(details.is_some(), id == old_accepted);
+                // A report still waiting for its review 6 months later is stuck (dead job):
+                // its details go too (PRIV-6).
+                assert_eq!(details, None, "{}", id == old_accepted);
             }
         }
         assert_eq!(run(&pool).await.unwrap(), PurgeReport::default());
@@ -1043,5 +1094,63 @@ mod tests {
         }
         // Idempotent.
         assert_eq!(run(&pool).await.unwrap().hidden_ideas, 0);
+    }
+
+    /// A report on `idea`, in `status`, created `months` ago, with details, a contact and a
+    /// tracking token.
+    async fn report_on(pool: &PgPool, idea: Uuid, status: &str, months: i32) -> Uuid {
+        let id: Uuid = sqlx::query_scalar(
+            "INSERT INTO reports (idea_id, reason, details, status, reporter_name, created_at)
+             VALUES ($1, 'contenu_problematique', 'Le texte vise mon voisin Paul Martin.', $2,
+                     'Paul', now() - make_interval(months => $3))
+             RETURNING id",
+        )
+        .bind(idea)
+        .bind(status)
+        .bind(months)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO tracking_tokens (token_hash, target_kind, target_id)
+             VALUES (sha256(uuid_send($1)), 'report', $1)",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+        id
+    }
+
+    async fn report_traces(pool: &PgPool, id: Uuid) -> (Option<String>, Option<String>, i64) {
+        sqlx::query_as(
+            "SELECT details, reporter_name,
+                    (SELECT count(*) FROM tracking_tokens WHERE target_id = $1)
+             FROM reports WHERE id = $1",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap()
+    }
+
+    /// PRIV-6: reports that never reached a decision do not keep their details and token
+    /// forever, neither with their purged idea nor on their own.
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn purges_reports_stuck_before_their_review(pool: PgPool) {
+        let hidden = hidden_idea(&pool, "ancienne", 13).await;
+        let stuck_on_hidden = report_on(&pool, hidden, "accepted", 1).await;
+        let published = crate::test_support::published_idea(&pool, "publiee").await;
+        let stale = report_on(&pool, published, "accepted", 7).await;
+        let recent = report_on(&pool, published, "accepted", 1).await;
+
+        let report = run(&pool).await.unwrap();
+        assert_eq!((report.hidden_idea_reports, report.stale_reports), (1, 1));
+        assert_eq!(report_traces(&pool, stuck_on_hidden).await, (None, None, 0));
+        let (details, _, tokens) = report_traces(&pool, stale).await;
+        assert_eq!((details, tokens), (None, 0));
+        let (details, name, tokens) = report_traces(&pool, recent).await;
+        assert!(details.is_some() && name.is_some());
+        assert_eq!(tokens, 1);
     }
 }

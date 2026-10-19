@@ -16,7 +16,7 @@ ARG NGINX_VERSION=1.31
 ARG ALPINE_VERSION=3.24
 
 # ---------------------------------------------------------------------------------------------
-# 1. Frontend: ESLint + Prettier, tsc, Vitest, production build.
+# 1. Frontend: ESLint + Prettier, tsc, Vitest, production build, no third-party origin in it.
 # ---------------------------------------------------------------------------------------------
 FROM node:${NODE_VERSION}-alpine AS frontend-check
 WORKDIR /app
@@ -29,6 +29,7 @@ RUN npm run lint \
     && npm run typecheck \
     && npm test \
     && npm run build \
+    && npm run check:dist \
     && mkdir -p /frontend-out/api \
     && if [ -f src/api/openapi.json ]; then cp src/api/openapi.json /frontend-out/api/; fi \
     && touch /frontend-ok

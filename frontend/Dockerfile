@@ -20,7 +20,8 @@ COPY frontend/package.json frontend/package-lock.json frontend/.npmrc ./
 RUN --mount=type=cache,id=iapolitique-npm,target=/root/.npm,sharing=locked \
     npm ci --no-audit --no-fund
 COPY frontend/ ./
-RUN npm run build
+# The shipped build names no third-party origin (scripts/check-dist-urls.mjs, AGENTS.md §14.2).
+RUN npm run build && npm run check:dist
 
 # -----------------------------------------------------------------------------------------------
 # runtime: nginx on port 80 (AGENTS.md §13.1). The master process binds the port, workers run

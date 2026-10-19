@@ -924,7 +924,10 @@ au démarrage (un fichier invalide empêche le démarrage).
 ### 13.5 Tests en CI
 
 Le service `test` du compose construit `devops/Dockerfile.test` (contexte `..`) :
-1. stage `frontend-check` (node 22) : `npm ci`, lint, typecheck, Vitest, build ;
+1. stage `frontend-check` (node 22) : `npm ci`, lint, typecheck, Vitest, build, puis
+   `npm run check:dist` (`scripts/check-dist-urls.mjs` : le build ne nomme aucune origine tierce
+   hors d'une liste justifiée d'identifiants et de liens de documentation ; aussi exécuté par
+   `frontend/Dockerfile`) ;
 2. stage `frontend-headers` (même image nginx que le runtime) : le `dist/` de `frontend-check`
    servi par `frontend/nginx.conf`, contrôlé par `devops/check_frontend_headers.sh` (en-têtes,
    nonce CSP, cache, méthodes, fichiers cachés, `security.txt` avec et sans adresse, §14.2) ;

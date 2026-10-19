@@ -32,11 +32,15 @@ pub enum Surface {
 pub const CONTENT_SECURITY_POLICY: &str =
     "default-src 'none'; frame-ancestors 'none'; base-uri 'none'";
 pub const STRICT_TRANSPORT_SECURITY: &str = "max-age=63072000; includeSubDomains";
+/// Same list as `frontend/nginx.conf` (§14.2): only features browsers recognise, so no
+/// `interest-cohort` (abandoned FLoC, replaced by `browsing-topics`).
 pub const PERMISSIONS_POLICY: &str = "accelerometer=(), autoplay=(), browsing-topics=(), \
-     camera=(), display-capture=(), encrypted-media=(), fullscreen=(), geolocation=(), \
-     gyroscope=(), hid=(), interest-cohort=(), magnetometer=(), microphone=(), midi=(), \
-     payment=(), picture-in-picture=(), publickey-credentials-get=(), screen-wake-lock=(), \
-     serial=(), usb=(), xr-spatial-tracking=()";
+     camera=(), display-capture=(), encrypted-media=(), gamepad=(), geolocation=(), \
+     gyroscope=(), hid=(), identity-credentials-get=(), idle-detection=(), local-fonts=(), \
+     magnetometer=(), microphone=(), midi=(), otp-credentials=(), payment=(), \
+     picture-in-picture=(), publickey-credentials-create=(), publickey-credentials-get=(), \
+     screen-wake-lock=(), serial=(), storage-access=(), usb=(), window-management=(), \
+     xr-spatial-tracking=()";
 pub const X_ROBOTS_TAG: &str = "noindex, nofollow";
 
 const PERMISSIONS_POLICY_HEADER: HeaderName = HeaderName::from_static("permissions-policy");
@@ -158,6 +162,25 @@ pub fn assert_security_headers(headers: &HeaderMap, context: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// HDR-2: the api sends the nginx list, without features browsers do not recognise. The
+    /// comparison with `frontend/nginx.conf` runs where the file is present (the CI image of
+    /// the backend only holds `backend/` and `prompts/`).
+    #[test]
+    fn permissions_policy_matches_nginx() {
+        assert!(!PERMISSIONS_POLICY.contains("interest-cohort"));
+        assert!(PERMISSIONS_POLICY.contains("browsing-topics=()"));
+        let path = concat!(env!("CARGO_MANIFEST_DIR"), "/../frontend/nginx.conf");
+        let Ok(nginx) = std::fs::read_to_string(path) else {
+            return;
+        };
+        let line = nginx
+            .lines()
+            .find(|l| l.trim_start().starts_with("add_header Permissions-Policy"))
+            .expect("nginx sets Permissions-Policy");
+        let value = line.split('"').nth(1).expect("quoted value");
+        assert_eq!(PERMISSIONS_POLICY, value);
+    }
 
     #[test]
     fn no_store_policy() {

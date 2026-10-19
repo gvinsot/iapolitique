@@ -58,6 +58,13 @@ services:
       RATE_LIMIT_IDEAS_PER_DAY: ${RATE_LIMIT_IDEAS_PER_DAY:-}
       RATE_LIMIT_CONTRIBUTIONS_PER_DAY: ${RATE_LIMIT_CONTRIBUTIONS_PER_DAY:-}
       RATE_LIMIT_REPORTS_PER_DAY: ${RATE_LIMIT_REPORTS_PER_DAY:-}
+      # Publisher details served by GET /api/legal (AGENTS.md §7.5): not secret, never in git.
+      # Unset: the legal pages show "coordonnées momentanément indisponibles".
+      LEGAL_PUBLISHER_NAME: ${LEGAL_PUBLISHER_NAME:-}
+      LEGAL_PUBLISHER_ADDRESS: ${LEGAL_PUBLISHER_ADDRESS:-}
+      LEGAL_PUBLISHER_PHONE: ${LEGAL_PUBLISHER_PHONE:-}
+      LEGAL_CONTACT_EMAIL: ${LEGAL_CONTACT_EMAIL:-}
+      LEGAL_PRIVACY_EMAIL: ${LEGAL_PRIVACY_EMAIL:-}
       # Traefik is the only proxy in front of the api: the client IP is the last X-Forwarded-For hop.
       TRUSTED_PROXY_HOPS: ${TRUSTED_PROXY_HOPS:-1}
     networks:

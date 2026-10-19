@@ -76,6 +76,7 @@ Dans PulsarCD, éditeur `.env` de la stack `iapolitique` (ou MCP `set_stack_env`
 | `ADMIN_API_TOKEN` | `openssl rand -hex 32` |
 | `TRAEFIK_HOST`, `ADMIN_HOST` | `iapolitique.fr`, `admin.iapolitique.fr` |
 | `DEPLOY_HEALTHCHECK_PATH` | `/api/health` |
+| `LEGAL_PUBLISHER_NAME`, `LEGAL_PUBLISHER_ADDRESS`, `LEGAL_PUBLISHER_PHONE`, `LEGAL_CONTACT_EMAIL`, `LEGAL_PRIVACY_EMAIL` | identité et adresses de l'éditeur (AGENTS.md §7.5), publiées sur les pages légales ; jamais dans git. Vides : « coordonnées momentanément indisponibles » et avertissement au démarrage de l'api ; une adresse électronique invalide empêche le démarrage |
 
 Onglet `.env.qa` (visible quand la QA est activée), **indispensable** : sans lui, la QA utilise
 la base et le budget de production.

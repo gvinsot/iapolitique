@@ -457,3 +457,26 @@ async fn hidden_unknown_and_merged_ideas(pool: PgPool) {
     assert_eq!(status, StatusCode::NOT_FOUND);
     let _ = merged;
 }
+
+/// PRIV-5: the public API gives the day of the analysis (midnight Europe/Paris), never a fine
+/// timestamp that would date the submission.
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn public_dates_are_day_precise(pool: PgPool) {
+    let app = app(pool.clone()).await;
+    catalogue(&pool).await;
+    sqlx::query("UPDATE analyses SET created_at = '2026-10-19T02:39:18.658489Z'")
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (_, _, list) = get_json(&app.router, "/api/ideas", &[]).await;
+    let (_, _, detail) = get_json(&app.router, "/api/ideas/mutualiser-les-achats", &[]).await;
+    let values = [
+        list["items"][0]["updated_at"].clone(),
+        detail["updated_at"].clone(),
+        detail["ai"]["generated_at"].clone(),
+    ];
+    for value in values {
+        // 04:39 in Paris on 2026-10-19 (summer time): midnight Paris is 22:00 UTC the day before.
+        assert_eq!(value, json!("2026-10-18T22:00:00Z"));
+    }
+}

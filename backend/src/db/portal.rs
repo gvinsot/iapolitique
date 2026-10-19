@@ -82,7 +82,9 @@ macro_rules! listing_select {
                     a.territory_code, a.category, a.kind, a.annual_gain_low_eur,
                     a.annual_gain_median_eur, a.annual_gain_high_eur, a.feasibility,
                     a.time_to_effect_months, a.confidence, i.score_eur, i.proposal_count,
-                    i.contribution_count, a.created_at AS updated_at ",
+                    i.contribution_count,
+                    date_trunc('day', a.created_at AT TIME ZONE 'Europe/Paris')
+                        AT TIME ZONE 'Europe/Paris' AS updated_at ",
             listing_from!(),
             " ORDER BY ",
             $order,
@@ -260,6 +262,9 @@ pub struct AnalysisRow {
     pub created_at: DateTime<Utc>,
 }
 
+/// The analysis of an idea page. Its date is truncated to midnight Europe/Paris, like the
+/// `updated_at` of the ranking: the time of an analysis follows its submission by a fixed
+/// pipeline delay, so a finer timestamp would date the submission (PRIV-5, §7.4).
 pub async fn analysis(pool: &PgPool, analysis_id: Uuid) -> sqlx::Result<Option<AnalysisRow>> {
     sqlx::query_as(
         "SELECT version, content, title, summary, kind, category, admin_level, territory_name,
@@ -269,7 +274,8 @@ pub async fn analysis(pool: &PgPool, analysis_id: Uuid) -> sqlx::Result<Option<A
                 time_to_effect_months, feasibility, confidence, score_eur, net_annual_eur,
                 feasibility_factor, confidence_factor, delay_factor, model, prompt_version,
                 research_prompt_version, schema_version, scoring_version, web_search_count,
-                created_at
+                date_trunc('day', created_at AT TIME ZONE 'Europe/Paris')
+                    AT TIME ZONE 'Europe/Paris' AS created_at
          FROM analyses WHERE id = $1",
     )
     .bind(analysis_id)

@@ -648,6 +648,9 @@ fn check_entries(file: &str, name: &str, entries: &[TaxonomyEntry], problems: &m
 // JSON schemas
 // ---------------------------------------------------------------------------------------------
 
+/// Node of `analysis.schema.json` holding the consulted page cited by a source (`R1`…).
+pub const ANALYSIS_SOURCE_REF: &str = "/properties/sources/items/properties/ref";
+
 /// An output schema: sent as-is in `response_format` and used to validate the answer.
 #[derive(Clone)]
 pub struct OutputSchema {
@@ -722,6 +725,24 @@ impl OutputSchema {
                 errors,
             })
         }
+    }
+
+    /// The schema sent to Mistral with the string node at `pointer` restricted to `values`
+    /// (`enum`), for one call: strict mode then cannot answer another value. Answers are still
+    /// validated against the file's schema, so that a value outside `values` reaches the checks
+    /// of the caller (and their feedback) instead of a schema violation. `None` if `pointer`
+    /// is not a string node.
+    pub fn constrained(&self, pointer: &str, values: &[String]) -> Option<Self> {
+        let mut schema = (*self.schema).clone();
+        let node = schema.pointer_mut(pointer)?.as_object_mut()?;
+        if node.get("type").and_then(Value::as_str) != Some("string") {
+            return None;
+        }
+        node.insert("enum".to_owned(), Value::from(values.to_vec()));
+        Some(Self {
+            schema: Arc::new(schema),
+            ..self.clone()
+        })
     }
 
     /// `enum` at a JSON pointer of the schema, as strings.
@@ -1294,6 +1315,20 @@ fn check_schema_sync(
         if publics != Some(keys(&taxonomy.impact_publics).into_iter().collect()) {
             problems.push(format!(
                 "{}: impacts properties out of sync with impact_publics",
+                schema.file
+            ));
+        }
+        // INJ-3 (§6.2): sources cite the consulted pages by identifier, never by URL.
+        let source_fields: Option<Vec<&str>> = schema
+            .schema
+            .pointer("/properties/sources/items/properties")
+            .and_then(Value::as_object)
+            .map(|p| p.keys().map(String::as_str).collect());
+        if source_fields.as_deref() != Some(&["id", "ref", "used_for"][..])
+            || schema.constrained(ANALYSIS_SOURCE_REF, &[]).is_none()
+        {
+            problems.push(format!(
+                "{}: sources items must be {{ id, ref (string), used_for }}",
                 schema.file
             ));
         }
@@ -1893,6 +1928,27 @@ mod tests {
             problems
                 .iter()
                 .any(|p| p.contains("every property must be required"))
+        );
+
+        // INJ-3: a schema that lets the model write a source URL does not load.
+        let dir = copy_prompts();
+        edit(
+            dir.path(),
+            "analysis.schema.json",
+            "\"ref\": {\n            \"type\": \"string\",",
+            "\"url\": {\n            \"type\": \"string\",",
+        );
+        edit(
+            dir.path(),
+            "analysis.schema.json",
+            "\"id\",\n          \"ref\",",
+            "\"id\",\n          \"url\",",
+        );
+        let problems = problems_of(dir.path());
+        assert!(
+            problems.iter().any(|p| p
+                == "analysis.schema.json: sources items must be { id, ref (string), used_for }"),
+            "{problems:?}"
         );
 
         let dir = copy_prompts();

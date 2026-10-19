@@ -2,6 +2,14 @@
 //! express. The answers are first validated against their schema of `prompts/`, then
 //! deserialized here, then checked: a failed check is an invalid output, retried like a schema
 //! violation (§6.1).
+//!
+//! Sources (INJ-3): the analysis model never writes a URL. The pages that the web research
+//! really consulted (its `tool_reference` chunks) and the sources of the analysis being replaced
+//! are numbered `R1`, `R2`… ([`ConsultedPages`]) in the structuring prompt; the answer
+//! ([`AnalysisDraft`]) cites them by that identifier (`ref`), and the backend fills the title,
+//! the publisher and the URL of each published source from that list ([`AnalysisDraft::resolve`]).
+//! A URL written in an idea, a contribution, a memo or a page's text can therefore never become
+//! a source.
 
 use std::collections::{BTreeMap, BTreeSet};
 use std::sync::LazyLock;
@@ -9,6 +17,7 @@ use std::sync::LazyLock;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 
+use super::mistral::Rejection;
 use super::prompts::{Criterion, Taxonomy};
 use crate::domain::money::EurRange;
 use crate::domain::types::{
@@ -24,6 +33,8 @@ static SOURCE_ID_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"^S[1-9][0-9]*$").expect("valid regex"));
 static SOURCE_REF_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[(S[0-9]+)\]").expect("valid regex"));
+static PAGE_ID_RE: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"^R([1-9][0-9]{0,3})$").expect("valid regex"));
 
 /// Longest accepted title of an analysis (also the source of its slug).
 pub const MAX_TITLE_CHARS: usize = 200;
@@ -99,32 +110,107 @@ pub fn source_url_key(raw: &str) -> Result<String, &'static str> {
     Ok(key)
 }
 
-/// URLs that an analysis may cite (INJ-3): the pages consulted by its web research and the
-/// sources of the analysis it replaces. Any other URL (planted by a visitor text, a
-/// contribution or a web page) is refused.
-#[derive(Debug, Clone, Default, PartialEq, Eq)]
-pub struct AllowedSources(BTreeSet<String>);
+/// A page that an analysis may cite (INJ-3), as published: its title as the web search gave
+/// it (cleaned), its site as publisher, its URL.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct ConsultedPage {
+    pub title: String,
+    pub publisher: String,
+    pub url: String,
+}
 
-impl AllowedSources {
-    pub fn new<'a>(urls: impl IntoIterator<Item = &'a str>) -> Self {
-        Self(
-            urls.into_iter()
-                .filter_map(|url| source_url_key(url).ok())
-                .collect(),
-        )
+/// Site of a source URL, shown as its publisher: the host name without `www.`.
+fn site_of(url: &str) -> String {
+    let host = url::Url::parse(url.trim())
+        .ok()
+        .and_then(|u| {
+            u.host_str()
+                .map(|h| h.trim_end_matches('.').to_ascii_lowercase())
+        })
+        .unwrap_or_default();
+    host.strip_prefix("www.").unwrap_or(&host).to_owned()
+}
+
+/// A title from the web (untrusted, INJ-6): no control, bidi or invisible character, spaces
+/// collapsed, at most [`MAX_SOURCE_FIELD_CHARS`] characters.
+fn clean_title(title: &str) -> String {
+    let visible: String = title
+        .chars()
+        .filter(|&c| !crate::domain::validation::is_invisible_format_char(c))
+        .map(|c| if c.is_control() { ' ' } else { c })
+        .collect();
+    let words = visible.split_whitespace().collect::<Vec<_>>().join(" ");
+    if words.chars().count() <= MAX_SOURCE_FIELD_CHARS {
+        return words;
+    }
+    let mut short: String = words.chars().take(MAX_SOURCE_FIELD_CHARS - 1).collect();
+    short.push('…');
+    short
+}
+
+/// The pages an analysis may cite (INJ-3), numbered `R1`, `R2`… in this order: the pages
+/// consulted by its web research (`tool_reference` chunks), then the sources of the analysis it
+/// replaces. One entry per page ([`source_url_key`]); a URL that cannot be published (not
+/// http(s), credentials, explicit port, IP address, too long, control character) is left out.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub struct ConsultedPages(Vec<ConsultedPage>);
+
+impl ConsultedPages {
+    /// `pages`: (title, URL) pairs, in order.
+    pub fn new<'a>(pages: impl IntoIterator<Item = (&'a str, &'a str)>) -> Self {
+        let mut keys = BTreeSet::new();
+        let mut list = Vec::new();
+        for (title, url) in pages {
+            let url = url.trim();
+            let Ok(key) = source_url_key(url) else {
+                continue;
+            };
+            let mut problems = Vec::new();
+            check_ai_text("url", url, MAX_SOURCE_URL_LEN, &mut problems);
+            if !problems.is_empty() || !keys.insert(key) {
+                continue;
+            }
+            let publisher = clean_title(&site_of(url));
+            let title = match clean_title(title) {
+                title if title.is_empty() => publisher.clone(),
+                title => title,
+            };
+            list.push(ConsultedPage {
+                title,
+                publisher,
+                url: url.to_owned(),
+            });
+        }
+        Self(list)
     }
 
     pub fn is_empty(&self) -> bool {
         self.0.is_empty()
     }
 
-    fn check(&self, url: &str) -> Result<(), &'static str> {
-        let key = source_url_key(url)?;
-        if self.0.contains(&key) {
-            Ok(())
-        } else {
-            Err("URL not consulted by the web research")
-        }
+    pub fn len(&self) -> usize {
+        self.0.len()
+    }
+
+    /// `R1`, `R2`…, in order.
+    pub fn ids(&self) -> Vec<String> {
+        (1..=self.0.len()).map(|n| format!("R{n}")).collect()
+    }
+
+    /// The page of an identifier `Rn`, if any.
+    pub fn get(&self, id: &str) -> Option<&ConsultedPage> {
+        let n: usize = PAGE_ID_RE.captures(id)?.get(1)?.as_str().parse().ok()?;
+        self.0.get(n.checked_sub(1)?)
+    }
+
+    /// `{{pages}}` of `analysis.md`: « Rn — titre — site — adresse », one page per line.
+    pub fn for_prompt(&self) -> String {
+        self.0
+            .iter()
+            .zip(self.ids())
+            .map(|(page, id)| format!("{id} — {} — {} — {}", page.title, page.publisher, page.url))
+            .collect::<Vec<_>>()
+            .join("\n")
     }
 }
 
@@ -166,12 +252,24 @@ pub struct Impact {
     pub explanation: String,
 }
 
+/// A published source (§6.2): `title`, `publisher` and `url` come from [`ConsultedPages`], never
+/// from the model. Also the shape of the analyses stored before the citation by identifier.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Source {
     pub id: String,
     pub title: String,
     pub publisher: String,
     pub url: String,
+    pub used_for: String,
+}
+
+/// A source as the model gives it (`prompts/analysis.schema.json`): the identifier cited in
+/// the texts (`S1`…), the consulted page it is (`R1`…), and what it supports.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SourceCitation {
+    pub id: String,
+    #[serde(rename = "ref")]
+    pub page: String,
     pub used_for: String,
 }
 
@@ -183,9 +281,10 @@ pub struct ContributionConsidered {
     pub response: String,
 }
 
-/// Output of `prompts/analysis.md` (§6.2).
+/// An analysis (§6.2), as published (`S` = [`Source`], stored in `analyses.content`) or as the
+/// model answers it ([`AnalysisDraft`]).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
-pub struct AnalysisOutput {
+pub struct AnalysisOutput<S = Source> {
     pub title: String,
     pub summary: String,
     pub improved_proposal: String,
@@ -207,13 +306,45 @@ pub struct AnalysisOutput {
     pub risks: Vec<String>,
     /// Public of `taxonomy.yaml` → impact.
     pub impacts: BTreeMap<String, Impact>,
-    pub sources: Vec<Source>,
+    pub sources: Vec<S>,
     pub contributions_considered: Vec<ContributionConsidered>,
     pub changes_since_previous: String,
 }
 
-impl AnalysisOutput {
-    /// Characters and lengths of every generated string (INJ-6).
+/// Output of `prompts/analysis.md`: sources cite the consulted pages by identifier.
+pub type AnalysisDraft = AnalysisOutput<SourceCitation>;
+
+impl<S> AnalysisOutput<S> {
+    /// The same analysis with other sources.
+    fn with_sources<T>(self, sources: Vec<T>) -> AnalysisOutput<T> {
+        AnalysisOutput {
+            title: self.title,
+            summary: self.summary,
+            improved_proposal: self.improved_proposal,
+            existing_situation: self.existing_situation,
+            admin_level: self.admin_level,
+            territory: self.territory,
+            category: self.category,
+            kind: self.kind,
+            annual_gain_eur: self.annual_gain_eur,
+            implementation_cost_eur: self.implementation_cost_eur,
+            time_to_effect_months: self.time_to_effect_months,
+            legal_vehicle: self.legal_vehicle,
+            feasibility: self.feasibility,
+            confidence: self.confidence,
+            confidence_explanation: self.confidence_explanation,
+            assumptions: self.assumptions,
+            pros: self.pros,
+            cons: self.cons,
+            risks: self.risks,
+            impacts: self.impacts,
+            sources,
+            contributions_considered: self.contributions_considered,
+            changes_since_previous: self.changes_since_previous,
+        }
+    }
+
+    /// Characters and lengths of every generated string but the sources (INJ-6).
     fn check_texts(&self, problems: &mut Vec<String>) {
         let p = problems;
         check_ai_text("title", &self.title, MAX_TITLE_CHARS, p);
@@ -255,23 +386,6 @@ impl AnalysisOutput {
                 MAX_ITEM_CHARS,
                 p,
             );
-        }
-        for source in &self.sources {
-            check_ai_text("sources.id", &source.id, MAX_SOURCE_FIELD_CHARS, p);
-            check_ai_text("sources.title", &source.title, MAX_SOURCE_FIELD_CHARS, p);
-            check_ai_text(
-                "sources.publisher",
-                &source.publisher,
-                MAX_SOURCE_FIELD_CHARS,
-                p,
-            );
-            check_ai_text(
-                "sources.used_for",
-                &source.used_for,
-                MAX_SOURCE_FIELD_CHARS,
-                p,
-            );
-            check_ai_text("sources.url", &source.url, MAX_SOURCE_URL_LEN, p);
         }
         for c in &self.contributions_considered {
             check_ai_text(
@@ -318,19 +432,17 @@ impl AnalysisOutput {
         texts
     }
 
-    /// Checks of §13.4 beyond the schema. `contribution_ids` are the contributions given to the
-    /// prompt: the analysis may only report on those. `allowed` are the URLs it may cite.
-    pub fn check(
+    /// Checks of §13.4 that do not concern the sources.
+    fn check_content(
         &self,
         taxonomy: &Taxonomy,
         contribution_ids: &[String],
-        allowed: &AllowedSources,
-    ) -> Result<(), String> {
-        let mut problems = Vec::new();
+        problems: &mut Vec<String>,
+    ) {
         if self.title.trim().is_empty() || self.summary.trim().is_empty() {
             problems.push("empty title or summary".to_owned());
         }
-        self.check_texts(&mut problems);
+        self.check_texts(problems);
         if taxonomy.category(&self.category).is_none() {
             problems.push(format!("unknown category `{}`", self.category));
         } else if !taxonomy.category_allowed(self.admin_level.as_str(), &self.category) {
@@ -371,34 +483,6 @@ impl AnalysisOutput {
         if publics != answered {
             problems.push("impacts must cover exactly the publics of the taxonomy".to_owned());
         }
-
-        if self.sources.is_empty() {
-            problems.push("at least one source is required".to_owned());
-        }
-        let mut ids = BTreeSet::new();
-        for source in &self.sources {
-            if !SOURCE_ID_RE.is_match(&source.id) {
-                problems.push(format!("invalid source id `{}`", source.id));
-            }
-            if !ids.insert(source.id.as_str()) {
-                problems.push(format!("duplicate source id `{}`", source.id));
-            }
-            if !(source.url.starts_with("https://") || source.url.starts_with("http://")) {
-                problems.push(format!("source {} needs an http(s) URL", source.id));
-            } else if let Err(err) = allowed.check(&source.url) {
-                problems.push(format!("source {}: {err}", source.id));
-            }
-        }
-        let cited: BTreeSet<&str> = self
-            .texts()
-            .into_iter()
-            .flat_map(|t| SOURCE_REF_RE.captures_iter(t))
-            .filter_map(|c| c.get(1).map(|m| m.as_str()))
-            .collect();
-        let unknown: Vec<&str> = cited.difference(&ids).copied().collect();
-        if !unknown.is_empty() {
-            problems.push(format!("cited sources missing from sources: {unknown:?}"));
-        }
         let unknown_contributions: Vec<&str> = self
             .contributions_considered
             .iter()
@@ -410,11 +494,131 @@ impl AnalysisOutput {
                 "unknown contributions considered: {unknown_contributions:?}"
             ));
         }
-        if problems.is_empty() {
-            Ok(())
-        } else {
-            Err(problems.join("; "))
+    }
+
+    /// `[Sx]` cited in the texts.
+    fn cited(&self) -> BTreeSet<&str> {
+        self.texts()
+            .into_iter()
+            .flat_map(|t| SOURCE_REF_RE.captures_iter(t))
+            .filter_map(|c| c.get(1).map(|m| m.as_str()))
+            .collect()
+    }
+}
+
+impl AnalysisDraft {
+    /// Checks of §13.4 beyond the schema. `contribution_ids` are the contributions given to the
+    /// prompt: the analysis may only report on those. `pages` are the pages it may cite, by
+    /// identifier. A source problem (unknown page, `[Sx]` cited without its source) comes with
+    /// a feedback for the next attempt that lists the valid identifiers: the model never wrote
+    /// a URL, so a wrong identifier is a slip to correct, not a planted page.
+    pub fn check(
+        &self,
+        taxonomy: &Taxonomy,
+        contribution_ids: &[String],
+        pages: &ConsultedPages,
+    ) -> Result<(), Rejection> {
+        let mut problems = Vec::new();
+        self.check_content(taxonomy, contribution_ids, &mut problems);
+        // Feedback lines: built from validated identifiers only, never from model text.
+        let mut feedback = Vec::new();
+        if self.sources.is_empty() {
+            problems.push("at least one source is required".to_owned());
+            feedback.push("`sources` est vide : au moins une source est requise".to_owned());
         }
+        let mut ids = BTreeSet::new();
+        for source in &self.sources {
+            check_ai_text(
+                "sources.id",
+                &source.id,
+                MAX_SOURCE_FIELD_CHARS,
+                &mut problems,
+            );
+            check_ai_text(
+                "sources.ref",
+                &source.page,
+                MAX_SOURCE_FIELD_CHARS,
+                &mut problems,
+            );
+            check_ai_text(
+                "sources.used_for",
+                &source.used_for,
+                MAX_SOURCE_FIELD_CHARS,
+                &mut problems,
+            );
+            let valid_id = SOURCE_ID_RE.is_match(&source.id);
+            if !valid_id {
+                problems.push(format!("invalid source id `{}`", source.id));
+            }
+            if !ids.insert(source.id.as_str()) {
+                problems.push(format!("duplicate source id `{}`", source.id));
+            }
+            if pages.get(&source.page).is_none() {
+                problems.push(format!(
+                    "source {}: not a consulted page",
+                    if valid_id { source.id.as_str() } else { "?" }
+                ));
+                feedback.push(if valid_id {
+                    format!(
+                        "la source {} indique dans `ref` une page absente de <pages_consultees>",
+                        source.id
+                    )
+                } else {
+                    "une source indique dans `ref` une page absente de <pages_consultees>"
+                        .to_owned()
+                });
+            }
+        }
+        let unknown: Vec<&str> = self.cited().difference(&ids).copied().collect();
+        if !unknown.is_empty() {
+            problems.push(format!("cited sources missing from sources: {unknown:?}"));
+            let list: Vec<String> = unknown.iter().map(|id| format!("[{id}]")).collect();
+            feedback.push(format!(
+                "{} cité(s) dans les textes sans entrée dans `sources`",
+                list.join(", ")
+            ));
+        }
+        if problems.is_empty() {
+            return Ok(());
+        }
+        let feedback = (!feedback.is_empty()).then(|| {
+            format!(
+                "<retour_validation>\nTa réponse précédente a été refusée :\n{}\nIdentifiants \
+                 de pages valides : {}. Chaque source porte dans `ref` l'un de ces identifiants, \
+                 et chaque référence [Sx] citée dans les textes figure dans `sources`. Corrige ces \
+                 points et réponds de nouveau par l'objet JSON complet.\n</retour_validation>",
+                feedback
+                    .iter()
+                    .map(|line| format!("- {line} ;"))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+                pages.ids().join(", ")
+            )
+        });
+        Err(Rejection {
+            problem: problems.join("; "),
+            feedback,
+        })
+    }
+
+    /// The analysis to publish: each source takes the title, the publisher and the URL of the
+    /// page it cites. To call on a draft that passed [`AnalysisDraft::check`] with `pages`; a
+    /// source whose page is unknown is dropped.
+    pub fn resolve(self, pages: &ConsultedPages) -> AnalysisOutput {
+        let sources = self
+            .sources
+            .iter()
+            .filter_map(|source| {
+                pages.get(&source.page).map(|page| Source {
+                    id: source.id.clone(),
+                    title: page.title.clone(),
+                    publisher: page.publisher.clone(),
+                    url: page.url.clone(),
+                    used_for: source.used_for.clone(),
+                })
+            })
+            .collect();
+        self.with_sources(sources)
     }
 }
 
@@ -525,53 +729,245 @@ mod tests {
     use crate::ai::prompts::test_prompts;
     use serde_json::{Value, json};
 
+    /// A published analysis, as stored before and after the citation by identifier.
     fn analysis_json() -> Value {
         serde_json::from_str(include_str!("../../tests/fixtures/mistral/analysis.json")).unwrap()
     }
 
-    fn analysis() -> AnalysisOutput {
-        serde_json::from_value(analysis_json()).unwrap()
+    /// The model's answer: the same analysis, sources citing R1 and R2.
+    fn draft_json() -> Value {
+        serde_json::from_str(include_str!(
+            "../../tests/fixtures/mistral/analysis_draft.json"
+        ))
+        .unwrap()
     }
 
-    /// The URLs of the fixture, as the research would have returned them.
-    fn allowed() -> AllowedSources {
-        AllowedSources::new(
-            analysis()
-                .sources
-                .iter()
-                .map(|s| s.url.as_str())
-                .collect::<Vec<_>>(),
-        )
+    fn draft() -> AnalysisDraft {
+        serde_json::from_value(draft_json()).unwrap()
     }
 
-    fn check(output: &AnalysisOutput) -> Result<(), String> {
-        output.check(&test_prompts().taxonomy, &["c1".to_owned()], &allowed())
+    const CCOMPTES: &str =
+        "https://www.ccomptes.fr/fr/publications/la-fonction-achats-des-hopitaux";
+    const SANTE: &str = "https://sante.gouv.fr/groupements-hospitaliers-de-territoire";
+
+    /// The pages of the fixture, as the research would have returned them.
+    fn pages() -> ConsultedPages {
+        ConsultedPages::new([
+            ("La fonction achats des hôpitaux publics", CCOMPTES),
+            ("Les groupements hospitaliers de territoire", SANTE),
+        ])
     }
 
-    /// INJ-3: a source must be a page consulted by the web research.
+    fn check(draft: &AnalysisDraft) -> Result<(), String> {
+        draft
+            .check(&test_prompts().taxonomy, &["c1".to_owned()], &pages())
+            .map_err(|rejection| rejection.problem)
+    }
+
     #[test]
-    fn sources_must_come_from_the_research() {
-        let mut output = analysis();
-        output.sources[0].url = "https://ccomptes-rapports.example/2025/achats".into();
-        let err = check(&output).unwrap_err();
-        assert!(err.contains("not consulted by the web research"), "{err}");
+    fn consulted_pages_are_numbered_cleaned_and_deduplicated() {
+        let pages = ConsultedPages::new([
+            ("La fonction achats\n des hôpitaux\u{202E} ", CCOMPTES),
+            // The same page (trailing slash, fragment, utm_*, http): left out.
+            (
+                "Doublon",
+                "http://www.ccomptes.fr/fr/publications/la-fonction-achats-des-hopitaux/#a",
+            ),
+            ("", SANTE),
+            // Not publishable: left out.
+            ("Locale", "https://192.168.1.1/x"),
+            ("Script", "javascript:alert(1)"),
+            ("Port", "https://ccomptes.fr:8443/x"),
+            ("Contrôle", "https://example.org/a\u{0007}b"),
+            (
+                "t".repeat(MAX_SOURCE_FIELD_CHARS + 10).as_str(),
+                "https://Example.ORG/page",
+            ),
+        ]);
+        assert_eq!(pages.len(), 3);
+        assert_eq!(pages.ids(), ["R1", "R2", "R3"]);
+        let first = pages.get("R1").unwrap();
+        assert_eq!(first.title, "La fonction achats des hôpitaux");
+        assert_eq!(first.publisher, "ccomptes.fr");
+        assert_eq!(first.url, CCOMPTES);
+        // No title: the site stands for it.
+        assert_eq!(pages.get("R2").unwrap().title, "sante.gouv.fr");
+        let long = pages.get("R3").unwrap();
+        assert_eq!(long.title.chars().count(), MAX_SOURCE_FIELD_CHARS);
+        assert!(long.title.ends_with('…'));
+        assert_eq!(long.publisher, "example.org");
+        for unknown in ["R0", "R4", "R01", "r1", "S1", "R", CCOMPTES, ""] {
+            assert!(pages.get(unknown).is_none(), "{unknown}");
+        }
+        assert_eq!(
+            pages.for_prompt().lines().next(),
+            Some(
+                format!("R1 — La fonction achats des hôpitaux — ccomptes.fr — {CCOMPTES}").as_str()
+            )
+        );
+        assert!(ConsultedPages::new([]).is_empty());
+    }
+
+    /// The published sources take title, publisher and URL from the consulted pages; the
+    /// stored shape does not change, so the analyses published before keep being read
+    /// (portal, exports, previous analysis of a re-analysis).
+    #[test]
+    fn a_checked_draft_resolves_to_the_published_shape() {
+        check(&draft()).unwrap();
+        let published = draft().resolve(&pages());
+        assert_eq!(
+            published.sources,
+            [
+                Source {
+                    id: "S1".into(),
+                    title: "La fonction achats des hôpitaux publics".into(),
+                    publisher: "ccomptes.fr".into(),
+                    url: CCOMPTES.into(),
+                    used_for: "Montant des achats hospitaliers".into(),
+                },
+                Source {
+                    id: "S2".into(),
+                    title: "Les groupements hospitaliers de territoire".into(),
+                    publisher: "sante.gouv.fr".into(),
+                    url: SANTE.into(),
+                    used_for: "Organisation de la fonction achat".into(),
+                },
+            ]
+        );
+        let value = serde_json::to_value(&published).unwrap();
+        let keys = |v: &Value| -> Vec<String> {
+            v.as_object().unwrap().keys().cloned().collect::<Vec<_>>()
+        };
+        let stored = analysis_json();
+        assert_eq!(keys(&value), keys(&stored));
+        assert_eq!(keys(&value["sources"][0]), keys(&stored["sources"][0]));
+        // An analysis stored before still deserializes as a published one.
+        let old: AnalysisOutput = serde_json::from_value(stored).unwrap();
+        assert_eq!(old.sources[0].publisher, "Cour des comptes");
+        assert_eq!(old.title, published.title);
+    }
+
+    /// INJ-3: the model never writes a URL. A wrong identifier (or a URL in its place) is
+    /// refused with a feedback that lists the valid identifiers, built from validated
+    /// identifiers only.
+    #[test]
+    fn sources_cite_consulted_pages_by_identifier() {
+        for wrong in ["R3", "R0", CCOMPTES, "https://evil.example/plante", "S1"] {
+            let mut draft = draft();
+            draft.sources[1].page = wrong.into();
+            let rejection = draft
+                .check(&test_prompts().taxonomy, &["c1".to_owned()], &pages())
+                .unwrap_err();
+            assert!(
+                rejection
+                    .problem
+                    .contains("source S2: not a consulted page"),
+                "{wrong}"
+            );
+            assert!(
+                !rejection.problem.contains(wrong),
+                "{wrong}: {}",
+                rejection.problem
+            );
+            let feedback = rejection.feedback.unwrap();
+            assert!(feedback.starts_with("<retour_validation>"), "{feedback}");
+            assert!(
+                feedback.contains("la source S2 indique dans `ref`"),
+                "{feedback}"
+            );
+            assert!(
+                feedback.contains("Identifiants de pages valides : R1, R2."),
+                "{feedback}"
+            );
+            assert!(!feedback.contains(wrong), "{wrong}: {feedback}");
+        }
+        // An invalid id is not echoed in the feedback.
+        let mut draft = draft();
+        draft.sources[1].id = "<b>".into();
+        draft.sources[1].page = "R9".into();
+        let rejection = draft
+            .check(&test_prompts().taxonomy, &["c1".to_owned()], &pages())
+            .unwrap_err();
+        let feedback = rejection.feedback.unwrap();
         assert!(
-            output
+            feedback.contains("une source indique dans `ref`"),
+            "{feedback}"
+        );
+        assert!(!feedback.contains("<b>"), "{feedback}");
+        // [Sx] cited without its source: the same feedback path.
+        let mut draft = super::tests::draft();
+        draft.pros.push("Selon [S9].".into());
+        let rejection = draft
+            .check(&test_prompts().taxonomy, &["c1".to_owned()], &pages())
+            .unwrap_err();
+        assert!(rejection.feedback.unwrap().contains("[S9] cité(s)"));
+        // Nothing to cite: refused.
+        assert!(
+            super::tests::draft()
                 .check(
                     &test_prompts().taxonomy,
                     &["c1".to_owned()],
-                    &AllowedSources::default()
+                    &ConsultedPages::default()
                 )
                 .is_err()
         );
+        // Other problems: no feedback, the same prompt again.
+        let mut draft = super::tests::draft();
+        draft.category = "lune".into();
+        let rejection = draft
+            .check(&test_prompts().taxonomy, &["c1".to_owned()], &pages())
+            .unwrap_err();
+        assert_eq!(rejection.feedback, None);
+    }
 
-        // Scheme, default port, fragment, trailing slash and utm_* parameters do not count.
-        let mut output = analysis();
-        let original = output.sources[0].url.clone();
-        output.sources[0].url = format!("{original}/?utm_source=x#section");
-        assert_eq!(check(&output), Ok(()));
-        output.sources[0].url = original.replacen("https://", "http://", 1);
-        assert_eq!(check(&output), Ok(()));
+    /// INJ-3: whatever the model answers, a published source URL is one of the consulted pages;
+    /// a URL found only in the idea text, in the memo or in a page's text cannot become one.
+    #[test]
+    fn a_published_url_is_always_a_consulted_page() {
+        let planted = "https://evil.example/plante";
+        // A page whose title carries a URL keeps it as plain title text.
+        let pages = ConsultedPages::new([
+            (format!("Rapport, voir {planted}").as_str(), CCOMPTES),
+            ("Page", SANTE),
+        ]);
+        let consulted: BTreeSet<&str> = [CCOMPTES, SANTE].into();
+        for page in ["R1", "R2", "R3", planted, "", "R1 ", " R2"] {
+            let mut draft = draft();
+            for source in &mut draft.sources {
+                source.page = page.into();
+            }
+            draft.summary = format!("Selon {planted} [S1].");
+            let accepted = draft
+                .check(&test_prompts().taxonomy, &["c1".to_owned()], &pages)
+                .is_ok();
+            let published = draft.resolve(&pages);
+            assert_eq!(accepted, page == "R1" || page == "R2", "{page:?}");
+            for source in &published.sources {
+                assert!(
+                    consulted.contains(source.url.as_str()),
+                    "{page:?}: {}",
+                    source.url
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn the_schema_constrains_the_reference_per_call() {
+        let schema = test_prompts().analysis.output_schema.clone().unwrap();
+        let pointer = "/properties/sources/items/properties/ref";
+        let constrained = schema.constrained(pointer, &pages().ids()).unwrap();
+        assert_eq!(
+            constrained.schema.pointer(&format!("{pointer}/enum")),
+            Some(&json!(["R1", "R2"]))
+        );
+        // The file's schema is untouched, and validation keeps it (the checks give feedback).
+        assert!(schema.schema.pointer(&format!("{pointer}/enum")).is_none());
+        let mut unknown = draft_json();
+        unknown["sources"][0]["ref"] = json!("R7");
+        constrained.validate(&unknown).unwrap();
+        assert!(schema.constrained("/properties/sources", &[]).is_none());
+        assert!(schema.constrained("/properties/nope", &[]).is_none());
     }
 
     #[test]
@@ -597,13 +993,17 @@ mod tests {
     #[test]
     fn fixture_matches_the_schema_and_the_checks() {
         let schema = test_prompts().analysis.output_schema.clone().unwrap();
-        schema.validate(&analysis_json()).unwrap();
-        check(&analysis()).unwrap();
+        schema.validate(&draft_json()).unwrap();
+        check(&draft()).unwrap();
+        // A model answer with a URL field is a schema violation (closed objects).
+        let mut with_url = draft_json();
+        with_url["sources"][0]["url"] = json!(CCOMPTES);
+        assert!(schema.validate(&with_url).is_err());
     }
 
     #[test]
     fn inconsistent_analyses_are_rejected() {
-        type Mutation = Box<dyn Fn(&mut AnalysisOutput)>;
+        type Mutation = Box<dyn Fn(&mut AnalysisDraft)>;
         let cases: Vec<(&str, Mutation)> = vec![
             ("unknown category", Box::new(|a| a.category = "lune".into())),
             (
@@ -652,8 +1052,8 @@ mod tests {
                 Box::new(|a| a.sources[1].id = "S1".into()),
             ),
             (
-                "http(s) URL",
-                Box::new(|a| a.sources[0].url = "ccomptes.fr".into()),
+                "not a consulted page",
+                Box::new(|a| a.sources[0].page = "R7".into()),
             ),
             (
                 "cited sources missing",
@@ -672,18 +1072,19 @@ mod tests {
             ),
         ];
         for (expected, mutate) in cases {
-            let mut output = analysis();
+            let mut output = draft();
             mutate(&mut output);
             let err = check(&output).unwrap_err();
             assert!(err.contains(expected), "{expected}: {err}");
         }
-        // A named local authority with its code is fine.
-        let mut output = analysis();
+        // A named local authority with its code is fine; two sources may cite the same page.
+        let mut output = draft();
         output.admin_level = AdminLevel::Multi;
         output.territory = Territory {
             name: "Corse-du-Sud".into(),
             insee_code: "2A".into(),
         };
+        output.sources[1].page = "R1".into();
         check(&output).unwrap();
     }
 
@@ -727,18 +1128,18 @@ mod tests {
             "Mutualiser\u{E0041}".to_owned(),
             "x".repeat(MAX_TITLE_CHARS + 1),
         ] {
-            let mut output = analysis();
+            let mut output = draft();
             output.title = title.clone();
             assert!(check(&output).is_err(), "{title:?}");
         }
-        let mut output = analysis();
+        let mut output = draft();
         output.title = "x".repeat(MAX_TITLE_CHARS);
         output.summary = "Ligne 1.\nLigne\t2.".into();
         assert_eq!(check(&output), Ok(()));
-        let mut output = analysis();
-        output.sources[0].publisher = "Cour\u{0007} des comptes".into();
+        let mut output = draft();
+        output.sources[0].used_for = "Montant\u{0007} des achats".into();
         assert!(check(&output).is_err());
-        let mut output = analysis();
+        let mut output = draft();
         output.pros[0] = "x".repeat(MAX_ITEM_CHARS + 1);
         assert!(check(&output).is_err());
 

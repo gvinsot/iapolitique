@@ -118,7 +118,7 @@ pub fn research_response(memo: &str, prompt_tokens: u64) -> Value {
                 "model": "mistral-large-test", "id": "m1",
                 "content": [
                     { "type": "text", "text": memo },
-                    // The pages cited by `analysis_output()`.
+                    // The pages R1 and R2 cited by `analysis_draft()`, those of `analysis_output()`.
                     { "type": "tool_reference", "tool": "web_search", "title": "Source",
                       "url": "https://www.ccomptes.fr/fr/publications/la-fonction-achats-des-hopitaux" },
                     { "type": "tool_reference", "tool": "web_search", "title": "Source 2",
@@ -133,10 +133,21 @@ pub fn research_response(memo: &str, prompt_tokens: u64) -> Value {
     })
 }
 
-/// A valid output of `prompts/analysis.md` (`tests/fixtures/mistral/analysis.json`).
+/// A published analysis (`analyses.content`, `tests/fixtures/mistral/analysis.json`): sources
+/// with their title, publisher and URL.
 pub fn analysis_output() -> Value {
     serde_json::from_str(include_str!("../tests/fixtures/mistral/analysis.json"))
         .expect("valid fixture")
+}
+
+/// A valid answer of `prompts/analysis.md` (`tests/fixtures/mistral/analysis_draft.json`): the
+/// analysis of [`analysis_output`] whose sources cite the pages R1 and R2 of
+/// [`research_response`].
+pub fn analysis_draft() -> Value {
+    serde_json::from_str(include_str!(
+        "../tests/fixtures/mistral/analysis_draft.json"
+    ))
+    .expect("valid fixture")
 }
 
 /// Configuration pointing at the mocks, with `extra` variables.

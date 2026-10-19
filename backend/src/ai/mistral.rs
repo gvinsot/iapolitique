@@ -300,6 +300,25 @@ pub struct Completion<T> {
     pub attempts: u32,
 }
 
+/// A structured answer refused by the semantic checks of its caller.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Rejection {
+    /// Why, for the error and the logs: never a model text.
+    pub problem: String,
+    /// Added after the user prompt of the next attempts so that the model corrects its answer
+    /// (built by the backend, never from model or visitor text); `None`: the same prompt.
+    pub feedback: Option<String>,
+}
+
+impl From<String> for Rejection {
+    fn from(problem: String) -> Self {
+        Self {
+            problem,
+            feedback: None,
+        }
+    }
+}
+
 /// Output of the research step: sourced memo and the pages consulted.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Research {
@@ -523,6 +542,25 @@ impl MistralClient {
         schema: &OutputSchema,
         check: impl Fn(&T) -> Result<(), String>,
     ) -> Result<Completion<T>, MistralError> {
+        self.structured_with_feedback(pool, ctx, tier, prompt, schema, |value: &T| {
+            check(value).map_err(Rejection::from)
+        })
+        .await
+    }
+
+    /// [`Self::structured`] whose `check` may give a feedback: the attempts that follow a
+    /// rejection with a feedback send it after the user prompt, so that the model corrects the
+    /// points it names instead of answering the same prompt again.
+    pub async fn structured_with_feedback<T: DeserializeOwned>(
+        &self,
+        pool: &PgPool,
+        ctx: &CallContext,
+        tier: ModelTier,
+        prompt: &RenderedPrompt,
+        schema: &OutputSchema,
+        check: impl Fn(&T) -> Result<(), Rejection>,
+    ) -> Result<Completion<T>, MistralError> {
+        let feedback: Mutex<Option<String>> = Mutex::new(None);
         let base = json!({
             "model": self.model(tier),
             "messages": [
@@ -536,9 +574,16 @@ impl MistralClient {
             "temperature": STRUCTURED_TEMPERATURE,
             "stream": false,
         });
-        let (base, check) = (&base, &check);
+        let (base, check, feedback) = (&base, &check, &feedback);
         self.run(pool, ctx, Some(tier), move |effort| async move {
             let mut body = base.clone();
+            let correction = feedback
+                .lock()
+                .unwrap_or_else(|poisoned| poisoned.into_inner())
+                .clone();
+            if let Some(correction) = correction {
+                body["messages"][1]["content"] = json!(format!("{}\n\n{correction}", prompt.user));
+            }
             // A top-level field of chat completions.
             if let Some(effort) = effort {
                 body["reasoning_effort"] = json!(effort.as_str());
@@ -560,7 +605,12 @@ impl MistralClient {
                 let typed: T = serde_json::from_value(value).map_err(|err| {
                     MistralError::InvalidOutput(format!("unexpected shape: {err}"))
                 })?;
-                check(&typed).map_err(MistralError::InvalidOutput)?;
+                check(&typed).map_err(|rejection| {
+                    *feedback
+                        .lock()
+                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = rejection.feedback;
+                    MistralError::InvalidOutput(rejection.problem)
+                })?;
                 Ok(typed)
             });
             Attempt::answered(result, parsed.usage, parsed.model, http_status)

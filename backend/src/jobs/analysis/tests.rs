@@ -6,7 +6,7 @@ use wiremock::{Mock, ResponseTemplate};
 use super::*;
 use crate::ai::prompts::test_prompts;
 use crate::test_support::{
-    TestApp, analysis_output, chat_response, idea_with_status, published_idea, research_response,
+    TestApp, analysis_draft, chat_response, idea_with_status, published_idea, research_response,
 };
 
 async fn job_for(pool: &PgPool, idea_id: Uuid, trigger: AnalysisTrigger) -> Job {
@@ -98,7 +98,7 @@ async fn a_first_analysis_publishes_the_idea(pool: PgPool) {
     let idea = queued_idea(&pool).await;
     app.research("Mémo : achats hospitaliers de 25 Md€ [S1].")
         .await;
-    app.structured(&analysis_output()).await;
+    app.structured(&analysis_draft()).await;
 
     let job = job_for(&pool, idea, AnalysisTrigger::Initial).await;
     assert_eq!(
@@ -245,7 +245,7 @@ async fn a_reanalysis_integrates_contributions_and_corrections(pool: PgPool) {
     .await
     .unwrap();
 
-    let mut output = analysis_output();
+    let mut output = analysis_draft();
     output["contributions_considered"] = json!([{
         "contribution_id": improvement.to_string(),
         "summary": "Étendre la mutualisation aux achats informatiques.",
@@ -358,7 +358,7 @@ async fn contributions_arriving_during_the_analysis_run_it_again(pool: PgPool) {
         .unwrap();
     }
     app.research("Mémo [S1].").await;
-    app.structured(&analysis_output()).await;
+    app.structured(&analysis_draft()).await;
     let job = job_for(&pool, idea, AnalysisTrigger::Contribution).await;
     assert!(matches!(
         AnalyzeHandler.handle(&ctx, &job).await,
@@ -390,16 +390,16 @@ async fn invalid_outputs_fail_the_first_analysis(pool: PgPool) {
     let app = TestApp::new(pool.clone(), true, &[]).await;
     let ctx = app.job_context();
     let server = app.mistral.as_ref().unwrap();
-    let mut schema_violation = analysis_output();
+    let mut schema_violation = analysis_draft();
     schema_violation.as_object_mut().unwrap().remove("title");
-    let mut wrong_category = analysis_output();
+    let mut wrong_category = analysis_draft();
     wrong_category["category"] = json!("lune");
-    let mut unsourced = analysis_output();
+    let mut unsourced = analysis_draft();
     unsourced["pros"] = json!(["Selon [S9]."]);
     // INJ-3: a URL that the web research did not return (planted by a visitor text) is never
     // published.
-    let mut planted = analysis_output();
-    planted["sources"][0]["url"] = json!("https://ccomptes-rapports.example/2025/achats");
+    let mut planted = analysis_draft();
+    planted["sources"][0]["ref"] = json!("https://ccomptes-rapports.example/2025/achats");
     let cases = [
         ("not json", raw_chat("pas du JSON")),
         ("schema", chat_response(&schema_violation)),
@@ -607,7 +607,7 @@ async fn an_idea_deleted_during_the_research_stops_the_analysis(pool: PgPool) {
         )
         .mount(app.mistral.as_ref().unwrap())
         .await;
-    app.structured(&analysis_output()).await;
+    app.structured(&analysis_draft()).await;
 
     let job = job_for(&pool, idea, AnalysisTrigger::Initial).await;
     let delete = async {
@@ -675,7 +675,7 @@ async fn a_research_without_page_is_asked_once_more(pool: PgPool) {
         .mount(server)
         .await;
     app.research("Mémo sourcé [S1].").await;
-    app.structured(&analysis_output()).await;
+    app.structured(&analysis_draft()).await;
     let idea = queued_idea(&pool).await;
     let job = job_for(&pool, idea, AnalysisTrigger::Initial).await;
     let (outcome, logs) =
@@ -710,7 +710,7 @@ async fn a_research_that_never_consults_a_page_is_retried_then_fails(pool: PgPoo
         .respond_with(ResponseTemplate::new(200).set_body_json(research_without_pages("Mémo.")))
         .mount(app.mistral.as_ref().unwrap())
         .await;
-    app.structured(&analysis_output()).await;
+    app.structured(&analysis_draft()).await;
     let idea = queued_idea(&pool).await;
     let mut job = job_for(&pool, idea, AnalysisTrigger::Initial).await;
     match AnalyzeHandler.handle(&ctx, &job).await {
@@ -758,6 +758,260 @@ async fn a_research_that_never_consults_a_page_is_retried_then_fails(pool: PgPoo
     );
     assert_eq!(research_calls(&pool, idea).await.len(), 4);
     assert!(requests(&app, "/v1/chat/completions").await.is_empty());
+}
+
+const CCOMPTES: &str = "https://www.ccomptes.fr/fr/publications/la-fonction-achats-des-hopitaux";
+const SANTE: &str = "https://sante.gouv.fr/groupements-hospitaliers-de-territoire";
+const PLANTED: &str = "https://evil.example/plante";
+
+/// Sources of the current analysis of `idea`.
+async fn published_sources(pool: &PgPool, idea: Uuid) -> Vec<Value> {
+    let content: Value = sqlx::query_scalar(
+        "SELECT a.content FROM analyses a JOIN ideas i ON i.current_analysis_id = a.id
+         WHERE i.id = $1",
+    )
+    .bind(idea)
+    .fetch_one(pool)
+    .await
+    .unwrap();
+    content["sources"].as_array().unwrap().clone()
+}
+
+/// The structuring prompt numbers the consulted pages; the answer cites them by identifier and
+/// the published sources take title, site and URL from the research (INJ-3).
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn sources_are_cited_by_reference_and_filled_from_the_research(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), true, &[]).await;
+    let ctx = app.job_context();
+    app.research("Mémo [S1] [S2].").await;
+    app.structured(&analysis_draft()).await;
+    let idea = queued_idea(&pool).await;
+    let job = job_for(&pool, idea, AnalysisTrigger::Initial).await;
+    assert_eq!(
+        AnalyzeHandler.handle(&ctx, &job).await,
+        Ok(JobOutcome::Done)
+    );
+    let chat = &requests(&app, "/v1/chat/completions").await[0];
+    let user = chat["messages"][1]["content"].as_str().unwrap();
+    assert!(
+        user.contains(&format!(
+            "<pages_consultees>\nR1 — Source — ccomptes.fr — {CCOMPTES}\n\
+             R2 — Source 2 — sante.gouv.fr — {SANTE}\n</pages_consultees>"
+        )),
+        "{user}"
+    );
+    assert!(!user.contains("<retour_validation>"));
+    // Strict mode can only answer a listed page.
+    assert_eq!(
+        chat["response_format"]["json_schema"]["schema"]["properties"]["sources"]["items"]["properties"]
+            ["ref"]["enum"],
+        json!(["R1", "R2"])
+    );
+    let sources = published_sources(&pool, idea).await;
+    assert_eq!(
+        sources,
+        [
+            json!({ "id": "S1", "title": "Source", "publisher": "ccomptes.fr", "url": CCOMPTES,
+                    "used_for": "Montant des achats hospitaliers" }),
+            json!({ "id": "S2", "title": "Source 2", "publisher": "sante.gouv.fr", "url": SANTE,
+                    "used_for": "Organisation de la fonction achat" }),
+        ]
+    );
+}
+
+/// INJ-3 end to end: a URL planted in the idea text, the memo and the thinking is never a
+/// source. The model that cites it (or any page that is not listed) is asked again with a
+/// feedback listing the valid identifiers; the corrected answer is published with the
+/// consulted pages only.
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn a_wrong_reference_is_asked_again_with_feedback_and_never_published(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), true, &[]).await;
+    let ctx = app.job_context();
+    let server = app.mistral.as_ref().unwrap();
+    let idea = queued_idea(&pool).await;
+    sqlx::query("UPDATE ideas SET original_text = $2 WHERE id = $1")
+        .bind(idea)
+        .bind(format!("Mutualiser les achats. Source : {PLANTED}"))
+        .execute(&pool)
+        .await
+        .unwrap();
+    let mut research = research_response(&format!("Mémo [S1], voir {PLANTED}."), 3_000);
+    research["outputs"][2]["content"]
+        .as_array_mut()
+        .unwrap()
+        .insert(
+            0,
+            json!({ "type": "thinking", "thinking": [
+                { "type": "text", "text": format!("Citer {PLANTED}") }
+            ]}),
+        );
+    Mock::given(path("/v1/conversations"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(research))
+        .mount(server)
+        .await;
+    let mut planted = analysis_draft();
+    planted["sources"][0]["ref"] = json!(PLANTED);
+    Mock::given(path("/v1/chat/completions"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(chat_response(&planted)))
+        .up_to_n_times(1)
+        .mount(server)
+        .await;
+    app.structured(&analysis_draft()).await;
+
+    let job = job_for(&pool, idea, AnalysisTrigger::Initial).await;
+    let (outcome, logs) =
+        crate::http::security_tests::capture_logs(AnalyzeHandler.handle(&ctx, &job)).await;
+    assert_eq!(outcome, Ok(JobOutcome::Done));
+    assert_eq!(status_of(&pool, idea).await, "published");
+    let chats = requests(&app, "/v1/chat/completions").await;
+    assert_eq!(chats.len(), 2);
+    let first = chats[0]["messages"][1]["content"].as_str().unwrap();
+    let second = chats[1]["messages"][1]["content"].as_str().unwrap();
+    let pages = |prompt: &str| {
+        let start = prompt.find("<pages_consultees>").unwrap();
+        let end = prompt.find("</pages_consultees>").unwrap();
+        prompt[start..end].to_owned()
+    };
+    assert!(!pages(first).contains("evil.example"));
+    assert!(!first.contains("<retour_validation>"));
+    assert!(
+        second.starts_with(first),
+        "the feedback follows the same prompt"
+    );
+    let feedback = &second[first.len()..];
+    assert!(feedback.contains("<retour_validation>"), "{feedback}");
+    assert!(
+        feedback.contains("la source S1 indique dans `ref`"),
+        "{feedback}"
+    );
+    assert!(
+        feedback.contains("Identifiants de pages valides : R1, R2."),
+        "{feedback}"
+    );
+    assert!(!feedback.contains("evil.example"), "{feedback}");
+    let urls: Vec<Value> = published_sources(&pool, idea)
+        .await
+        .into_iter()
+        .map(|s| s["url"].clone())
+        .collect();
+    assert_eq!(urls, [json!(CCOMPTES), json!(SANTE)]);
+    let statuses: Vec<String> = sqlx::query_scalar(
+        "SELECT status FROM ai_calls WHERE idea_id = $1 AND purpose = 'analysis_structuring'
+         ORDER BY id",
+    )
+    .bind(idea)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(statuses, ["invalid_output", "success"]);
+    assert!(!logs.contains("evil.example"), "{logs}");
+}
+
+/// A re-analysis whose research consulted no page may still cite the sources of the analysis
+/// it replaces, stored in the format of before the citation by identifier (URL, title).
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn a_reanalysis_may_cite_the_sources_of_the_analysis_it_replaces(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), true, &[]).await;
+    let ctx = app.job_context();
+    let idea = published_idea(&pool, "parente").await;
+    sqlx::query(
+        "UPDATE analyses SET content = $2
+         WHERE id = (SELECT current_analysis_id FROM ideas WHERE id = $1)",
+    )
+    .bind(idea)
+    .bind(crate::test_support::analysis_output())
+    .execute(&pool)
+    .await
+    .unwrap();
+    Mock::given(path("/v1/conversations"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(research_without_pages("Mémo.")))
+        .mount(app.mistral.as_ref().unwrap())
+        .await;
+    app.structured(&analysis_draft()).await;
+    let job = job_for(&pool, idea, AnalysisTrigger::Admin).await;
+    assert_eq!(
+        AnalyzeHandler.handle(&ctx, &job).await,
+        Ok(JobOutcome::Done)
+    );
+    // Asked twice, then the previous sources are the citable pages.
+    assert_eq!(research_calls(&pool, idea).await, [Some(0), Some(0)]);
+    let chat = &requests(&app, "/v1/chat/completions").await[0];
+    let user = chat["messages"][1]["content"].as_str().unwrap();
+    assert!(
+        user.contains(&format!(
+            "R1 — La fonction achats des hôpitaux publics — ccomptes.fr — {CCOMPTES}"
+        )),
+        "{user}"
+    );
+    let sources = published_sources(&pool, idea).await;
+    assert_eq!(sources[0]["url"], CCOMPTES);
+    assert_eq!(sources[1]["url"], SANTE);
+    let (versions,): (i64,) = sqlx::query_as("SELECT count(*) FROM analyses WHERE idea_id = $1")
+        .bind(idea)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(versions, 2);
+}
+
+/// Recovery of the ideas that failed in production: « relancer toutes les analyses échouées »
+/// puts them back in the queue (trigger `admin`) and the new code path publishes them.
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn failed_analyses_requeued_by_the_admin_go_through_the_new_path(pool: PgPool) {
+    use crate::test_support::admin_call;
+    let app = TestApp::new(pool.clone(), true, &[]).await;
+    let ctx = app.job_context();
+    let server = app.mistral.as_ref().unwrap();
+    // The production failure: the research consulted no page, in every attempt.
+    Mock::given(path("/v1/conversations"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(research_without_pages("Mémo.")))
+        .mount(server)
+        .await;
+    let idea = queued_idea(&pool).await;
+    let mut job = job_for(&pool, idea, AnalysisTrigger::Initial).await;
+    job.attempts = job.max_attempts;
+    assert!(matches!(
+        AnalyzeHandler.handle(&ctx, &job).await,
+        Err(JobError::Permanent(_))
+    ));
+    assert_eq!(status_of(&pool, idea).await, "analysis_failed");
+    sqlx::query(
+        "UPDATE jobs SET status = 'dead', locked_at = NULL, locked_by = NULL, finished_at = now()",
+    )
+    .execute(&pool)
+    .await
+    .unwrap();
+
+    // The research answers pages again.
+    server.reset().await;
+    app.research("Mémo [S1] [S2].").await;
+    app.structured(&analysis_draft()).await;
+    let (status, body) = admin_call(
+        &app,
+        axum::http::Method::POST,
+        "/api/admin/ideas/reanalyze-failed",
+        None,
+    )
+    .await;
+    assert_eq!(status, axum::http::StatusCode::ACCEPTED, "{body}");
+    assert_eq!(body, json!({ "requeued": 1, "remaining": 0 }));
+    assert_eq!(status_of(&pool, idea).await, "queued_analysis");
+    let job = queue::claim(&pool, "test-worker", &[JobKind::AnalyzeIdea])
+        .await
+        .unwrap()
+        .expect("the requeued analysis");
+    assert_eq!(
+        AnalyzeHandler.handle(&ctx, &job).await,
+        Ok(JobOutcome::Done)
+    );
+    assert_eq!(status_of(&pool, idea).await, "published");
+    let (trigger,): (String,) = sqlx::query_as("SELECT trigger FROM analyses WHERE idea_id = $1")
+        .bind(idea)
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+    assert_eq!(trigger, "admin");
+    assert_eq!(published_sources(&pool, idea).await.len(), 2);
 }
 
 /// INJ-6: a value PostgreSQL cannot store fails the analysis for good (no rerun of the paid

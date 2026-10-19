@@ -517,7 +517,7 @@
     },
     "sources": {
       "type": "array",
-      "description": "Sources consultées ; au moins une source pour chaque chiffre clé.",
+      "description": "Sources citées, prises parmi les pages consultées ; au moins une source pour chaque chiffre clé. Le titre, l'organisme et l'adresse sont repris de la page consultée.",
       "items": {
         "type": "object",
         "properties": {
@@ -525,17 +525,9 @@
             "type": "string",
             "description": "Identifiant cité dans le texte : S1, S2, S3…"
           },
-          "title": {
+          "ref": {
             "type": "string",
-            "description": "Titre exact du document ou de la page."
-          },
-          "publisher": {
-            "type": "string",
-            "description": "Organisme qui publie : Cour des comptes, INSEE, DREES, Assemblée nationale…"
-          },
-          "url": {
-            "type": "string",
-            "description": "Adresse web consultée, complète (https://…)."
+            "description": "Identifiant de la page consultée, tel que listé dans <pages_consultees> : R1, R2, R3…"
           },
           "used_for": {
             "type": "string",
@@ -544,9 +536,7 @@
         },
         "required": [
           "id",
-          "title",
-          "publisher",
-          "url",
+          "ref",
           "used_for"
         ],
         "additionalProperties": false

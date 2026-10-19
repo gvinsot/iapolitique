@@ -2,9 +2,13 @@
 //!
 //! Two steps (§13.4): `analysis_research.md` through the Conversations API with `web_search`
 //! gives a sourced memo, then `analysis.md` structures it with a strict `json_schema` answer,
-//! checked by [`AnalysisOutput::check`] (ranges ordered and ≥ 0, category allowed for the
+//! checked by [`AnalysisDraft::check`] (ranges ordered and ≥ 0, category allowed for the
 //! administrative level, cited `[Sx]` present, at least one source…). An invalid answer is asked
-//! again by the client (3 attempts in all, §6.1). The score is then computed
+//! again by the client (3 attempts in all, §6.1). Sources (INJ-3): the pages the research
+//! consulted, then the sources of the analysis being replaced, are numbered `R1`, `R2`… in the
+//! structuring prompt ([`ConsultedPages`]); the answer cites them by identifier only and the
+//! published title, publisher and URL come from that list ([`AnalysisDraft::resolve`]). A wrong
+//! identifier is asked again with a feedback listing the valid ones. The score is then computed
 //! ([`crate::domain::scoring`]) and the analysis stored as a new version with its provenance
 //! (prompt versions, schema fingerprint, scoring version, model, web searches).
 //!
@@ -43,8 +47,8 @@ use super::{Job, JobError, JobKind, JobOutcome, queue};
 use crate::ai::mistral::{
     CallContext, MistralClient, MistralError, ModelTier, consulted_page_count,
 };
-use crate::ai::outputs::{AllowedSources, AnalysisOutput};
-use crate::ai::prompts::{OutputSchema, PromptVars, Prompts, Taxonomy};
+use crate::ai::outputs::{AnalysisDraft, AnalysisOutput, ConsultedPages};
+use crate::ai::prompts::{ANALYSIS_SOURCE_REF, OutputSchema, PromptVars, Prompts, Taxonomy};
 use crate::db::analyses::{self, NewAnalysis, PendingContribution, Provenance, StoreError};
 use crate::db::status::{self, Change, StatusError};
 use crate::domain::scoring::{self, ScoreInput};
@@ -394,22 +398,8 @@ async fn analyse(
         return Ok(stop);
     }
 
-    let template = &prompts.analysis;
-    let schema = template
-        .output_schema
-        .as_ref()
-        .expect("analysis.md declares its output schema (checked at load)");
-    let rendered = template
-        .render(
-            &inputs
-                .vars(prompts)
-                .set("categories", prompts.taxonomy.categories_for_prompt())
-                .set("research", research.value.text.as_str()),
-        )
-        .map_err(render_failure)?;
-    let contribution_ids = inputs.contribution_ids();
-    // Sources may only be pages the web research consulted, or the sources of the analysis
-    // being replaced (INJ-3).
+    // The only citable pages (INJ-3): those the web research consulted, then the sources of the
+    // analysis being replaced (stored with their URL, whatever their format version).
     let previous_sources = inputs
         .idea
         .previous_analysis
@@ -418,30 +408,54 @@ async fn analyse(
         .and_then(serde_json::Value::as_array)
         .into_iter()
         .flatten()
-        .filter_map(|s| s.get("url").and_then(serde_json::Value::as_str));
-    let allowed = AllowedSources::new(
+        .filter_map(|s| {
+            let url = s.get("url").and_then(serde_json::Value::as_str)?;
+            let title = s.get("title").and_then(serde_json::Value::as_str);
+            Some((title.unwrap_or_default(), url))
+        });
+    let pages = ConsultedPages::new(
         research
             .value
             .references
             .iter()
-            .filter_map(|r| r.url.as_deref())
+            .filter_map(|r| r.url.as_deref().map(|url| (r.title.as_str(), url)))
             .chain(previous_sources),
     );
-    if allowed.is_empty() {
+    if pages.is_empty() {
         return Err(no_page_failure(job));
     }
+
+    let template = &prompts.analysis;
+    let schema = template
+        .output_schema
+        .as_ref()
+        .expect("analysis.md declares its output schema (checked at load)");
+    // Strict mode answers one of the identifiers only; the checks catch a model that does not.
+    let request_schema = schema
+        .constrained(ANALYSIS_SOURCE_REF, &pages.ids())
+        .expect("analysis.schema.json has a string `ref` per source (checked at load)");
+    let rendered = template
+        .render(
+            &inputs
+                .vars(prompts)
+                .set("categories", prompts.taxonomy.categories_for_prompt())
+                .set("pages", pages.for_prompt())
+                .set("research", research.value.text.as_str()),
+        )
+        .map_err(render_failure)?;
+    let contribution_ids = inputs.contribution_ids();
     let completion = client
-        .structured::<AnalysisOutput>(
+        .structured_with_feedback::<AnalysisDraft>(
             pool,
             &call(AiPurpose::AnalysisStructuring, &template.version),
             ModelTier::Analysis,
             &rendered,
-            schema,
-            |output| output.check(&prompts.taxonomy, &contribution_ids, &allowed),
+            &request_schema,
+            |draft| draft.check(&prompts.taxonomy, &contribution_ids, &pages),
         )
         .await
         .map_err(|err| classify(err, job))?;
-    let output = completion.value;
+    let output = completion.value.resolve(&pages);
     let score = scoring::compute(&ScoreInput {
         annual_gain_median_eur: output.annual_gain_eur.median,
         implementation_cost_median_eur: output.implementation_cost_eur.median,

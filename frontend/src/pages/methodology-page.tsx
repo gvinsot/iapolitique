@@ -93,7 +93,9 @@ export function MethodologyPage() {
             Tout chiffre clé est accompagné d’au moins une source, de préférence publique : Cour des
             comptes, INSEE, projets de loi de finances et de financement de la sécurité sociale,
             DREES, rapports parlementaires, comptes des collectivités. Les hypothèses de calcul sont
-            explicitées. Une recherche web qui ne renvoie aucune page est relancée : sans page
+            explicitées. Les sources affichées sont uniquement des pages réellement consultées par
+            la recherche web : leur titre et leur adresse sont repris de cette recherche, jamais
+            rédigés par l’IA. Une recherche web qui ne renvoie aucune page est relancée : sans page
             consultée, aucune analyse n’est publiée.
           </p>
 

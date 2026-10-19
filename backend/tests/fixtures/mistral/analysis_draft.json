@@ -1,0 +1,99 @@
+{
+  "title": "Mutualiser les achats courants des hôpitaux publics",
+  "summary": "La mesure propose de regrouper les achats courants des hôpitaux publics au sein de centrales régionales. L'objectif est de réduire les prix unitaires obtenus [S1].",
+  "improved_proposal": "Étendre le programme national de mutualisation des achats hospitaliers à l'ensemble des achats courants, avec des objectifs annuels par groupement hospitalier de territoire [S1]. Un bilan public serait publié chaque année.",
+  "existing_situation": "Le programme PHARE organise déjà une partie des achats hospitaliers depuis 2011 [S1] ; les groupements hospitaliers de territoire disposent d'une fonction achat commune [S2].",
+  "admin_level": "securite_sociale",
+  "territory": {
+    "name": "",
+    "insee_code": ""
+  },
+  "category": "maladie",
+  "kind": "savings",
+  "annual_gain_eur": {
+    "low": 100000000,
+    "median": 300000000,
+    "high": 500000000,
+    "calculation": "Achats hospitaliers de 25 Md€ [S1] ; gain supplémentaire de 0,4 % à 2 % sur la part non encore mutualisée."
+  },
+  "implementation_cost_eur": {
+    "low": 5000000,
+    "median": 10000000,
+    "high": 20000000,
+    "calculation": "Renforcement des équipes d'acheteurs et des outils, estimé à partir des coûts du programme existant [S2]."
+  },
+  "time_to_effect_months": 18,
+  "legal_vehicle": "organisation_interne",
+  "feasibility": {
+    "score": 4,
+    "obstacles": [
+      "Résistance des établissements attachés à leurs fournisseurs locaux."
+    ]
+  },
+  "confidence": "medium",
+  "confidence_explanation": "Les montants d'achats sont publics [S1], mais le gain supplémentaire repose sur une hypothèse.",
+  "assumptions": [
+    "La part non mutualisée représente environ 60 % des achats [S2]."
+  ],
+  "pros": [
+    "Prix unitaires plus bas [S1]."
+  ],
+  "cons": [
+    "Moins de souplesse pour les besoins spécifiques."
+  ],
+  "risks": [
+    "Dépendance accrue à quelques grands fournisseurs."
+  ],
+  "impacts": {
+    "menages_modestes": {
+      "effect": "neutral",
+      "explanation": "Effet attendu limité pour ce public."
+    },
+    "classes_moyennes": {
+      "effect": "neutral",
+      "explanation": "Effet attendu limité pour ce public."
+    },
+    "menages_aises": {
+      "effect": "neutral",
+      "explanation": "Effet attendu limité pour ce public."
+    },
+    "entreprises": {
+      "effect": "negative",
+      "explanation": "Effet attendu limité pour ce public."
+    },
+    "agents_publics": {
+      "effect": "uncertain",
+      "explanation": "Effet attendu limité pour ce public."
+    },
+    "usagers_services_publics": {
+      "effect": "positive",
+      "explanation": "Effet attendu limité pour ce public."
+    },
+    "territoires_ruraux": {
+      "effect": "neutral",
+      "explanation": "Effet attendu limité pour ce public."
+    },
+    "territoires_urbains": {
+      "effect": "neutral",
+      "explanation": "Effet attendu limité pour ce public."
+    },
+    "environnement": {
+      "effect": "neutral",
+      "explanation": "Effet attendu limité pour ce public."
+    }
+  },
+  "sources": [
+    {
+      "id": "S1",
+      "ref": "R1",
+      "used_for": "Montant des achats hospitaliers"
+    },
+    {
+      "id": "S2",
+      "ref": "R2",
+      "used_for": "Organisation de la fonction achat"
+    }
+  ],
+  "contributions_considered": [],
+  "changes_since_previous": ""
+}

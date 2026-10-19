@@ -204,6 +204,10 @@ def check_schemas(tax: dict | None, grid: dict | None) -> dict:
         for field in ("annual_gain_eur", "implementation_cost_eur"):
             if list(p[field]["properties"])[:3] != ["low", "median", "high"]:
                 err("analysis.schema.json", f"{field} must expose low, median, high")
+        # INJ-3 (AGENTS.md §6.2): the model cites consulted pages by identifier, never by URL.
+        source = p.get("sources", {}).get("items", {}).get("properties", {})
+        if list(source) != ["id", "ref", "used_for"] or source["ref"].get("type") != "string":
+            err("analysis.schema.json", "sources items must be { id, ref (string), used_for }: no URL from the model")
     so = schemas.get("second_opinion.schema.json")
     if so and grid:
         codes = sorted({c["reason_code"] for s in ("idea", "contribution", "report") for c in grid.get(s) or []})

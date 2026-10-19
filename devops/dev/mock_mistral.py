@@ -6,10 +6,15 @@ Python standard library only. Implements the three endpoints the backend calls
 
   POST /v1/chat/completions  structured outputs (`response_format` json_schema, strict), answered
                              according to the schema name: `analysis` (a VALID analysis per
-                             prompts/analysis.schema.json and the backend's extra checks),
-                             `second_opinion`, `report_review`;
+                             prompts/analysis.schema.json and the backend's extra checks: its
+                             sources cite the pages listed in <pages_consultees> by their
+                             identifier R1, R2…, never by URL), `second_opinion`,
+                             `report_review`;
   POST /v1/conversations     web research with `web_search`: a memo citing [S1], [S2], with
-                             `tool.execution` entries and `tool_reference` chunks;
+                             `tool.execution` entries (`name`, `arguments`, `info`) and
+                             `tool_reference` chunks (`tool`, `title`, `url`, `favicon`,
+                             `description`), the shapes of the OpenAPI spec
+                             (ToolExecutionEntry, ToolReferenceChunk);
   POST /v1/embeddings        deterministic 1024-dimension vectors (normalised bag of words), so
                              that two near-identical texts get a cosine similarity close to 1.
 
@@ -29,7 +34,8 @@ Answers are deterministic and driven by the prompt text:
   - analysis: considers every contribution id listed in <contributions>;
   - hostile mode (devops/dev/security/): when the idea, the report or the text carries the marker
     `sondexss`, every free-text field of the answer echoes XSS, CSV-formula and JSON-LD breakout
-    payloads, and the web research cites http(s) URLs that carry such payloads, so that the
+    payloads, and the web research returns pages whose titles and http(s) URLs carry such
+    payloads (the published title and URL of a source come from the research), so that the
     security checks can follow them through the whole pipeline down to a real browser.
 
 Usage:
@@ -182,6 +188,17 @@ def title_from(idea: str) -> str:
     return first[:1].upper() + first[1:] if first else "Mesure proposée"
 
 
+PAGE_ID_RE = re.compile(r"^(R[1-9][0-9]*) — ", re.M)
+
+
+def citations(user: str, used_for: list[str]) -> list[dict]:
+    """Sources S1, S2… citing the pages of <pages_consultees> by identifier (the last page again
+    when there are fewer pages than sources)."""
+    pages = PAGE_ID_RE.findall(between(user, "pages_consultees")) or ["R1"]
+    return [{"id": f"S{i + 1}", "ref": pages[min(i, len(pages) - 1)], "used_for": text}
+            for i, text in enumerate(used_for)]
+
+
 def analysis(schema: dict, user: str) -> dict:
     idea = between(user, "idee_originale") or "Mesure proposée"
     contributions = between(user, "contributions")
@@ -240,7 +257,7 @@ def analysis(schema: dict, user: str) -> dict:
                   "explanation": "Effet limité et indirect pour ce public."}
             for i, key in enumerate(publics)
         },
-        "sources": SOURCES,
+        "sources": citations(user, [s["used_for"] for s in SOURCES]),
         "contributions_considered": [
             {
                 "contribution_id": cid,
@@ -268,7 +285,7 @@ def hostile_analysis(schema: dict, user: str) -> dict:
         "pros": [XSS_SCRIPT, XSS_SVG, "javascript:window.__xss=7"],
         "cons": [XSS_IFRAME, XSS_ATTR, "{{constructor.constructor('window.__xss=8')()}}"],
         "risks": [XSS_IMG, "<!--", "]]>"],
-        "sources": HOSTILE_SOURCES,
+        "sources": citations(user, [s["used_for"] for s in HOSTILE_SOURCES]),
     })
     content["annual_gain_eur"]["calculation"] = f"=1+1 {XSS_IMG} [S1]"
     content["implementation_cost_eur"]["calculation"] = f"{XSS_SCRIPT} [S2]"
@@ -376,13 +393,16 @@ def conversation(body: dict) -> tuple[int, dict]:
     if isinstance(inputs, list):
         inputs = json.dumps(inputs, ensure_ascii=False)
     sources = HOSTILE_SOURCES if is_hostile(inputs) else SOURCES
+
+    def reference(source: dict) -> dict:
+        return {"type": "tool_reference", "tool": "web_search", "title": source["title"],
+                "url": source["url"], "favicon": None, "description": None}
+
     memo_chunks: list[dict] = [
         {"type": "text", "text": "1. Mesure étudiée : mutualisation des achats publics [S1]."},
-        {"type": "tool_reference", "tool": "web_search", "title": sources[0]["title"],
-         "url": sources[0]["url"], "source": "mock"},
+        reference(sources[0]),
         {"type": "text", "text": "\n2. Montants : crédits de la mission concernée [S2]."},
-        {"type": "tool_reference", "tool": "web_search", "title": sources[1]["title"],
-         "url": sources[1]["url"], "source": "mock"},
+        reference(sources[1]),
         {"type": "text", "text": "\n3. Sources :\n[S1] " + sources[0]["title"] + " — "
                                  + sources[0]["publisher"] + " — " + sources[0]["url"]
                                  + "\n[S2] " + sources[1]["title"] + " — "
@@ -391,10 +411,7 @@ def conversation(body: dict) -> tuple[int, dict]:
     completion_tokens = 300
     if reasoning_effort(body) == "high":
         # Pages met while thinking are pages the search returned: the backend keeps them.
-        memo_chunks.insert(0, thinking_chunk([
-            {"type": "tool_reference", "tool": "web_search", "title": sources[0]["title"],
-             "url": sources[0]["url"], "source": "mock"},
-        ]))
+        memo_chunks.insert(0, thinking_chunk([reference(sources[0])]))
         completion_tokens += THINKING_TOKENS
     prompt_tokens = tokens(body.get("instructions") or "") + tokens(inputs)
     return 200, {
@@ -402,9 +419,9 @@ def conversation(body: dict) -> tuple[int, dict]:
         "conversation_id": "conv_mock",
         "outputs": [
             {"object": "entry", "type": "tool.execution", "name": "web_search", "id": "t1",
-             "arguments": "{\"query\": \"achats publics\"}"},
+             "arguments": "{\"query\": \"achats publics\"}", "info": {}},
             {"object": "entry", "type": "tool.execution", "name": "web_search", "id": "t2",
-             "arguments": "{\"query\": \"crédits mission\"}"},
+             "arguments": "{\"query\": \"crédits mission\"}", "info": {}},
             {"object": "entry", "type": "message.output", "role": "assistant", "id": "m1",
              "model": body.get("model", "mock"), "content": memo_chunks},
         ],

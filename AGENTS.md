@@ -154,7 +154,7 @@ iapolitique/
     ├── check_frontend_headers.sh # contrat HTTP de nginx (CI et bout en bout)
     ├── check_compose_security.py # invariants de sécurité du compose (CI, + ses tests)
     ├── dev/                # bout en bout local des images runtime, faux Mistral (dev/README.md)
-    │   └── security/       # campagne de sécurité locale : sondes, XSS en navigateur, ZAP (§14.8)
+    │   └── security/       # campagne de sécurité locale : sondes, XSS en navigateur, ZAP, Trivy (§14.8)
     └── .env.example
 ```
 
@@ -1331,8 +1331,12 @@ stderr.
   le `FROM` épinglé, relancé de la même façon à chaque mise à jour du flux de sécurité d'Alpine
   (`secdb.alpinelinux.org/v<NGINX_ALPINE_RELEASE>/main.json`) : les paquets corrigés sont pris
   sans attendre un nouveau digest. `NGINX_ALPINE_RELEASE` suit `/etc/alpine-release` de l'image
-  (le build échoue sinon). Reste à faire : scan de vulnérabilités des images construites
-  (Trivy ou Grype) et mise à jour automatique des digests (Renovate).
+  (le build échoue sinon). Scan de vulnérabilités des images runtime (revue SUP-2) :
+  `devops/dev/security/trivy.sh` (Trivy épinglé par version et digest, archive `docker save`
+  scannée hors ligne), lancé par la campagne d'avant production (§14.8) : toute vulnérabilité
+  `HIGH`/`CRITICAL` qui a un correctif fait échouer ; une exception se note dans
+  `devops/dev/security/trivy-ignore.yaml` avec sa raison et une date d'expiration. Reste à faire :
+  mise à jour automatique des digests (Renovate).
 - Le worker n'est pas sur le réseau `proxy` ; seuls api et frontend y sont. `proxy` est partagé
   par toutes les stacks du cluster (`attachable`, non `internal`) : tant qu'un réseau dédié à
   Traefik et à iapolitique n'existe pas (`docs/ops.md` §5.4), les ports 8080 et 8081 de l'api
@@ -1350,5 +1354,6 @@ mise en production, la campagne `devops/dev/security/run.sh` est rejouée sur la
 mode hostile, marqueur `sondexss`) et aller-retour CSV, sondes manuelles (CORS, CSRF, `Origin`,
 `Host`, tailles, isolement de l'admin, réutilisation des connexions, `X-Forwarded-For`), XSS
 stocké dans Chromium et Firefox, OWASP ZAP (baseline, API scan, scan actif ciblé) ; toute alerte
-ZAP de risque faible ou plus doit être corrigée ou justifiée dans `zap-rules.tsv`. Modèle de
+ZAP de risque faible ou plus doit être corrigée ou justifiée dans `zap-rules.tsv`, puis scan Trivy
+des images runtime (`trivy.sh`, §14.7). Modèle de
 menace, couverture des exigences, résultats et risques résiduels : `docs/securite.md`.

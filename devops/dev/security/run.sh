@@ -10,12 +10,15 @@
 #   4. xss_check.mjs: stored XSS rendered in Chromium and Firefox with CSP monitoring;
 #   5. probes.py: CORS, CSRF, Origin and Host tricks, oversized bodies, admin isolation,
 #      headers of every response family, connection reuse, X-Forwarded-For spoofing;
-#   6. zap.sh: ZAP baseline, API scan and targeted active scan, triaged by zap-rules.tsv.
+#   6. zap.sh: ZAP baseline, API scan and targeted active scan, triaged by zap-rules.tsv;
+#   7. trivy.sh: fixable HIGH and CRITICAL vulnerabilities of the api and frontend runtime
+#      images (Trivy, pinned), accepted findings in trivy-ignore.yaml.
 #
 # Usage: devops/dev/security/run.sh
 # Variables: SEC_WORK (reports directory, default: a new temporary directory, kept),
 # SEC_REUSE_STACK=1 (use the running e2e containers and SEC_WORK/seed.json as they are),
-# SEC_KEEP=1 (leave the stack running at the end), SEC_SKIP_ZAP=1, plus those of e2e.sh.
+# SEC_KEEP=1 (leave the stack running at the end), SEC_SKIP_ZAP=1, SEC_SKIP_TRIVY=1, plus those
+# of e2e.sh and trivy.sh.
 # Prerequisites: those of devops/dev/e2e.sh (images built, test PostgreSQL, decision model).
 set -euo pipefail
 export MSYS_NO_PATHCONV=1
@@ -93,7 +96,16 @@ if [[ "${SEC_SKIP_ZAP:-0}" != 1 ]]; then
     grep -E '^(==|ok|FAIL|  )|NON TRI' "$work/zap.log" || true
 fi
 
-echo "Reports: $work (probes.json, xss.log, zap/*.html, zap/zap-summary.md)"
+if [[ "${SEC_SKIP_TRIVY:-0}" != 1 ]]; then
+    echo "== Trivy (runtime images)"
+    # Same images as the stack under test (e2e.sh defaults).
+    SEC_API_IMAGE="${SEC_API_IMAGE:-${E2E_API_IMAGE:-registry.methodinfo.fr/iapolitique-api:latest}}" \
+    SEC_FRONT_IMAGE="${SEC_FRONT_IMAGE:-${E2E_FRONT_IMAGE:-registry.methodinfo.fr/iapolitique-frontend:latest}}" \
+        "$here/trivy.sh" "$work" >"$work/trivy.log" 2>&1 || status=1
+    grep -E '^(==|ok|FAIL)|Total:' "$work/trivy.log" || true
+fi
+
+echo "Reports: $work (probes.json, xss.log, zap/*.html, zap/zap-summary.md, trivy/*)"
 if [[ "$status" != 0 ]]; then
     echo "FAIL  security campaign" >&2
     exit 1

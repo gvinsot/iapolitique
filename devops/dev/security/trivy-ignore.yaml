@@ -1,0 +1,14 @@
+# Accepted findings of devops/dev/security/trivy.sh (Trivy ignore file, YAML format).
+#
+# Each entry names one vulnerability, the reason it does not apply or cannot be fixed yet, and an
+# expiry date (`expired_at`) after which it fails the scan again and must be re-examined. Example:
+#
+#   vulnerabilities:
+#     - id: CVE-0000-00000
+#       paths:
+#         - usr/lib/x86_64-linux-gnu/libexample.so.1
+#       statement: Only reachable through a feature the api never calls; no fixed package yet.
+#       expired_at: 2027-01-31
+#
+# Empty on purpose: no accepted finding.
+vulnerabilities: []

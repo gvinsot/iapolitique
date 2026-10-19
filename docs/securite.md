@@ -75,7 +75,7 @@ le navigateur ne fait confiance qu'à son origine.
 | 14.4 Admin | Port 8081 routé seulement sur `ADMIN_HOST` derrière `dashboard-allowlist@file` ; jeton ≥ 32 caractères, temps constant, verrouillage 10 échecs / 5 min ; port public sans route admin ; jeton en `sessionStorage` | `security_tests::admin_authentication_locks_after_repeated_failures`, `the_public_port_knows_no_admin_route` (toutes les opérations de la spec), `check_compose_security.py` (stage `devops-check`) ; local : `probes.py` (famille `admin`) |
 | 14.5 Abus / DoS | ALTCHA, rate limits par empreinte, limite de corps, délai de requête, `statement_timeout`, sémaphore du modèle de décision, budget Mistral, réponses IA plafonnées, pagination bornée, limites Swarm ; corps non lus vidés avant la réponse (ZAP-2) | tests de `antispam/`, `ai/`, `http/middleware.rs` (`bodies_over_the_limit_are_rejected`, `unread_request_bodies_are_drained`, `rejected_requests_keep_the_connection_usable_on_a_real_server`, `a_missing_body_closes_the_connection_on_a_real_server`), `check_compose_security.py` ; local : `probes.py` (familles `limits`, `connection`, `xff`) |
 | 14.6 Secrets / journaux | `Secret` à `Debug` masqué, erreurs 500 génériques, `security_event` à libellés fixes, paniques sans message | `security_tests::csrf_refusals_are_logged_without_ip_nor_content`, `abuse_refusals_are_security_events_without_ip_nor_text`, tests de `telemetry` ; local : `e2e.sh` (aucune IP, jeton, secret ni texte dans les journaux des conteneurs) |
-| 14.7 Conteneurs / supply chain | Images non root, lecture seule, `cap_drop: ALL`, `init`, tmpfs, limites ; images épinglées par digest ; `cargo deny`, `npm audit`, `ignore-scripts` | `check_compose_security.py`, `check_image_pins.py` et leurs tests, stages `frontend-audit` et `backend-test` (cargo deny), `src/test/supply-chain.test.ts`, `scripts/check-dist-urls.mjs` |
+| 14.7 Conteneurs / supply chain | Images non root, lecture seule, `cap_drop: ALL`, `init`, tmpfs, limites ; images épinglées par digest ; `cargo deny`, `npm audit`, `ignore-scripts` | `check_compose_security.py`, `check_image_pins.py` et leurs tests, stages `frontend-audit` et `backend-test` (cargo deny), `src/test/supply-chain.test.ts`, `scripts/check-dist-urls.mjs` ; local : `trivy.sh` (vulnérabilités des images runtime, §4.5) |
 | 14.8 Vérification | Campagne dynamique locale avant chaque mise en production | `devops/dev/security/run.sh` (§7) |
 
 ## 3. Synthèse de l'audit
@@ -110,19 +110,20 @@ sont évaluées pour cette synthèse, selon l'impact et la facilité d'exploitat
 | ADM-1, FE-5 | faible\* | Formulaire de jeton admin affiché sur l'hôte public ; `/admin` public servi | Pas de formulaire hors `ADMIN_HOST`, redirection Traefik |
 | DEVOPS-7 | faible\* | Le contrôle du compose cherchait des sous-chaînes dans les règles Traefik | Analyse de la structure des règles |
 | HDR-2, LOG-6 | faible\* | `interest-cohort` dans la Permissions-Policy de l'api ; message des paniques journalisé | Liste de nginx ; emplacement seul |
+| IMG-1, SUP-1 (backend) | faible\* | `backend/Dockerfile` non épinglé par digest, runtime Debian complet (shell, gestionnaire de paquets) | Corrigé le 2026-10-19 (commit `32c3b20`) : images de build et de runtime épinglées par version et digest, runtime `gcr.io/distroless/cc-debian13` (uid 10001, sans shell ni curl), contrôle `check_image_pins.py` bloquant pour tous les Dockerfiles |
+| SUP-2 (scan) | faible\* | Aucun scan de vulnérabilités des images construites | Corrigé le 2026-10-19 : `devops/dev/security/trivy.sh` (Trivy épinglé par digest) dans la campagne d'avant production, HIGH et CRITICAL corrigeables bloquants, exceptions justifiées et datées dans `trivy-ignore.yaml` ; résultats au §4.5 |
 | DOS-1, SUP-1, SUP-2, SUP-3 | faible\* | Pas de limites Swarm ; image de CI non épinglée ; paquets Alpine et alertes figés en cache ; scripts d'installation npm | Limites, digest, `apk upgrade` et audits relancés au fil des alertes, `ignore-scripts` |
 
 ### 3.2 Constats ouverts
 
 | Id | Sévérité | Constat | État |
 |---|---|---|---|
-| NET-1 | moyenne | Tout conteneur des réseaux overlay partagés joint l'api 8080 (sans WAF ni rate limit, en choisissant son `X-Forwarded-For`) et 8081 (jeton seul, peut déclencher le verrouillage) | Documenté (AGENTS.md §14.4, ops.md §5.4) ; réseau dédié à créer côté infrastructure, puis confiance en `X-Forwarded-For` limitée au pair Traefik. Reproduit localement : `probes.py`, famille `xff` |
+| NET-1 | moyenne | Tout conteneur des réseaux overlay partagés joint l'api 8080 (sans WAF ni rate limit, en choisissant son `X-Forwarded-For`) et 8081 (jeton seul, peut déclencher le verrouillage) | **Reporté par l'éditeur** (décision D4 du 2026-10-19) : risque résiduel accepté et documenté (AGENTS.md §14.4, §5 ci-dessous). Procédure prête, pas à pas : ops.md §5.4 (réseau dédié côté infrastructure, puis confiance en `X-Forwarded-For` limitée au pair Traefik). Reproduit localement : `probes.py`, famille `xff` |
 | NET-4 | faible | Même cause, réseaux `postgresqlcluster_internal` et `llm-net` | Idem |
 | HDR-1 | faible | Sur la QA, Traefik remplace HSTS (`preload`), pose `X-Robots-Tag: none` partout et `X-XSS-Protection` | Infrastructure (§6) ; `noindex` voulu en QA |
 | TLS-1 | faible | Pas d'enregistrement CAA ; suites CBC-SHA1 offertes en TLS 1.2 | Infrastructure (§6) |
 | AUTH-3 | faible\* | Jeton refusé (401) gardé en `sessionStorage` ; compteur d'échecs commun à tout le port | Partie frontend corrigée le 2026-10-19 : toute réponse `401` à une requête admin qui portait le jeton l'efface de `sessionStorage` et redemande le jeton ; un verrouillage (`429`) affiche le message de l'API et le délai (tests `client.test.tsx`, `admin-layout.test.tsx`). Partie compteur liée à NET-1, ouverte |
-| IMG-1, SUP-1 (backend) | faible\* | `backend/Dockerfile` non épinglé par digest, runtime Debian complet | À faire (digests notés dans le rapport de la revue) ; signalé sans bloquer par `check_image_pins.py` |
-| SUP-2 (reste) | faible\* | Pas de scan d'images (Trivy/Grype) ni de mise à jour automatique des digests | À faire |
+| SUP-2 (reste) | faible\* | Pas de mise à jour automatique des digests (Renovate) ; le scan Trivy est local, avant chaque mise en production, pas à chaque commit | À faire : Renovate (ou équivalent) sur les `ARG *_DIGEST` ; scan en CI à décider (base de vulnérabilités téléchargée à chaque exécution) |
 
 ### 3.3 Constats réfutés, requalifiés ou relevant d'une décision
 
@@ -236,12 +237,31 @@ Permissions-Policy, COOP, CORP, COEP (frontend), `Cache-Control` (`no-cache` pou
 `max-age=31536000; includeSubDomains; preload`, `X-Robots-Tag: none` partout (souhaitable en QA),
 `X-Xss-Protection: 1; mode=block`.
 
+### 4.5 Scan des images runtime (Trivy, 2026-10-19)
+
+`devops/dev/security/trivy.sh` (Trivy 0.75.0, base de vulnérabilités du jour) sur les images
+construites depuis `main` (commit `b5ecaac`) : `docker save` puis scan hors ligne de l'archive,
+sévérités `HIGH` et `CRITICAL`, vulnérabilités sans correctif ignorées (`--ignore-unfixed`).
+
+| Image | Système | HIGH / CRITICAL corrigeables | Sans correctif publié (information) |
+|---|---|---|---|
+| api et worker (`iapolitique-api`) | Debian 13.7 (distroless `cc-debian13`) | 0 | 23 MEDIUM, 8 LOW (paquets de base de Debian, aucun HIGH ni CRITICAL) |
+| frontend (`iapolitique-frontend`) | Alpine 3.24.2 (nginx, `apk upgrade`) | 0 | 0 |
+
+Rien à corriger : les images de base sont à leurs derniers digests (IMG-1, même jour) et l'image
+nginx prend les correctifs Alpine à chaque build. Le script échoue bien sur une image vulnérable
+(vérifié sur une ancienne image de Trivy : 37 et 79 HIGH/CRITICAL corrigeables). Limites : Trivy
+ne voit pas les crates du binaire Rust (compilé sans `cargo auditable`) ni les paquets npm du
+bundle (pas de `package-lock.json` dans l'image) ; ils sont couverts en CI par `cargo deny` et
+`npm audit` (§2, 14.7).
+
 ## 5. Risques résiduels
 
 - **Réseaux overlay partagés (NET-1, NET-4)** : un service voisin compromis joint l'api sans
   Traefik, choisit son empreinte de limitation (`X-Forwarded-For`) et peut tenir l'administration
   verrouillée. Mesuré localement : en direct sur 8080, des adresses tournantes échappent à la
-  limite de suivi.
+  limite de suivi. Correction reportée par l'éditeur (décision D4, 2026-10-19), procédure prête
+  (ops.md §5.4).
 - **Bots qui résolvent ALTCHA et font tourner leurs IP (ALT-1, COST-1)** : ALTCHA ralentit les
   navigateurs, pas un script ; les limites par empreinte et le plafond journalier bornent le coût,
   mais une campagne distribuée peut retarder les analyses légitimes jusqu'au lendemain.
@@ -254,17 +274,20 @@ Permissions-Policy, COOP, CORP, COEP (frontend), `Cache-Control` (`no-cache` pou
 - **Infrastructure partagée (HDR-1, TLS-1, PRIV-4, INFRA-8, VER-1)** : en-têtes réécrits par
   Traefik, absence de CAA, IP complètes 7 jours dans les journaux de Traefik, secrets de la
   configuration de Traefik, chiffrement des overlays non vérifié.
-- **Chaîne d'approvisionnement** : image runtime du backend non épinglée et sans scan de
-  vulnérabilités (IMG-1, SUP-2) ; les audits npm et RustSec restent bloquants en CI.
-- **Décisions juridiques ouvertes** : statut d'hébergeur ou d'éditeur du contenu IA, conservation
-  d'une copie scellée d'une idée escaladée (AUTHZ-1 phase 2, ESC-1), réexamen d'un masquage admin
-  (AUTHZ-2).
+- **Chaîne d'approvisionnement** : digests des images de base mis à jour à la main (pas de
+  Renovate) ; scan Trivy des images avant chaque mise en production seulement (§4.5) ; les audits
+  npm et RustSec restent bloquants en CI.
+- **Décisions juridiques ouvertes** : statut d'hébergeur ou d'éditeur du contenu IA, réexamen
+  d'un masquage admin (AUTHZ-2). La conservation d'une idée escaladée (AUTHZ-1 phase 2, ESC-1)
+  est tranchée : copie scellée un an, réservée à l'admin, chaque lecture journalisée (décision D3,
+  AGENTS.md §7.5), et retrait plutôt qu'effacement d'une idée publiée supprimée par son auteur
+  (décision D2).
 
 ## 6. Actions pour le propriétaire de l'infrastructure (hors dépôt)
 
 | Priorité | Action | Constat | Détail |
 |---|---|---|---|
-| 1 | Créer un réseau overlay chiffré dédié à Traefik, l'api et le frontend (`iapolitique_edge`, `qa-iapolitique_edge`), l'ajouter au service Traefik de la stack `privatenetwork` ; puis, dans le dépôt, y passer api et frontend et retirer `proxy` | NET-1, NET-4 | ops.md §5.4 |
+| 1 | Créer un réseau overlay chiffré dédié à Traefik, l'api et le frontend (`iapolitique_edge`, `qa-iapolitique_edge`), l'ajouter au service Traefik de la stack `privatenetwork` ; puis, dans le dépôt, y passer api et frontend et retirer `proxy`. **Reporté** (décision D4 du 2026-10-19) | NET-1, NET-4 | ops.md §5.4 (procédure pas à pas) |
 | 2 | Chaîne de middlewares sans `X-Robots-Tag` ni `preload` ni `X-XSS-Protection` pour les routeurs publics de production (`security-headers-indexable`, `global-indexable`), QA gardée en `noindex` ; ne pas soumettre le domaine à hstspreload.org sans décision de l'éditeur | HDR-1 | ops.md §5.2 |
 | 3 | Zone DNS : `CAA 0 issue "letsencrypt.org"`, `CAA 0 issuewild ";"`, `CAA 0 iodef "mailto:<contact sécurité>"` ; Traefik : `tls.options.default` limité aux suites ECDHE-GCM/CHACHA20, `sniStrict: true` ; vérifier que `iapolitique.fr` et `www` obtiennent un certificat Let's Encrypt avant l'ouverture | TLS-1 | — |
 | 4 | Journaux d'accès de Traefik : IP tronquée ou retirée pour les hôtes iapolitique, ou rétention ≤ 7 jours garantie aussi sur l'hôte Docker (`max-size`/`max-file`) | PRIV-4 | ops.md §5.1 |
@@ -310,12 +333,15 @@ devops/dev/security/run.sh            # campagne de sécurité (15 à 20 minutes
 | `probes.py` | sondes manuelles (en-têtes de chaque famille de réponses, CORS, CSRF, `Origin` et `Host`, corps et en-têtes démesurés, isolement de l'admin, réutilisation des connexions, `X-Forwarded-For`) |
 | `xss_check.mjs` | XSS stocké dans Chromium et Firefox : piège sur `window.__xss`, dialogues, violations de CSP, éléments injectés, JSON-LD, liens de sources |
 | `zap.sh` | ZAP baseline (frontend), API scan (spec committée), scan actif ciblé (routes publiques, paramètres réels, règles alpha) ; triage par `zap-rules.tsv`, synthèse par `zap_summary.py` |
+| `trivy.sh` | vulnérabilités `HIGH`/`CRITICAL` corrigeables des images runtime de l'api et du frontend (Trivy épinglé, archive `docker save` scannée hors ligne, base gardée dans le volume `iapolitique_trivy_cache`) ; exceptions dans `trivy-ignore.yaml` (raison et date d'expiration) ; lançable seul : `devops/dev/security/trivy.sh [répertoire]` |
 
-Le script échoue sur toute sonde en échec, tout XSS et toute alerte ZAP de risque faible ou plus
-qui n'est pas triée dans `zap-rules.tsv` (chaque exception y porte sa justification). Rapports :
+Le script échoue sur toute sonde en échec, tout XSS, toute alerte ZAP de risque faible ou plus
+qui n'est pas triée dans `zap-rules.tsv` (chaque exception y porte sa justification) et toute
+vulnérabilité `HIGH`/`CRITICAL` corrigeable d'une image runtime. Rapports :
 répertoire `SEC_WORK` (par défaut un dossier temporaire affiché à la fin) : `probes.json`,
-`xss.log`, `zap/*.html`, `zap/zap-summary.md`. Variables : `SEC_WORK`, `SEC_KEEP=1` (garder la
-pile), `SEC_REUSE_STACK=1` (réutiliser une pile et un `seed.json` existants), `SEC_SKIP_ZAP=1`.
+`xss.log`, `zap/*.html`, `zap/zap-summary.md`, `trivy/*.json` et `trivy/*.txt`. Variables :
+`SEC_WORK`, `SEC_KEEP=1` (garder la pile), `SEC_REUSE_STACK=1` (réutiliser une pile et un
+`seed.json` existants), `SEC_SKIP_ZAP=1`, `SEC_SKIP_TRIVY=1`, `SEC_API_IMAGE`, `SEC_FRONT_IMAGE`.
 
 **Jamais contre la QA ni la production** : les sondes épuisent les limites de débit et les scans
 actifs envoient des milliers de requêtes d'attaque. Sur la QA, seules des requêtes `GET`/`HEAD`

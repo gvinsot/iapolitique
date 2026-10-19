@@ -18,7 +18,7 @@ use super::admin::dashboard::{
 };
 use super::admin::ideas::{
     self as admin_ideas, AdminBulkReanalysis, AdminIdea, AdminIdeaPage, AdminReanalysis,
-    AdminReason,
+    AdminReason, AdminRejection,
 };
 use super::admin::jobs::{self as admin_jobs, AdminJob, AdminJobLog, AdminJobLogs, AdminJobPage};
 use super::admin::moderation::{
@@ -115,6 +115,8 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         admin_jobs::logs,
         admin_ideas::list,
         admin_ideas::hide,
+        admin_ideas::reject,
+        admin_ideas::accept,
         admin_ideas::republish,
         admin_ideas::reanalyze,
         admin_ideas::reanalyze_failed,
@@ -233,6 +235,7 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         AdminIdea,
         AdminIdeaPage,
         AdminReason,
+        AdminRejection,
         AdminReanalysis,
         IdeaStatus,
         ReportStatus,

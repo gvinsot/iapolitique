@@ -29,6 +29,14 @@ pub(crate) const ADMIN_ROUTES: &[(&str, &str)] = &[
         "POST",
         "/api/admin/ideas/00000000-0000-0000-0000-000000000000/reanalyze",
     ),
+    (
+        "POST",
+        "/api/admin/ideas/00000000-0000-0000-0000-000000000000/reject",
+    ),
+    (
+        "POST",
+        "/api/admin/ideas/00000000-0000-0000-0000-000000000000/accept",
+    ),
     ("GET", "/api/admin/reports"),
     ("GET", "/api/admin/escalations"),
     (

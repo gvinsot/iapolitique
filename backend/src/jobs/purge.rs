@@ -4,7 +4,9 @@
 //!   ideas) is erased 30 days after the rejection, their tracking tokens and review requests
 //!   are deleted, the second opinion explanation (which may paraphrase the text) is erased, and
 //!   the status becomes `purged`. Aggregated data stays: date, reason, level, decision model
-//!   scores. A text whose human review is still pending waits for the administrator.
+//!   scores. A text whose human review is still pending waits for the administrator. An idea
+//!   accepted then refused by the administrator also loses its embedding; one refused after its
+//!   publication (it has a slug) is purged like a hidden idea, 30 days after the refusal.
 //! - Hidden ideas (§7.3): 12 months after their masking (and without a pending human review)
 //!   their text and everything derived from it are erased and the status becomes `purged`: the
 //!   original text, the territory, the title, summary and slug, the text of their analyses
@@ -131,7 +133,7 @@ pub async fn run(pool: &PgPool) -> Result<PurgeReport, sqlx::Error> {
              UPDATE ideas SET status = 'purged', status_changed_at = now(),
                  original_text = NULL, submitted_territory = NULL,
                  original_text_purged_at = now()
-             WHERE status = 'rejected'
+             WHERE status = 'rejected' AND slug IS NULL
                AND coalesce(rejected_at, status_changed_at) < now() - make_interval(days => $1)
                AND NOT EXISTS (SELECT 1 FROM review_requests q
                                WHERE q.target_kind = 'idea' AND q.target_id = ideas.id
@@ -140,6 +142,9 @@ pub async fn run(pool: &PgPool) -> Result<PurgeReport, sqlx::Error> {
          ), events AS (
              INSERT INTO idea_events (idea_id, from_status, to_status, actor, reason_code)
              SELECT id, 'rejected', 'purged', 'worker', 'retention' FROM purged
+         ), embeddings AS (
+             -- Accepted, then refused by the administrator before its publication (§8).
+             DELETE FROM idea_embeddings e USING purged p WHERE e.idea_id = p.id
          ), tokens AS (
              DELETE FROM tracking_tokens t USING purged p
              WHERE t.target_kind = 'idea' AND t.target_id = p.id
@@ -348,8 +353,10 @@ pub async fn run(pool: &PgPool) -> Result<PurgeReport, sqlx::Error> {
     Ok(report)
 }
 
-/// Purge of the ideas hidden for [`HIDDEN_TEXT_RETENTION_MONTHS`] and of those withdrawn by
-/// their author for [`WITHDRAWN_RETENTION_MONTHS`] (see the module documentation).
+/// Purge of the ideas hidden for [`HIDDEN_TEXT_RETENTION_MONTHS`], of those withdrawn by
+/// their author for [`WITHDRAWN_RETENTION_MONTHS`] and of those refused by the administrator
+/// after their publication (they have a slug) for [`REJECTED_TEXT_RETENTION_DAYS`] (see the
+/// module documentation): everything published about them goes.
 async fn purge_hidden_ideas(
     conn: &mut PgConnection,
     report: &mut PurgeReport,
@@ -363,10 +370,16 @@ async fn purge_hidden_ideas(
                                   AND q.status = 'pending'))
             OR (status = 'withdrawn'
                 AND coalesce(withdrawn_at, status_changed_at) < now() - make_interval(months => $2))
+            OR (status = 'rejected' AND slug IS NOT NULL
+                AND coalesce(rejected_at, status_changed_at) < now() - make_interval(days => $3)
+                AND NOT EXISTS (SELECT 1 FROM review_requests q
+                                WHERE q.target_kind = 'idea' AND q.target_id = ideas.id
+                                  AND q.status = 'pending'))
          FOR UPDATE",
     )
     .bind(HIDDEN_TEXT_RETENTION_MONTHS)
     .bind(WITHDRAWN_RETENTION_MONTHS)
+    .bind(REJECTED_TEXT_RETENTION_DAYS)
     .fetch_all(&mut *conn)
     .await?;
     if rows.is_empty() {
@@ -434,7 +447,9 @@ async fn purge_hidden_ideas(
     .execute(&mut *conn)
     .await?;
     report.withdrawn_ideas = from.iter().filter(|s| **s == "withdrawn").count() as i64;
-    report.hidden_ideas = ideas.len() as i64 - report.withdrawn_ideas;
+    let rejected = from.iter().filter(|s| **s == "rejected").count() as i64;
+    report.ideas += rejected;
+    report.hidden_ideas = ideas.len() as i64 - report.withdrawn_ideas - rejected;
 
     // Texts generated from them: the figures stay for statistics.
     sqlx::query(
@@ -966,6 +981,48 @@ mod tests {
         .await
         .unwrap();
         id
+    }
+
+    /// An idea refused by the administrator after its publication (§8) is purged 30 days later
+    /// like a hidden idea: its text, its title, its slug and the text of its analyses go.
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn purges_ideas_refused_after_their_publication_after_30_days(pool: PgPool) {
+        let mut ids = Vec::new();
+        for (slug, days) in [("refusee-ancienne", 31), ("refusee-recente", 29)] {
+            let id = crate::test_support::published_idea(&pool, slug).await;
+            sqlx::query(
+                "UPDATE ideas SET status = 'rejected', rejection_reason_code = 'off_topic',
+                     rejected_by_admin = true, rejected_at = now() - make_interval(days => $2)
+                 WHERE id = $1",
+            )
+            .bind(id)
+            .bind(days)
+            .execute(&pool)
+            .await
+            .unwrap();
+            ids.push(id);
+        }
+        let report = run(&pool).await.unwrap();
+        assert_eq!(report.ideas, 1);
+        assert_eq!(report.hidden_ideas, 0);
+        type Row = (String, Option<String>, Option<String>, Option<String>);
+        let rows: Vec<Row> = sqlx::query_as(
+            "SELECT status, slug, title, original_text FROM ideas WHERE id = ANY($1)
+             ORDER BY slug NULLS FIRST",
+        )
+        .bind(&ids)
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        assert_eq!(rows[0], ("purged".to_owned(), None, None, None));
+        assert_eq!(rows[1].0, "rejected");
+        assert_eq!(rows[1].1.as_deref(), Some("refusee-recente"));
+        let (title,): (String,) = sqlx::query_as("SELECT title FROM analyses WHERE idea_id = $1")
+            .bind(ids[0])
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+        assert_eq!(title, "");
     }
 
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]

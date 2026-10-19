@@ -135,7 +135,7 @@ describe("legal pages", () => {
     renderRoute("/regles");
     await screen.findByRole("heading", { level: 1, name: "Règles du site" });
 
-    expect(await screen.findByText("1.1")).toBeInTheDocument();
+    expect(await screen.findByText("1.2")).toBeInTheDocument();
     expect(screen.getByText("20 octobre 2026")).toBeInTheDocument();
     expect(
       screen.getByRole("heading", { level: 3, name: "4.4. Aucun particulier identifiable" }),

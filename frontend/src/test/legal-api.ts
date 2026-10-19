@@ -9,7 +9,7 @@ export const legalInfoFixture: LegalInfo = {
   },
   contact_email: "contact@example.org",
   privacy_email: "confidentialite@example.org",
-  cgu_version: "1.1",
+  cgu_version: "1.2",
   pages: {
     mentions_legales: "2026-10-18",
     confidentialite: "2026-10-18",

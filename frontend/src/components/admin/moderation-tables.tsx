@@ -1,4 +1,5 @@
-import { ExternalLinkIcon } from "lucide-react";
+import { ExternalLinkIcon, Loader2Icon } from "lucide-react";
+import { type SubmitEvent, useId, useMemo, useState } from "react";
 import { Link } from "react-router";
 
 import type {
@@ -10,8 +11,21 @@ import type {
   ReviewResolution,
 } from "@/api/types";
 import { paths } from "@/app/paths";
+import { errorMessage } from "@/api/errors";
 import { Badge } from "@/components/ui/badge";
-import { useTaxonomyLabels } from "@/hooks/use-taxonomy";
+import { Button } from "@/components/ui/button";
+import {
+  Dialog,
+  DialogContent,
+  DialogDescription,
+  DialogFooter,
+  DialogHeader,
+  DialogTitle,
+  DialogTrigger,
+} from "@/components/ui/dialog";
+import { Label } from "@/components/ui/label";
+import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { useTaxonomy, useTaxonomyLabels } from "@/hooks/use-taxonomy";
 import {
   escalationOutcomeLabels,
   hiddenReasonLabels,
@@ -70,18 +84,160 @@ function statusBadgeVariant(status: string): "destructive" | "outline" | "second
   return "secondary";
 }
 
+/** Statuses from which the administrator may refuse an idea (AGENTS.md §8). */
+const REJECTABLE_STATUSES = [
+  "accepted",
+  "dedup",
+  "queued_analysis",
+  "analyzing",
+  "analysis_failed",
+  "published",
+  "hidden",
+];
+
+/**
+ * Refusal of an idea by the administrator, with a reason of the screening grid: the author sees
+ * it as a human decision. Errors of the API stay in the dialog.
+ */
+function RejectIdeaDialog({
+  name,
+  published,
+  onReject,
+}: {
+  name: string;
+  published: boolean;
+  onReject: (reasonCode: string) => Promise<void>;
+}) {
+  const id = useId();
+  const taxonomy = useTaxonomy();
+  const reasons = useMemo(() => {
+    const seen = new Set<string>();
+    return (taxonomy.data?.rejection_reasons ?? []).filter((reason) => {
+      if (seen.has(reason.code)) return false;
+      seen.add(reason.code);
+      return true;
+    });
+  }, [taxonomy.data]);
+  const [open, setOpen] = useState(false);
+  const [reason, setReason] = useState("");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+
+  const submit = async (event: SubmitEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (reason === "") {
+      setError("Motif : choisissez un motif de refus.");
+      return;
+    }
+    setPending(true);
+    setError(null);
+    try {
+      await onReject(reason);
+      setOpen(false);
+      setReason("");
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (!next) setError(null);
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button type="button" size="sm" variant="outline" aria-label={`Refuser « ${name} »`}>
+          Refuser
+        </Button>
+      </DialogTrigger>
+      <DialogContent>
+        <form
+          onSubmit={(event) => {
+            void submit(event);
+          }}
+          noValidate
+          className="space-y-4"
+        >
+          <DialogHeader>
+            <DialogTitle>Refuser cette idée</DialogTitle>
+            <DialogDescription>
+              {published
+                ? "L’idée quitte le site et les exports aussitôt. "
+                : "Son traitement s’arrête. "}
+              Son auteur voit un refus décidé par l’éditeur du site, avec le motif choisi ; l’idée
+              est effacée 30 jours plus tard. Elle pourra être acceptée de nouveau d’ici là.
+            </DialogDescription>
+          </DialogHeader>
+          <fieldset className="space-y-2">
+            <legend className="mb-2 text-sm font-medium">Motif (montré à l’auteur)</legend>
+            {reasons.length === 0 ? (
+              <p className="text-sm text-muted-foreground">
+                {taxonomy.isError
+                  ? "Les motifs de la grille sont indisponibles."
+                  : "Chargement des motifs…"}
+              </p>
+            ) : (
+              <RadioGroup value={reason} onValueChange={setReason} className="gap-2">
+                {reasons.map((item) => (
+                  <div key={item.code} className="flex items-start gap-3">
+                    <RadioGroupItem
+                      value={item.code}
+                      id={`${id}-${item.code}`}
+                      className="mt-0.5"
+                    />
+                    <Label htmlFor={`${id}-${item.code}`} className="block font-normal">
+                      <span className="font-mono text-xs">{item.code}</span>
+                      <span className="block text-sm">{item.message}</span>
+                    </Label>
+                  </div>
+                ))}
+              </RadioGroup>
+            )}
+          </fieldset>
+          {error ? (
+            <p role="alert" className="text-sm font-medium text-destructive">
+              {error}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button type="submit" variant="destructive" disabled={pending}>
+              {pending ? <Loader2Icon className="animate-spin" aria-hidden="true" /> : null}
+              Refuser l’idée
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 interface IdeasTableProps {
   rows: AdminIdea[];
   onHide: (id: string, reason: string) => Promise<void>;
   onRepublish: (id: string, reason: string) => Promise<void>;
   onReanalyze: (id: string) => Promise<void>;
+  onReject: (id: string, reasonCode: string) => Promise<void>;
+  onAccept: (id: string) => Promise<void>;
 }
 
 /**
- * Ideas of every status (AGENTS.md §8): hide, republish, relaunch an analysis, replies. An idea
+ * Ideas of every status (AGENTS.md §8): hide, republish, refuse an accepted idea (published or
+ * not), accept a refused one, relaunch an analysis, replies. An idea
  * withdrawn by its author is shown read only: no action applies to it (§5.2).
  */
-export function IdeasTable({ rows, onHide, onRepublish, onReanalyze }: IdeasTableProps) {
+export function IdeasTable({
+  rows,
+  onHide,
+  onRepublish,
+  onReanalyze,
+  onReject,
+  onAccept,
+}: IdeasTableProps) {
   return (
     <AdminTable
       caption="Idées"
@@ -173,6 +329,23 @@ export function IdeasTable({ rows, onHide, onRepublish, onReanalyze }: IdeasTabl
                     confirm="Republier l’idée"
                     field={{ label: "Motif", required: true, maxLength: REASON_MAX_LENGTH }}
                     onConfirm={(reason) => onRepublish(row.id, reason ?? "")}
+                  />
+                ) : null}
+                {REJECTABLE_STATUSES.includes(row.status) ? (
+                  <RejectIdeaDialog
+                    name={name}
+                    published={row.status === "published"}
+                    onReject={(reasonCode) => onReject(row.id, reasonCode)}
+                  />
+                ) : null}
+                {row.status === "rejected" ? (
+                  <ConfirmDialog
+                    trigger="Accepter"
+                    triggerLabel={`Accepter « ${name} »`}
+                    title="Accepter cette idée"
+                    description="Le refus est levé : l’idée reprend son traitement (dédoublonnage, puis analyse et chiffrage par IA, 15 minutes ou plus) et sera publiée à la fin de l’analyse."
+                    confirm="Accepter l’idée"
+                    onConfirm={() => onAccept(row.id)}
                   />
                 ) : null}
                 {["published", "hidden", "analysis_failed"].includes(row.status) ? (

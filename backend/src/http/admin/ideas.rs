@@ -15,7 +15,7 @@ use crate::db::admin_actions::{self, NewAdminAction};
 use crate::db::ideas::{self, AdminIdeaRow};
 use crate::db::status::{self, Change};
 use crate::domain::status::IdeaStatus;
-use crate::domain::types::{Actor, AnalysisTrigger, HiddenReason};
+use crate::domain::types::{Actor, AnalysisTrigger, HiddenReason, TargetKind};
 use crate::http::AppState;
 use crate::http::error::{ApiError, ErrorBody};
 use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
@@ -229,6 +229,130 @@ pub async fn hide(
         &NewAdminAction::new("idea.hide")
             .target("idea", id)
             .details(json!({ "reason": reason })),
+    )
+    .await?;
+    tx.commit().await?;
+    idea_after(&state, id).await
+}
+
+/// Refusal of an idea by the administrator: a reason of the screening grid.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AdminRejection {
+    /// `reason_code` of a criterion of the `idea` section of `prompts/screening.yaml`
+    /// (`GET /api/taxonomy`, `rejection_reasons`).
+    #[schema(example = "off_topic", max_length = 64)]
+    pub reason_code: String,
+}
+
+fn moderation_error(err: crate::moderation::ModerationError) -> ApiError {
+    match err {
+        crate::moderation::ModerationError::Status(err) => status_error(err),
+        crate::moderation::ModerationError::Database(err) => err.into(),
+    }
+}
+
+/// Refuses an accepted idea, published or not (§8): it leaves the site and the exports at
+/// once, its queued jobs are cancelled, its author sees a refusal decided by the
+/// administrator (not automated) and it is purged 30 days later (§7.3).
+#[utoipa::path(
+    post,
+    path = "/api/admin/ideas/{id}/reject",
+    tag = "admin",
+    operation_id = "rejectAdminIdea",
+    security(("admin_token" = [])),
+    params(("id" = Uuid, Path, description = "Identifiant de l'idée")),
+    request_body = AdminRejection,
+    responses(
+        (status = 200, description = "Idée refusée.", body = AdminIdea),
+        (status = 401, description = "Jeton absent ou invalide.", body = ErrorBody),
+        (status = 404, description = "Idée inconnue (`idea_not_found`).", body = ErrorBody),
+        (status = 409, description = "Idée ni acceptée ni publiée ni masquée \
+            (`idea_not_rejectable`).", body = ErrorBody),
+        (status = 422, description = "Motif hors de la grille (`invalid_reason`).", body = ErrorBody)
+    )
+)]
+pub async fn reject(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<Uuid>,
+    ApiJson(body): ApiJson<AdminRejection>,
+) -> Result<Json<AdminIdea>, ApiError> {
+    let known = state
+        .prompts
+        .screening
+        .section(TargetKind::Idea)
+        .iter()
+        .any(|criterion| criterion.reason_code == body.reason_code);
+    if !known {
+        return Err(ApiError::new(
+            StatusCode::UNPROCESSABLE_ENTITY,
+            "invalid_reason",
+            "Choisissez un motif de refus de la grille de filtrage.",
+        ));
+    }
+    let mut tx = state.pool.begin().await?;
+    exists(&mut tx, id).await?;
+    let change = Change::by(Actor::Admin)
+        .reason("admin_rejection")
+        .details(json!({ "reason_code": body.reason_code }));
+    let from = crate::moderation::admin_reject_idea(&mut tx, id, &body.reason_code, &change)
+        .await
+        .map_err(moderation_error)?
+        .ok_or_else(|| {
+            conflict(
+                "idea_not_rejectable",
+                "Seule une idée acceptée (publiée ou non) ou masquée peut être refusée.",
+            )
+        })?;
+    admin_actions::record(
+        &mut tx,
+        &NewAdminAction::new("idea.reject")
+            .target("idea", id)
+            .details(json!({
+                "reason_code": body.reason_code,
+                "from_status": from.as_str(),
+            })),
+    )
+    .await?;
+    tx.commit().await?;
+    idea_after(&state, id).await
+}
+
+/// Accepts a refused idea, whoever refused it (§8): it resumes the pipeline (duplicate
+/// detection, then analysis), an idea that was published keeping its slug.
+#[utoipa::path(
+    post,
+    path = "/api/admin/ideas/{id}/accept",
+    tag = "admin",
+    operation_id = "acceptAdminIdea",
+    security(("admin_token" = [])),
+    params(("id" = Uuid, Path, description = "Identifiant de l'idée")),
+    responses(
+        (status = 200, description = "Idée acceptée, analyse relancée.", body = AdminIdea),
+        (status = 401, description = "Jeton absent ou invalide.", body = ErrorBody),
+        (status = 404, description = "Idée inconnue (`idea_not_found`).", body = ErrorBody),
+        (status = 409, description = "Idée non refusée (`idea_not_rejected`).", body = ErrorBody)
+    )
+)]
+pub async fn accept(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<Uuid>,
+) -> Result<Json<AdminIdea>, ApiError> {
+    let mut tx = state.pool.begin().await?;
+    exists(&mut tx, id).await?;
+    let change = Change::by(Actor::Admin).reason("admin_acceptance");
+    let accepted = crate::moderation::admin_accept_idea(&mut tx, id, &change)
+        .await
+        .map_err(moderation_error)?;
+    if !accepted {
+        return Err(conflict(
+            "idea_not_rejected",
+            "Seule une idée refusée peut être acceptée.",
+        ));
+    }
+    admin_actions::record(
+        &mut tx,
+        &NewAdminAction::new("idea.accept").target("idea", id),
     )
     .await?;
     tx.commit().await?;

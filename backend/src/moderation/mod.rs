@@ -435,6 +435,109 @@ async fn settle_typed<S: ScreenedStatus + StatusTable>(
 
 /// Note of the calibration label set when a refusal is overturned.
 pub const OVERTURN_LABEL_NOTE: &str = "Refus infirmé après réexamen humain.";
+/// Note of the calibration label set when the administrator refuses an accepted idea.
+pub const ADMIN_REJECTION_LABEL_NOTE: &str = "Idée acceptée puis refusée par l'administrateur.";
+/// Note of a pending human review closed by a direct decision of the administrator.
+const DIRECT_DECISION_NOTE: &str = "Clos par une décision directe de l'administrateur.";
+
+/// Refuses an accepted idea by a decision of the administrator (§8), published or not:
+/// `→ rejected` with the reason `reason_code` of the grid, marked as a human decision (the
+/// statement of reasons says so), the queued jobs of the idea and of its contributions and
+/// reports cancelled, the latest screening labelled `reject` for the calibration (unless
+/// already labelled), a pending human review closed (`confirmed`), the exports regenerated at
+/// once when it was on the site. Purged 30 days later (§7.3). Returns the previous status, or
+/// `None` (nothing changed) when the idea does not exist or is not accepted. Runs in the
+/// caller's transaction.
+pub async fn admin_reject_idea(
+    conn: &mut PgConnection,
+    id: Uuid,
+    reason_code: &str,
+    change: &Change,
+) -> Result<Option<IdeaStatus>, ModerationError> {
+    let Some(from) = status::lock::<IdeaStatus>(conn, id).await? else {
+        return Ok(None);
+    };
+    if !from.admin_rejectable() {
+        return Ok(None);
+    }
+    status::transition(conn, id, IdeaStatus::Rejected, change).await?;
+    sqlx::query(
+        "UPDATE ideas SET rejection_reason_code = $2, rejected_at = now(), rejected_by_admin = true
+         WHERE id = $1",
+    )
+    .bind(id)
+    .bind(reason_code)
+    .execute(&mut *conn)
+    .await?;
+    // No more work about the idea, nor about texts attached to it.
+    sqlx::query(
+        "DELETE FROM jobs WHERE status = 'queued'
+           AND (payload->>'idea_id' = $1
+                OR (payload->>'target_kind' = 'contribution' AND payload->>'target_id' IN
+                        (SELECT id::text FROM contributions WHERE idea_id = $2))
+                OR (payload->>'target_kind' = 'report' AND payload->>'target_id' IN
+                        (SELECT id::text FROM reports WHERE idea_id = $2)))",
+    )
+    .bind(id.to_string())
+    .bind(id)
+    .execute(&mut *conn)
+    .await?;
+    sqlx::query(
+        "UPDATE screenings SET human_label = 'reject', human_label_note = $2, labeled_at = now()
+         WHERE id = (SELECT id FROM screenings
+                     WHERE target_kind = 'idea' AND target_id = $1 AND outcome IS NOT NULL
+                     ORDER BY created_at DESC LIMIT 1)
+           AND human_label IS NULL",
+    )
+    .bind(id)
+    .bind(ADMIN_REJECTION_LABEL_NOTE)
+    .execute(&mut *conn)
+    .await?;
+    close_review_request(conn, id, "confirmed").await?;
+    if from.has_publication() {
+        pipeline::regenerate_exports_now(conn).await?;
+    }
+    Ok(Some(from))
+}
+
+/// Accepts a refused idea by a decision of the administrator (§8), whoever refused it: as
+/// [`overturn_rejection`] (the pipeline resumes: duplicate detection, then analysis; an idea
+/// that was published keeps its slug), the human decision mark erased, a pending human review
+/// closed (`overturned`). Returns `false` when the idea is not `rejected`.
+pub async fn admin_accept_idea(
+    conn: &mut PgConnection,
+    id: Uuid,
+    change: &Change,
+) -> Result<bool, ModerationError> {
+    if !overturn_rejection(conn, Target::new(TargetKind::Idea, id), change).await? {
+        return Ok(false);
+    }
+    sqlx::query("UPDATE ideas SET rejected_by_admin = false WHERE id = $1")
+        .bind(id)
+        .execute(&mut *conn)
+        .await?;
+    close_review_request(conn, id, "overturned").await?;
+    Ok(true)
+}
+
+/// Closes the pending human review of an idea, superseded by a direct decision.
+async fn close_review_request(
+    conn: &mut PgConnection,
+    id: Uuid,
+    resolution: &str,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "UPDATE review_requests SET status = 'done', handled_at = now(), resolution = $2,
+             note = $3
+         WHERE target_kind = 'idea' AND target_id = $1 AND status = 'pending'",
+    )
+    .bind(id)
+    .bind(resolution)
+    .bind(DIRECT_DECISION_NOTE)
+    .execute(&mut *conn)
+    .await?;
+    Ok(())
+}
 
 /// Overturns the refusal of a text after a human review (§7.1): `rejected → accepted` with its
 /// history, rejection fields erased, the latest screening labelled `accept` for the calibration

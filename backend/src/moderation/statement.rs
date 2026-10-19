@@ -64,7 +64,8 @@ pub struct StatementOfReasons {
     pub reason_message: String,
     /// Article of the rules applied.
     pub rule: RuleReference,
-    /// The decision was taken automatically by an AI, without human review.
+    /// The decision was taken automatically by an AI, without human review (`false`: decided
+    /// by the administrator).
     pub automated: bool,
     /// The decision followed a Mistral second opinion (gray zone).
     pub second_opinion: bool,
@@ -90,11 +91,12 @@ pub fn reason_message(prompts: &Prompts, kind: TargetKind, reason_code: &str) ->
 
 /// Refusal of a text of `$table`: reason, day of the decision, first day the daily purge erases
 /// the text (the next purge run, Paris time, after `rejected_at + retention`), and whether a
-/// second opinion took part, and whether a human review is pending (the purge then waits).
+/// second opinion took part, whether a human review is pending (the purge then waits), and
+/// whether the administrator decided it (`$by_admin`: a column of `ideas` only, §8).
 /// `$1` id, `$2` retention days, `$3`/`$4` purge hour and minute, `$5` target kind.
 /// Compile-time constant SQL (AGENTS.md §14.1).
 macro_rules! rejected_sql {
-    ($table:literal) => {
+    ($table:literal, $by_admin:literal) => {
         concat!(
             "SELECT t.rejection_reason_code, (t.rejected_at AT TIME ZONE 'Europe/Paris')::date,
                     ((t.rejected_at + make_interval(days => $2)) AT TIME ZONE 'Europe/Paris')::date
@@ -106,8 +108,9 @@ macro_rules! rejected_sql {
                               AND s.second_opinion_decision = 'reject'),
                     EXISTS (SELECT 1 FROM review_requests q
                             WHERE q.target_kind = $5 AND q.target_id = t.id
-                              AND q.status = 'pending')
-             FROM ",
+                              AND q.status = 'pending'), ",
+            $by_admin,
+            " FROM ",
             $table,
             " t WHERE t.id = $1 AND t.status = 'rejected' AND t.rejected_at IS NOT NULL"
         )
@@ -116,9 +119,9 @@ macro_rules! rejected_sql {
 
 fn rejected_sql(kind: TargetKind) -> &'static str {
     match kind {
-        TargetKind::Idea => rejected_sql!("ideas"),
-        TargetKind::Contribution => rejected_sql!("contributions"),
-        TargetKind::Report => rejected_sql!("reports"),
+        TargetKind::Idea => rejected_sql!("ideas", "t.rejected_by_admin"),
+        TargetKind::Contribution => rejected_sql!("contributions", "false"),
+        TargetKind::Report => rejected_sql!("reports", "false"),
     }
 }
 
@@ -129,7 +132,7 @@ pub async fn load(
     prompts: &Prompts,
     target: Target,
 ) -> sqlx::Result<Option<StatementOfReasons>> {
-    let rejected: Option<(Option<String>, NaiveDate, NaiveDate, bool, bool)> =
+    let rejected: Option<(Option<String>, NaiveDate, NaiveDate, bool, bool, bool)> =
         sqlx::query_as(rejected_sql(target.kind))
             .bind(target.id)
             .bind(REJECTED_TEXT_RETENTION_DAYS)
@@ -138,7 +141,9 @@ pub async fn load(
             .bind(target.kind.as_str())
             .fetch_optional(pool)
             .await?;
-    if let Some((reason_code, decided_on, purge_on, second_opinion, review_pending)) = rejected {
+    if let Some((reason_code, decided_on, purge_on, second_opinion, review_pending, by_admin)) =
+        rejected
+    {
         let reason_code = reason_code.unwrap_or_else(|| "rejected".to_owned());
         let rule = rules::article_for_reason(&reason_code).unwrap_or(rules::CRITERIA_ARTICLE);
         return Ok(Some(StatementOfReasons {
@@ -146,8 +151,9 @@ pub async fn load(
             reason_message: reason_message(prompts, target.kind, &reason_code),
             reason_code,
             rule: rule.into(),
-            automated: true,
-            second_opinion,
+            // Refused by the administrator (§8): a human decision, whatever the screening said.
+            automated: !by_admin,
+            second_opinion: second_opinion && !by_admin,
             decided_on,
             // A pending human review keeps the text until the administrator handles it.
             purge_on: (!review_pending).then_some(purge_on),

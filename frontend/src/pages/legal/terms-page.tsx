@@ -180,14 +180,19 @@ export function TermsPage() {
       <p>
         Les consignes données aux modèles, la grille de filtrage et ses seuils sont publiés sur la
         page <Link to={paths.methodology}>Méthodologie</Link>. L’éditeur peut à tout moment masquer
-        ou republier une idée et relancer une analyse.
+        ou republier une idée, refuser une idée acceptée (même publiée) pour l’un des motifs de
+        l’article 4, accepter une idée refusée (son analyse est alors relancée) et relancer une
+        analyse.
       </p>
 
       <h2 id="mesures">Article 7 – Mesures et durées</h2>
       <ul>
         <li>
           <strong>Refus</strong> : le texte n’est pas publié ; il est supprimé 30 jours après le
-          refus. Vous pouvez envoyer une version reformulée à tout moment.
+          refus. Vous pouvez envoyer une version reformulée à tout moment. Une idée acceptée, même
+          publiée, peut aussi être refusée par l’éditeur : elle quitte aussitôt le site, l’API
+          publique et les exports suivants, et elle est supprimée 30 jours après le refus avec son
+          analyse, ses contributions et ses signalements.
         </li>
         <li>
           <strong>Masquage</strong> : l’idée est retirée du site et des exports suivants ; son texte
@@ -225,8 +230,8 @@ export function TermsPage() {
       </ul>
       <p>
         Toute mesure est indiquée sur le lien de suivi de l’auteur, avec son motif, la règle en
-        cause, la mention « décision prise automatiquement par une IA », la date de suppression du
-        texte le cas échéant et les voies de recours.
+        cause, la mention « décision prise automatiquement par une IA » ou « décision de l’éditeur
+        du site », la date de suppression du texte le cas échéant et les voies de recours.
       </p>
 
       <h2 id={RULES_RECOURSE_ANCHOR}>Article 8 – Voies de recours</h2>

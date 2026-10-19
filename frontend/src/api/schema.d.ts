@@ -147,6 +147,26 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/ideas/{id}/accept": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Accepts a refused idea, whoever refused it (§8): it resumes the pipeline (duplicate
+         *     detection, then analysis), an idea that was published keeping its slug.
+         */
+        post: operations["acceptAdminIdea"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/ideas/{id}/hide": {
         parameters: {
             query?: never;
@@ -182,6 +202,27 @@ export interface paths {
          *     analysis failed (`analysis_failed → queued_analysis`).
          */
         post: operations["reanalyzeAdminIdea"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/admin/ideas/{id}/reject": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Refuses an accepted idea, published or not (§8): it leaves the site and the exports at
+         *     once, its queued jobs are cancelled, its author sees a refusal decided by the
+         *     administrator (not automated) and it is purged 30 days later (§7.3).
+         */
+        post: operations["rejectAdminIdea"];
         delete?: never;
         options?: never;
         head?: never;
@@ -1343,6 +1384,15 @@ export interface components {
             /** @description 1 to 1 000 characters. */
             reason: string;
         };
+        /** @description Refusal of an idea by the administrator: a reason of the screening grid. */
+        AdminRejection: {
+            /**
+             * @description `reason_code` of a criterion of the `idea` section of `prompts/screening.yaml`
+             *     (`GET /api/taxonomy`, `rejection_reasons`).
+             * @example off_topic
+             */
+            reason_code: string;
+        };
         /** @description A right of reply as edited by the administrator. */
         AdminReply: {
             /** Format: uuid */
@@ -2399,7 +2449,10 @@ export interface components {
             reason_message: string;
             /** @description Article of the rules applied. */
             rule: components["schemas"]["RuleReference"];
-            /** @description The decision was taken automatically by an AI, without human review. */
+            /**
+             * @description The decision was taken automatically by an AI, without human review (`false`: decided
+             *     by the administrator).
+             */
             automated: boolean;
             /** @description The decision followed a Mistral second opinion (gray zone). */
             second_opinion: boolean;
@@ -2558,6 +2611,7 @@ export type SchemaAdminPurposeCost = components['schemas']['AdminPurposeCost'];
 export type SchemaAdminQueues = components['schemas']['AdminQueues'];
 export type SchemaAdminReanalysis = components['schemas']['AdminReanalysis'];
 export type SchemaAdminReason = components['schemas']['AdminReason'];
+export type SchemaAdminRejection = components['schemas']['AdminRejection'];
 export type SchemaAdminReply = components['schemas']['AdminReply'];
 export type SchemaAdminReplyContent = components['schemas']['AdminReplyContent'];
 export type SchemaAdminReport = components['schemas']['AdminReport'];
@@ -2997,6 +3051,56 @@ export interface operations {
             };
         };
     };
+    acceptAdminIdea: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant de l'idée */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Idée acceptée, analyse relancée. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminIdea"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Idée inconnue (`idea_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Idée non refusée (`idea_not_rejected`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
     hideAdminIdea: {
         parameters: {
             query?: never;
@@ -3101,6 +3205,69 @@ export interface operations {
             };
             /** @description Statut sans analyse possible (`reanalysis_not_available`). */
             409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    rejectAdminIdea: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant de l'idée */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminRejection"];
+            };
+        };
+        responses: {
+            /** @description Idée refusée. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminIdea"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Idée inconnue (`idea_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Idée ni acceptée ni publiée ni masquée (`idea_not_rejectable`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Motif hors de la grille (`invalid_reason`). */
+            422: {
                 headers: {
                     [name: string]: unknown;
                 };

@@ -220,7 +220,7 @@ après l'enregistrement laisse le texte `submitted` et rend quand même le jeton
 submitted
   └─▶ screening (modèle de décision, synchrone)
         ├─▶ rejected ─────────────▶ purged (texte supprimé à J+30)
-        │      └─▶ accepted (refus infirmé par l'admin après réexamen humain)
+        │      └─▶ accepted (refus infirmé par l'admin, après réexamen humain ou directement)
         ├─▶ second_opinion (Mistral, zone grise) ─▶ rejected | accepted
         └─▶ accepted
               └─▶ dedup (embedding + pgvector)
@@ -231,7 +231,22 @@ published ─▶ hidden (après revue d'un signalement ou action admin) ─▶ p
                                                                 └─▶ purged (12 mois après le masquage)
 published | hidden ─▶ withdrawn (supprimée par son auteur) ─▶ purged (12 mois après le retrait)
 merged ─▶ purged (avec l'idée masquée ou retirée dans laquelle il a été fusionné)
+accepted | dedup | queued_analysis | analyzing | analysis_failed | published | hidden
+  ─▶ rejected (refus décidé par l'admin, motif de la grille)
 ```
+
+- **Refus et acceptation par l'admin** (demande de l'éditeur du 2026-10-19) : une idée acceptée,
+  publiée ou non (et masquée), peut être refusée depuis l'admin avec un motif de la grille
+  (`reason_code` de la section `idea` de `screening.yaml`) : `→ rejected`,
+  `ideas.rejected_by_admin` (l'exposé des motifs dit « décision de l'éditeur du site », pas une
+  décision automatique), jobs en file de l'idée, de ses contributions et signalements supprimés,
+  dernière décision de filtrage étiquetée `reject` pour la calibration (si elle ne l'était pas),
+  réexamen humain en attente clos (`confirmed`), exports régénérés aussitôt si elle était
+  publiée ou masquée ; purge à J+30 comme tout refus, avec tout ce qui en dérive pour une idée
+  qui avait été publiée (§7.3). Une idée refusée, par le filtrage ou par l'admin, peut être
+  acceptée depuis l'admin : `moderation::overturn_rejection` (dédoublonnage puis analyse ; une
+  idée déjà publiée garde son slug), réexamen en attente clos (`overturned`). Mise en œuvre :
+  `moderation::admin_reject_idea`, `admin_accept_idea`.
 
 - **Retrait par l'auteur** (décision du propriétaire D2, 2026-10-19) : une idée `published` ou
   `hidden` que son auteur supprime passe `withdrawn` (`ideas.withdrawn_at`, `withdrawn_from`,
@@ -675,7 +690,9 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
 
 - Idée refusée : texte et jeton purgés **30 jours** après le refus ; seules des statistiques
   agrégées sont conservées (date, motif, niveau, scores du modèle de décision pour la calibration
-  sans le texte).
+  sans le texte). Une idée acceptée puis refusée par l'admin perd aussi son embedding ; une idée
+  refusée après sa publication est purgée à J+30 comme un contenu masqué (titre, slug, analyses,
+  contributions, signalements, droits de réponse, doublons fusionnés).
 - Idées publiées : conservées avec leur texte original (version masquée, voir §7.5).
 - Contenus masqués (`hidden`) : texte purgé après 12 mois (`hidden → purged`, sauf réexamen
   humain en attente) avec tout ce qui en dérive : titre, résumé, slug, territoire, contenu
@@ -775,7 +792,8 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
   particulier » et mention du traitement par IA (modèle local puis Mistral AI). On stocke
   `cgu_version` (version courante : `domain::rules::CGU_VERSION`, à incrémenter avec la page
   `/regles` quand ses clauses changent : 1.1 le 2026-10-19 pour le retrait par l'auteur D2, la
-  copie scellée D3 et l'interdiction explicite de nommer un parti ou un élu D1) et `cgu_accepted_at` (date Europe/Paris) avec chaque idée et contribution, rien
+  copie scellée D3 et l'interdiction explicite de nommer un parti ou un élu D1 ; 1.2 le même jour
+  pour le refus par l'éditeur d'une idée acceptée, même publiée) et `cgu_accepted_at` (date Europe/Paris) avec chaque idée et contribution, rien
   d'autre. Sans les deux cases : `400 consent_required`.
 - **Données personnelles dans les textes** : avant tout appel à Mistral et avant publication,
   masquage déterministe (e-mails, téléphones, IBAN, NIR, adresses postales, URL nominatives →
@@ -876,7 +894,8 @@ service tiers reste interdit.
 - Fonctions : tableau de bord (file de jobs, logs de chaque job dans une modale, taux d'acceptation, coûts IA du jour/mois, alertes
   de configuration comme une clé Mistral refusée — avec vérification immédiate de la clé — ou un
   modèle qui refuse `reasoning_effort`), idées masquées et signalements,
-  masquer/republier, relancer une analyse ou toutes les analyses échouées, consulter les copies
+  masquer/republier, refuser une idée acceptée (même publiée) ou accepter une idée refusée
+  (§5.2), relancer une analyse ou toutes les analyses échouées, consulter les copies
   scellées des escalades (`/admin/copies-scellees` ; la copie n'est demandée à l'API qu'après un
   clic explicite, jamais rechargée en arrière-plan, puisque chaque lecture est journalisée),
   idées retirées par leur auteur en lecture seule, consulter les scores bruts
@@ -1103,6 +1122,8 @@ total_pages }`) et refusent les paramètres inconnus (`400 invalid_query`).
 | GET | `/api/admin/ideas` | idées de tout statut, filtre `status`, recherche `q` (identifiant, ou partie du slug, du titre, du résumé ou du texte, sans accents ni casse) ; plus récemment changées d'abord ; extrait du texte masqué, motifs, signalements en attente, réexamen et escalade en attente, `withdrawn_at` (idée retirée par son auteur, statut `withdrawn` ; facultatif dans la spec) |
 | POST | `/api/admin/ideas/{id}/hide` | `{ reason }` (1 000 caractères) : `published → hidden` (`hidden_reason = admin`), exports régénérés → `200` idée ; `409 idea_not_published` ; action `idea.hide` |
 | POST | `/api/admin/ideas/{id}/republish` | `{ reason }` : `hidden → published` (champs de masquage effacés), exports régénérés ; `409 idea_not_hidden`, ou `409 idea_withdrawn` pour une idée retirée par son auteur (jamais republiée) ; action `idea.republish` |
+| POST | `/api/admin/ideas/{id}/reject` | `{ reason_code }` (motif de la section `idea` de `screening.yaml`, sinon `422 invalid_reason`) : idée `accepted`, `dedup`, `queued_analysis`, `analyzing`, `analysis_failed`, `published` ou `hidden` → `rejected` par l'admin (§5.2 : décision humaine pour l'auteur, jobs annulés, exports régénérés aussitôt si publiée ou masquée, purge à J+30) → `200` idée ; `409 idea_not_rejectable` ; action `idea.reject` (`reason_code`, `from_status`) |
+| POST | `/api/admin/ideas/{id}/accept` | sans corps : idée `rejected` (par le filtrage ou par l'admin) → `accepted`, le pipeline reprend (dédoublonnage puis analyse) → `200` idée ; `409 idea_not_rejected` ; action `idea.accept` |
 | POST | `/api/admin/ideas/{id}/reanalyze` | analyse déclencheur `admin` d'une idée `published`/`hidden`, ou `analysis_failed → queued_analysis` → `202 { queued, status }` (`queued: false` si une analyse était déjà en file) ; `409 reanalysis_not_available` ; action `idea.reanalyze` |
 | POST | `/api/admin/ideas/reanalyze-failed` | sans corps : toutes les idées `analysis_failed` (500 au plus par appel, plus anciennes d'abord) passent `queued_analysis` avec un job d'analyse (déclencheur `admin`) → `202 { requeued, remaining }` (`remaining` > 0 : rappeler) ; action `idea.reanalyze_failed` (`count`, `remaining`, `idea_ids`), journalisée même à vide |
 | GET | `/api/admin/reports` | signalements (filtres `status`, `reason`, `idea_id`) avec idée, précision masquée, coordonnées facultatives du signalant et revue (`outcome`, `escalate`, `explanation`, `corrections`) |

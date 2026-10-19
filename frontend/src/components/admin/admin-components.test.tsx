@@ -27,6 +27,9 @@ import {
   settingsFixture,
   withdrawnIdeaFixture,
 } from "@/test/fixtures/admin";
+import { apiRoutes } from "@/test/api-routes";
+import { stubFetch } from "@/test/fetch-mock";
+import { taxonomyFixture } from "@/test/fixtures/reference";
 import { renderComponent } from "@/test/render-component";
 
 import { CostsTable, JobsTable } from "./admin-lists";
@@ -124,6 +127,8 @@ describe("moderation tables", () => {
         onHide={onHide}
         onRepublish={vi.fn()}
         onReanalyze={onReanalyze}
+        onReject={vi.fn()}
+        onAccept={vi.fn()}
       />,
     );
 
@@ -149,6 +154,49 @@ describe("moderation tables", () => {
     ).toHaveAttribute("href", `/admin/idees/${ideasFixture[0]?.id}/reponses`);
   });
 
+  it("refuses an accepted idea with a reason of the grid and accepts a refused one", async () => {
+    stubFetch(apiRoutes({ "GET /api/taxonomy": taxonomyFixture }));
+    const onReject = vi.fn(() => Promise.resolve());
+    const onAccept = vi.fn(() => Promise.resolve());
+    const published = ideasFixture[1];
+    if (!published) throw new Error("missing fixture");
+    const refused = {
+      ...published,
+      id: "idee-refusee",
+      title: "Une idée refusée",
+      status: "rejected" as const,
+    };
+    const { user } = renderComponent(
+      <IdeasTable
+        rows={[published, refused]}
+        onHide={vi.fn()}
+        onRepublish={vi.fn()}
+        onReanalyze={vi.fn()}
+        onReject={onReject}
+        onAccept={onAccept}
+      />,
+    );
+
+    await user.click(screen.getByRole("button", { name: "Refuser « Une idée publiée »" }));
+    const dialog = await screen.findByRole("dialog", { name: "Refuser cette idée" });
+    expect(dialog).toHaveTextContent("quitte le site et les exports aussitôt");
+    await user.click(within(dialog).getByRole("button", { name: "Refuser l’idée" }));
+    expect(within(dialog).getByRole("alert")).toHaveTextContent("choisissez un motif");
+    await user.click(await within(dialog).findByRole("radio", { name: /off_topic/ }));
+    await user.click(within(dialog).getByRole("button", { name: "Refuser l’idée" }));
+    expect(onReject).toHaveBeenCalledWith(published.id, "off_topic");
+    await waitFor(() => {
+      expect(screen.queryByRole("dialog")).not.toBeInTheDocument();
+    });
+
+    // A refused idea is not refused again: it may be accepted.
+    expect(screen.queryByRole("button", { name: "Refuser « Une idée refusée »" })).toBeNull();
+    await user.click(screen.getByRole("button", { name: "Accepter « Une idée refusée »" }));
+    const accept = await screen.findByRole("dialog", { name: "Accepter cette idée" });
+    await user.click(within(accept).getByRole("button", { name: "Accepter l’idée" }));
+    expect(onAccept).toHaveBeenCalledWith("idee-refusee");
+  });
+
   it("keeps the dialog open with the API message when an action fails", async () => {
     const onRepublish = vi.fn(() =>
       Promise.reject(
@@ -165,6 +213,8 @@ describe("moderation tables", () => {
         onHide={vi.fn()}
         onRepublish={onRepublish}
         onReanalyze={vi.fn()}
+        onReject={vi.fn()}
+        onAccept={vi.fn()}
       />,
     );
     await user.click(
@@ -183,6 +233,8 @@ describe("moderation tables", () => {
         onHide={vi.fn()}
         onRepublish={vi.fn()}
         onReanalyze={vi.fn()}
+        onReject={vi.fn()}
+        onAccept={vi.fn()}
       />,
     );
     const row = screen.getAllByRole("row")[1];

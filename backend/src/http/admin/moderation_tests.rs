@@ -542,3 +542,181 @@ async fn resolves_other_review_requests(pool: PgPool) {
     assert_eq!(actions.len(), 3);
     assert!(actions.iter().all(|(a, _)| a == "review_request.resolve"));
 }
+
+/// The administrator refuses a published idea (§8): off the site and the exports at once, its
+/// queued analysis cancelled, a refusal decided by a human for its author; then accepts it
+/// again: the pipeline resumes from the duplicate detection, the slug kept.
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn refuses_then_accepts_a_published_idea(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), false, &[]).await;
+    let idea = published_idea(&pool, "refusee-par-l-admin").await;
+    crate::jobs::queue::enqueue(
+        &pool,
+        &crate::jobs::pipeline::analyze_job(idea, crate::domain::types::AnalysisTrigger::Admin),
+    )
+    .await
+    .unwrap();
+
+    // A reason outside the grid, or unknown fields: refused before anything changes.
+    for body in [
+        json!({ "reason_code": "pas_dans_la_grille" }),
+        json!({ "reason_code": "off_topic", "note": "x" }),
+    ] {
+        let (status, _) = post(&app, &format!("/api/admin/ideas/{idea}/reject"), Some(body)).await;
+        assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    }
+    assert_eq!(status_of(&pool, "ideas", idea).await, "published");
+
+    let (status, body) = post(
+        &app,
+        &format!("/api/admin/ideas/{idea}/reject"),
+        Some(json!({ "reason_code": "off_topic" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "rejected");
+    let (reason, by_admin): (Option<String>, bool) =
+        sqlx::query_as("SELECT rejection_reason_code, rejected_by_admin FROM ideas WHERE id = $1")
+            .bind(idea)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((reason.as_deref(), by_admin), (Some("off_topic"), true));
+    // The queued analysis is gone; the exports are regenerated at once.
+    assert!(
+        !queued_jobs(&pool)
+            .await
+            .iter()
+            .any(|(kind, _)| kind == "analyze_idea")
+    );
+    assert_eq!(
+        exports_job_due(&pool).await,
+        (true, priority::URGENT_EXPORTS)
+    );
+    let (status, _, _) =
+        crate::test_support::get_json(&app.router, "/api/ideas/refusee-par-l-admin", &[]).await;
+    assert_eq!(status, StatusCode::NOT_FOUND);
+    // Its author sees a refusal decided by a human, with its date of erasure.
+    let statement = crate::moderation::statement::load(
+        &pool,
+        &crate::ai::prompts::test_prompts(),
+        crate::moderation::Target::new(crate::domain::types::TargetKind::Idea, idea),
+    )
+    .await
+    .unwrap()
+    .unwrap();
+    assert!(!statement.automated);
+    assert_eq!(statement.reason_code, "off_topic");
+    assert!(statement.purge_on.is_some());
+
+    // Once refused, it cannot be refused again; a submitted idea cannot be refused either.
+    let (status, body) = post(
+        &app,
+        &format!("/api/admin/ideas/{idea}/reject"),
+        Some(json!({ "reason_code": "off_topic" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"]["code"], "idea_not_rejectable");
+    let submitted = idea_with_status(&pool, "submitted").await;
+    let (status, body) = post(&app, &format!("/api/admin/ideas/{submitted}/accept"), None).await;
+    assert_eq!(status, StatusCode::CONFLICT);
+    assert_eq!(body["error"]["code"], "idea_not_rejected");
+
+    let (status, body) = post(&app, &format!("/api/admin/ideas/{idea}/accept"), None).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    assert_eq!(body["status"], "accepted");
+    assert_eq!(body["slug"], "refusee-par-l-admin");
+    let (reason, by_admin): (Option<String>, bool) =
+        sqlx::query_as("SELECT rejection_reason_code, rejected_by_admin FROM ideas WHERE id = $1")
+            .bind(idea)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((reason, by_admin), (None, false));
+    assert!(
+        queued_jobs(&pool)
+            .await
+            .iter()
+            .any(|(kind, payload)| kind == "dedup_idea" && payload["idea_id"] == idea.to_string())
+    );
+
+    let actions: Vec<(String, Option<String>)> = admin_actions(&pool).await;
+    assert_eq!(
+        actions,
+        [
+            ("idea.reject".to_owned(), Some(idea.to_string())),
+            ("idea.accept".to_owned(), Some(idea.to_string()))
+        ]
+    );
+    let events: Vec<(String, String, Option<String>)> = sqlx::query_as(
+        "SELECT to_status, actor, reason_code FROM idea_events WHERE idea_id = $1 ORDER BY id",
+    )
+    .bind(idea)
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(
+        events,
+        [
+            (
+                "rejected".to_owned(),
+                "admin".to_owned(),
+                Some("admin_rejection".to_owned())
+            ),
+            (
+                "accepted".to_owned(),
+                "admin".to_owned(),
+                Some("admin_acceptance".to_owned())
+            ),
+        ]
+    );
+}
+
+/// Every accepted status may be refused by the administrator; the pending human review of a
+/// hidden idea is closed by the decision.
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn refuses_an_idea_from_every_accepted_status(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), false, &[]).await;
+    for from in [
+        "accepted",
+        "dedup",
+        "queued_analysis",
+        "analyzing",
+        "analysis_failed",
+    ] {
+        let idea = idea_with_status(&pool, from).await;
+        let (status, body) = post(
+            &app,
+            &format!("/api/admin/ideas/{idea}/reject"),
+            Some(json!({ "reason_code": "off_topic" })),
+        )
+        .await;
+        assert_eq!(status, StatusCode::OK, "{from}: {body}");
+        assert_eq!(status_of(&pool, "ideas", idea).await, "rejected", "{from}");
+    }
+    let hidden = published_idea(&pool, "masquee").await;
+    sqlx::query("UPDATE ideas SET status = 'hidden', hidden_reason = 'admin', hidden_at = now() WHERE id = $1")
+        .bind(hidden)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let request = review_request(&pool, "idea", hidden).await;
+    let (status, _) = post(
+        &app,
+        &format!("/api/admin/ideas/{hidden}/reject"),
+        Some(json!({ "reason_code": "disrespectful" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (state, resolution): (String, Option<String>) =
+        sqlx::query_as("SELECT status, resolution FROM review_requests WHERE id = $1")
+            .bind(request)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(
+        (state.as_str(), resolution.as_deref()),
+        ("done", Some("confirmed"))
+    );
+}

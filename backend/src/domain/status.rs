@@ -122,17 +122,19 @@ impl StateMachine for IdeaStatus {
             // A refusal overturned by the administrator after a human review (§7.1).
             Rejected => &[Purged, Accepted],
             Purged => &[],
-            Accepted => &[Dedup],
-            Dedup => &[Merged, QueuedAnalysis],
+            // From any accepted status, the administrator may refuse the idea (§8), published
+            // or not: it leaves the site and is purged 30 days later (§7.3).
+            Accepted => &[Dedup, Rejected],
+            Dedup => &[Merged, QueuedAnalysis, Rejected],
             // Merged duplicates are purged with the hidden idea they were merged into.
             Merged => &[Purged],
-            QueuedAnalysis => &[Analyzing],
-            Analyzing => &[Published, AnalysisFailed, QueuedAnalysis],
-            AnalysisFailed => &[QueuedAnalysis],
+            QueuedAnalysis => &[Analyzing, Rejected],
+            Analyzing => &[Published, AnalysisFailed, QueuedAnalysis, Rejected],
+            AnalysisFailed => &[QueuedAnalysis, Rejected],
             // Deleted by its author: withdrawn, not erased (§7.1).
-            Published => &[Hidden, Withdrawn],
+            Published => &[Hidden, Withdrawn, Rejected],
             // Hidden 12 months: the text is purged (§7.3).
-            Hidden => &[Published, Purged, Withdrawn],
+            Hidden => &[Published, Purged, Withdrawn, Rejected],
             // Not reversible, by the author or by the admin: purged 12 months later.
             Withdrawn => &[Purged],
         }
@@ -152,6 +154,20 @@ impl ScreenedStatus for IdeaStatus {
 }
 
 impl IdeaStatus {
+    /// Whether the administrator may refuse the idea (§8): accepted, whether published or not.
+    pub const fn admin_rejectable(self) -> bool {
+        matches!(
+            self,
+            Self::Accepted
+                | Self::Dedup
+                | Self::QueuedAnalysis
+                | Self::Analyzing
+                | Self::AnalysisFailed
+                | Self::Published
+                | Self::Hidden
+        )
+    }
+
     /// Whether the idea appears on the public portal.
     pub const fn is_public(self) -> bool {
         matches!(self, Self::Published)
@@ -321,19 +337,26 @@ mod tests {
                 (Rejected, Purged),
                 (Rejected, Accepted),
                 (Accepted, Dedup),
+                (Accepted, Rejected),
                 (Dedup, Merged),
                 (Dedup, QueuedAnalysis),
+                (Dedup, Rejected),
                 (QueuedAnalysis, Analyzing),
+                (QueuedAnalysis, Rejected),
                 (Analyzing, Published),
                 (Analyzing, AnalysisFailed),
                 (Analyzing, QueuedAnalysis),
+                (Analyzing, Rejected),
                 (AnalysisFailed, QueuedAnalysis),
+                (AnalysisFailed, Rejected),
                 (Merged, Purged),
                 (Published, Hidden),
                 (Published, Withdrawn),
+                (Published, Rejected),
                 (Hidden, Published),
                 (Hidden, Purged),
                 (Hidden, Withdrawn),
+                (Hidden, Rejected),
                 (Withdrawn, Purged),
             ],
         );
@@ -364,11 +387,11 @@ mod tests {
     #[test]
     fn idea_transition_error_message() {
         let err = IdeaStatus::Published
-            .transition(IdeaStatus::Rejected)
+            .transition(IdeaStatus::Accepted)
             .unwrap_err();
         assert_eq!(
             err.to_string(),
-            "invalid idea transition from `published` to `rejected`"
+            "invalid idea transition from `published` to `accepted`"
         );
     }
 

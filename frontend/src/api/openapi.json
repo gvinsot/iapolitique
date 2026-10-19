@@ -551,6 +551,74 @@
         ]
       }
     },
+    "/api/admin/ideas/{id}/accept": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Accepts a refused idea, whoever refused it (§8): it resumes the pipeline (duplicate\ndetection, then analysis), an idea that was published keeping its slug.",
+        "operationId": "acceptAdminIdea",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de l'idée",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "description": "Idée acceptée, analyse relancée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminIdea"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Idée inconnue (`idea_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idée non refusée (`idea_not_rejected`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
     "/api/admin/ideas/{id}/hide": {
       "post": {
         "tags": [
@@ -691,6 +759,94 @@
           },
           "409": {
             "description": "Statut sans analyse possible (`reanalysis_not_available`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
+    "/api/admin/ideas/{id}/reject": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Refuses an accepted idea, published or not (§8): it leaves the site and the exports at\nonce, its queued jobs are cancelled, its author sees a refusal decided by the\nadministrator (not automated) and it is purged 30 days later (§7.3).",
+        "operationId": "rejectAdminIdea",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de l'idée",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminRejection"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Idée refusée.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminIdea"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Idée inconnue (`idea_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idée ni acceptée ni publiée ni masquée (`idea_not_rejectable`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Motif hors de la grille (`invalid_reason`).",
             "content": {
               "application/json": {
                 "schema": {
@@ -4293,6 +4449,22 @@
         },
         "additionalProperties": false
       },
+      "AdminRejection": {
+        "type": "object",
+        "description": "Refusal of an idea by the administrator: a reason of the screening grid.",
+        "required": [
+          "reason_code"
+        ],
+        "properties": {
+          "reason_code": {
+            "type": "string",
+            "description": "`reason_code` of a criterion of the `idea` section of `prompts/screening.yaml`\n(`GET /api/taxonomy`, `rejection_reasons`).",
+            "example": "off_topic",
+            "maxLength": 64
+          }
+        },
+        "additionalProperties": false
+      },
       "AdminReply": {
         "type": "object",
         "description": "A right of reply as edited by the administrator.",
@@ -7065,7 +7237,7 @@
           },
           "automated": {
             "type": "boolean",
-            "description": "The decision was taken automatically by an AI, without human review."
+            "description": "The decision was taken automatically by an AI, without human review (`false`: decided\nby the administrator)."
           },
           "second_opinion": {
             "type": "boolean",

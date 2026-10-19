@@ -341,6 +341,19 @@ export function AdminIdeasPage() {
     toast.success("Idée republiée. Les exports seront régénérés.");
     await refresh();
   };
+  const reject = async (id: string, reasonCode: string) => {
+    await apiClient.POST("/api/admin/ideas/{id}/reject", {
+      params: { path: { id } },
+      body: { reason_code: reasonCode },
+    });
+    toast.success("Idée refusée. Elle sera effacée dans 30 jours.");
+    await refresh();
+  };
+  const accept = async (id: string) => {
+    await apiClient.POST("/api/admin/ideas/{id}/accept", { params: { path: { id } } });
+    toast.success("Idée acceptée : son analyse est relancée.");
+    await refresh();
+  };
   const reanalyze = async (id: string) => {
     const { data } = await apiClient.POST("/api/admin/ideas/{id}/reanalyze", {
       params: { path: { id } },
@@ -357,7 +370,7 @@ export function AdminIdeasPage() {
     <div className="space-y-6">
       <AdminPageHeader
         title="Idées"
-        description="Idées de tout statut, plus récemment modifiées d’abord : masquer, republier, relancer une analyse, publier un droit de réponse."
+        description="Idées de tout statut, plus récemment modifiées d’abord : masquer, republier, refuser ou accepter, relancer une analyse, publier un droit de réponse."
         actions={
           list.values.status === "analysis_failed" && query.data ? (
             <ReanalyzeFailedAction
@@ -395,6 +408,8 @@ export function AdminIdeasPage() {
               onHide={hide}
               onRepublish={republish}
               onReanalyze={reanalyze}
+              onReject={reject}
+              onAccept={accept}
             />
             <AdminPagination
               page={page.page}

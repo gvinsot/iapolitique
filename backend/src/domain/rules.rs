@@ -10,7 +10,7 @@ use utoipa::ToSchema;
 
 /// Version of the rules (CGU) accepted with each idea and contribution (`cgu_version`). Bump it
 /// with the rules page whenever the accepted clauses change; `GET /api/legal` serves it.
-pub const CGU_VERSION: &str = "1.1";
+pub const CGU_VERSION: &str = "1.2";
 
 /// Day of the last update of each legal page (`YYYY-MM-DD`), served by `GET /api/legal` and
 /// shown by the pages. Update the date with the text of the page

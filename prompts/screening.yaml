@@ -22,7 +22,7 @@
 #                   "contribution": <texte de la contribution>} ;
 # - report       : {"idee": <résumé neutre de l'idée publiée>, "motif": <libellé du motif de
 #                   taxonomy.yaml>, "precision": <texte facultatif du signalement>}.
-version: "1.2.0"
+version: "1.2.1"
 
 idea:
   - key: injection
@@ -57,7 +57,7 @@ idea:
     reject_below: 0.35
     accept_above: 0.8
     reason_code: targeted
-    reason_message: "Votre texte nomme une personne, un élu ou un parti, appelle à voter pour ou contre quelqu'un, ou vise un groupe de personnes selon leur origine, leur religion, leur sexe ou leur orientation. La plateforme est apartisane : décrivez plutôt la mesure elle-même (le dispositif, la dépense ou la recette concernée), sans nommer personne ni donner de consigne de vote."
+    reason_message: "Votre texte nomme un parti, un élu, un candidat ou une personnalité (même de façon neutre, par exemple pour situer une loi), appelle à voter pour ou contre quelqu'un, ou vise un groupe de personnes selon leur origine, leur religion, leur sexe ou leur orientation. La plateforme est apartisane : décrivez plutôt la mesure elle-même (le dispositif, la dépense ou la recette concernée) ou la fonction en cause (« le Gouvernement », « les élus locaux »), sans nommer personne ni donner de consigne de vote."
   - key: personal_data
     type: noul
     instructions: "Ce texte vise-t-il une personne précise et reconnaissable qui n'est pas un responsable politique, par son nom ou par son poste dans un service, un établissement ou une ville nommés ?"
@@ -149,7 +149,7 @@ contribution:
     reject_below: 0.35
     accept_above: 0.8
     reason_code: targeted
-    reason_message: "Votre contribution nomme une personne, un élu ou un parti, appelle à voter pour ou contre quelqu'un, ou vise un groupe de personnes selon leur origine, leur religion, leur sexe ou leur orientation. Parlez plutôt de la mesure et de ses effets, sans nommer personne ni donner de consigne de vote."
+    reason_message: "Votre contribution nomme un parti, un élu, un candidat ou une personnalité (même de façon neutre), appelle à voter pour ou contre quelqu'un, ou vise un groupe de personnes selon leur origine, leur religion, leur sexe ou leur orientation. Parlez plutôt de la mesure et de ses effets, ou de la fonction en cause (« le Gouvernement », « les élus locaux »), sans nommer personne ni donner de consigne de vote."
   - key: personal_data
     type: noul
     instructions: "La contribution vise-t-elle une personne précise et reconnaissable qui n'est pas un responsable politique, par son nom ou par son poste dans un service, un établissement ou une ville nommés ?"

@@ -1,12 +1,22 @@
 # Calibration de la grille de filtrage (screening 1.2.0)
 
 Ce document explique comment ont été choisis les libellés et les seuils de
-[`prompts/screening.yaml`](../../prompts/screening.yaml) (version `1.2.0`). Il présente les
+[`prompts/screening.yaml`](../../prompts/screening.yaml) (version `1.2.1`, mêmes questions et
+seuils que `1.2.0`). Il présente les
 résultats sur le modèle de décision réel et décrit la procédure de recalibrage.
 
 Date des mesures : 2026-10-18 (1.1.0) et 2026-10-19 (1.2.0, sections `idea` et `contribution`
 relancées en entier). Service : `vllm-sr/d3-mini` Q8_0 servi par
 `llamacpp-decision-service` (server-y), `POST /v1/systemone`.
+
+**Changements de la version 1.2.1** (décision du propriétaire D1, 2026-10-19) : seul le
+`reason_message` du critère `targeted` (sections `idea` et `contribution`) change, pour dire
+qu'un texte qui nomme un parti, un élu, un candidat ou une personnalité est refusé **même de
+façon neutre** et proposer de citer la fonction en cause. Les questions envoyées au modèle
+(`instructions`, `criteria`) et les seuils sont inchangés : l'empreinte `questions_hash` du banc
+est la même, les mesures ci-dessous restent valables sans recalibrage. Les décisions déjà
+enregistrées sous 1.2.0 sont exportées par l'admin avec `questions_hash = grid-1.2.0` (§13.2),
+que le banc ignore.
 
 **Changements de la version 1.2.0** (revue de sécurité, constat PRIV-3, AGENTS.md §7.5) :
 

@@ -1,9 +1,22 @@
-import { screen } from "@testing-library/react";
-import { describe, expect, it } from "vitest";
+import { screen, waitFor } from "@testing-library/react";
+import { describe, expect, it, type Mock } from "vitest";
 
-import { readAdminToken, storeAdminToken } from "@/api/admin-token";
+import { ADMIN_TOKEN_KEY, readAdminToken, storeAdminToken } from "@/api/admin-token";
+import { apiError } from "@/test/api-routes";
 import { adminApi, stubFetch } from "@/test/fetch-mock";
 import { renderRoute } from "@/test/render-route";
+
+/** The public port: no admin route at all (AGENTS.md §14.4). */
+function publicHost(): Response {
+  return apiError(404, "not_found", "Ressource introuvable.");
+}
+
+/** `Authorization` header of every request the page sent. */
+function sentAuthorization(fetch: Mock): (string | null)[] {
+  return fetch.mock.calls.map(([input]) =>
+    input instanceof Request ? input.headers.get("Authorization") : null,
+  );
+}
 
 describe("admin access", () => {
   it("asks for the token before showing any admin page", async () => {
@@ -16,7 +29,57 @@ describe("admin access", () => {
     expect(
       screen.queryByRole("navigation", { name: "Navigation de l’administration" }),
     ).not.toBeInTheDocument();
-    expect(fetch).not.toHaveBeenCalled();
+    // Only the token-less probe that proves the admin API answers here (401).
+    expect(fetch).toHaveBeenCalledTimes(1);
+    expect(sentAuthorization(fetch)).toEqual([null]);
+  });
+
+  it("shows no sign-in form on the public host and sends no token there (ADM-1, FE-5)", async () => {
+    const fetch = stubFetch(publicHost);
+    renderRoute("/admin");
+
+    expect(
+      await screen.findByText("Administration indisponible à cette adresse"),
+    ).toBeInTheDocument();
+    expect(screen.getByText(/uniquement sur l’adresse du réseau local/)).toBeInTheDocument();
+    expect(screen.queryByLabelText("Jeton d’administration")).not.toBeInTheDocument();
+    expect(screen.queryByRole("button", { name: "Réessayer" })).not.toBeInTheDocument();
+    expect(sentAuthorization(fetch)).toEqual([null]);
+  });
+
+  it("drops a stored token on the public host without ever sending it (ADM-1, FE-5)", async () => {
+    storeAdminToken("bon-jeton");
+    const fetch = stubFetch(publicHost);
+    renderRoute("/admin");
+
+    expect(
+      await screen.findByText("Administration indisponible à cette adresse"),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(readAdminToken()).toBeNull();
+    });
+    expect(window.sessionStorage.getItem(ADMIN_TOKEN_KEY)).toBeNull();
+    expect(screen.queryByRole("button", { name: "Se déconnecter" })).not.toBeInTheDocument();
+    expect(sentAuthorization(fetch).every((value) => value === null)).toBe(true);
+  });
+
+  it("drops a token that the API answers with 404", async () => {
+    storeAdminToken("bon-jeton");
+    // Probe answered by an admin API, then 404 for the authenticated call (e.g. a proxy that
+    // routes /api/admin only without credentials): the token is dropped the same way.
+    stubFetch((request) =>
+      request.headers.get("Authorization") === null
+        ? apiError(401, "unauthorized", "Jeton d’administration invalide.")
+        : apiError(404, "not_found", "Ressource introuvable."),
+    );
+    renderRoute("/admin");
+
+    expect(
+      await screen.findByText("Administration indisponible à cette adresse"),
+    ).toBeInTheDocument();
+    await waitFor(() => {
+      expect(readAdminToken()).toBeNull();
+    });
   });
 
   it("requires a non-empty token", async () => {

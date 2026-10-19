@@ -655,6 +655,12 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
 - Host dédié (`ADMIN_HOST`), routé par Traefik avec `dashboard-allowlist@file` vers le port
   admin 8081 de l'api. Ce port n'est **jamais** routé depuis Internet. Défense en profondeur :
   en-tête `Authorization: Bearer` avec `ADMIN_API_TOKEN`.
+- Le SPA est le même sur les deux hosts : les pages `/admin` sondent d'abord
+  `GET /api/admin/session` **sans** jeton et n'affichent le formulaire que si l'API admin répond
+  (`401`, ou `429` si verrouillée). Sur le host public, le port public répond `404` : aucun
+  formulaire, aucun jeton envoyé, un jeton déjà stocké est effacé, et la page indique que
+  l'administration n'est disponible que sur l'adresse du réseau local
+  (`frontend/src/hooks/use-admin-session.ts`).
 - Fonctions : tableau de bord (file de jobs, taux d'acceptation, coûts IA du jour/mois), idées
   masquées et signalements, masquer/republier, relancer une analyse, consulter les scores bruts
   du modèle de décision, **étiqueter** des décisions (accepter/refuser à raison) pour calibrer

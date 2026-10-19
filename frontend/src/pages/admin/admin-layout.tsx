@@ -40,6 +40,14 @@ function AdminContent({
       return <AdminSignIn onSubmit={onSignIn} rejected={state.rejected} />;
     case "checking":
       return <PageLoading />;
+    case "wrong-host":
+      // Public host (findings ADM-1, FE-5): no form, no retry, the token never goes there.
+      return (
+        <ErrorState
+          title="Administration indisponible à cette adresse"
+          message="Administration disponible uniquement sur l’adresse du réseau local. Ouvrez l’administration sur son adresse dédiée ; aucun jeton n’est demandé ni envoyé ici."
+        />
+      );
     case "error":
       return (
         <ErrorState

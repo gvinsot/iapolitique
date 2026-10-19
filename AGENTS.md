@@ -1078,18 +1078,34 @@ Le service `test` du compose construit `devops/Dockerfile.test` (contexte `..`) 
    `devops/check_compose_security.py` (invariants du compose, §14.4 et §14.7),
    `devops/check_image_pins.py` (images de base épinglées par digest, §14.7) et leurs tests ;
 4. stage `backend-test` (rust) : `cargo fmt --check`, `cargo clippy -D warnings`, compilation des
-   tests, puis `cargo deny` (advisories, bans, sources ; §14.7) ; il copie un fichier témoin
-   produit par chacun des stages précédents (sinon BuildKit les saute) ;
-5. à l'exécution (`devops/run-tests.sh`) : attente du port de `test-db`, puis
-   `cargo test --locked --offline` (rien n'est recompilé) avec `DATABASE_URL` vers le service
+   tests (`cargo test --no-run --message-format=json-render-diagnostics`), dont seuls les
+   exécutables (messages `compiler-artifact` à `profile.test`) sont copiés dans l'image, sous
+   `/src/backend/test-bin/` (`lib-iapolitique`, `bin-iapolitique`…), puis `cargo deny`
+   (advisories, bans, sources ; §14.7) ; il copie un fichier témoin produit par chacun des stages
+   précédents (sinon BuildKit les saute) ;
+5. à l'exécution (`devops/run-tests.sh`) : attente du port de `test-db`, puis chaque exécutable
+   de `test-bin/` par ordre alphabétique, depuis `/src/backend` et avec `CARGO_MANIFEST_DIR`
+   comme sous `cargo test` (ni cargo ni compilation ; les arguments de
+   `docker compose run --rm test …` vont à chacun, premier `--` retiré). Tous
+   tournent même après un échec (comme `--no-fail-fast`) et le code de sortie est non nul si l'un
+   d'eux échoue. `DATABASE_URL` pointe vers le service
    `test-db` (`pgvector/pgvector:pg18` en mémoire, sans mot de passe, réseau interne au compose).
    `test-db` n'est **pas** en `replicas: 0` (compose ne démarrerait pas la dépendance) mais en
    `mode: global` contraint sur une étiquette qu'aucun nœud ne porte : zéro tâche sur le swarm.
    Le service `test` lui-même est en `replicas: 0`.
 
-Les deux stages utilisent des cache mounts BuildKit (npm, registre cargo, `target/`) ; le
-`target/` est recopié dans l'image pour que `cargo test` n'ait rien à recompiler. La version de
-Rust de `Dockerfile.test` (`RUST_VERSION`) suit celle de `backend/Dockerfile`.
+Caches BuildKit : npm, et pour cargo le registre et `target/` montés directement aux chemins
+qu'utilise cargo (`/usr/local/cargo/registry`, `/src/backend/target`), jamais recopiés : ni l'un
+ni l'autre n'est dans l'image (les tests lisent à l'exécution `../prompts`,
+`../frontend/src/api/openapi.json` et `src/`, d'où la même arborescence sous `/src`). Leurs id,
+`iapolitique-cargo-registry-test` et `iapolitique-cargo-target-test` (le registre sert aussi à
+`cargo deny`), sont propres au stage `backend-test` : `docker compose build api frontend test`
+construit `backend/Dockerfile` en parallèle sans attendre son verrou. Le stage touche
+`src/main.rs`, `src/lib.rs` et `build.rs` : le crate est toujours recompilé (jamais un `target/`
+périmé), les dépendances jamais. Il n'y a pas de doctest (les blocs
+de code des commentaires sont en `text`) : en ajouter un demande d'ajouter `cargo test --doc` au
+stage `backend-test`. La version de Rust de `Dockerfile.test` (`RUST_VERSION`) suit celle de
+`backend/Dockerfile`.
 
 En local, sans Node installé : `docker run --rm -v "<repo>/frontend:/app" -v iapolitique_node_modules:/app/node_modules -w /app node:22-alpine npm …`.
 Postgres local de test : `docker run -d --name iapolitique-test-pg -e POSTGRES_PASSWORD=postgres -p 55432:5432 pgvector/pgvector:pg18`

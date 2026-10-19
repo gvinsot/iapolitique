@@ -157,36 +157,61 @@ COPY --from=frontend-audit /frontend-audit-ok /tmp/frontend-audit-ok
 COPY --from=frontend-check /frontend-ok /tmp/frontend-ok
 COPY --from=frontend-headers /frontend-headers-ok /tmp/frontend-headers-ok
 COPY --from=devops-check /devops-ok /tmp/devops-ok
-# Same layout as the repository: tests resolve ../prompts and ../frontend/src/api/openapi.json
-# from CARGO_MANIFEST_DIR.
+# Same layout as the repository: the tests read ../prompts and ../frontend/src/api/openapi.json
+# (and their own src/) at run time, at paths fixed at compile time from CARGO_MANIFEST_DIR.
 COPY --from=frontend-check /frontend-out/api/ frontend/src/api/
 COPY prompts/ prompts/
 COPY backend/ backend/
 WORKDIR /src/backend
-# The registry and target/ live in cache mounts between builds, but `cargo test` runs from the
-# image: copy them in before compiling and back out afterwards, so the image holds a ready target/
-# at the same absolute path (no rebuild at run time) and the next build starts warm, even after a
-# failed check.
-RUN --mount=type=cache,id=iapolitique-cargo-registry,target=/cache/registry,sharing=locked \
-    --mount=type=cache,id=iapolitique-cargo-target,target=/cache/target,sharing=locked \
-    set -eu; \
-    mkdir -p "$CARGO_HOME/registry" target; \
-    cp -a /cache/registry/. "$CARGO_HOME/registry/"; \
-    cp -a /cache/target/. target/; \
-    rc=0; \
-    { cargo fmt --check \
-      && cargo clippy --locked --all-targets -- -D warnings \
-      && cargo test --locked --no-run; } || rc=$?; \
-    find /cache/registry /cache/target -mindepth 1 -maxdepth 1 -exec rm -rf {} +; \
-    cp -a "$CARGO_HOME/registry/." /cache/registry/; \
-    cp -a target/. /cache/target/; \
-    exit "$rc"
+# The registry and target/ are cache mounts at the paths cargo uses, never copied: the next build
+# starts warm, even after a failed check, and only the test executables (a few hundred MB) leave
+# the cache, into test-bin/, which devops/run-tests.sh runs. The ids are those of this stage only:
+# backend/Dockerfile has its own, so the two builds never wait for each other's lock. The touch
+# rebuilds the crate even when a source file is older than target/ (sources from an archive).
+# There are no doctests (the ``` blocks in doc comments are `text`), hence no `cargo test --doc`.
+RUN --mount=type=cache,id=iapolitique-cargo-registry-test,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=iapolitique-cargo-target-test,target=/src/backend/target,sharing=locked \
+    <<'EOS'
+set -eu
+touch src/main.rs src/lib.rs build.rs
+cargo fmt --check
+cargo clippy --locked --all-targets -- -D warnings
+# JSON messages on stdout, diagnostics rendered on stderr as usual.
+cargo test --locked --no-run --message-format=json-render-diagnostics > /tmp/test-build.jsonl
+mkdir test-bin
+# One executable per test target (profile.test): lib-iapolitique, bin-iapolitique, test-<name>…
+python3 - /tmp/test-build.jsonl test-bin <<'EOP'
+import json, os, shutil, sys
+
+messages, out = sys.argv[1], sys.argv[2]
+copied = []
+with open(messages, encoding="utf-8") as lines:
+    for line in lines:
+        msg = json.loads(line)
+        if msg.get("reason") != "compiler-artifact" or not msg["profile"]["test"]:
+            continue
+        if not msg.get("executable"):
+            continue
+        target = msg["target"]
+        name = f'{target["kind"][0]}-{target["name"]}'
+        dest = os.path.join(out, name)
+        if os.path.exists(dest):
+            sys.exit(f"two test executables named {name}")
+        shutil.copy2(msg["executable"], dest)
+        copied.append(f'{name} <- {target["src_path"]}')
+if not copied:
+    sys.exit("cargo test --no-run produced no test executable")
+print("\n".join(["test executables:"] + copied))
+EOP
+rm /tmp/test-build.jsonl
+EOS
 
 # Supply chain (AGENTS.md §14.7), blocking: RustSec advisories (fetched now), banned crates,
-# crates.io as the only source. Runs on the registry left in the image by the step above, and
-# again whenever the RustSec feed changes (rustsec-advisories), even if no source changed.
+# crates.io as the only source. Reads the crate sources from the same registry cache mount, and
+# runs again whenever the RustSec feed changes (rustsec-advisories), even if no source changed.
 COPY devops/deny.toml /src/devops/deny.toml
-RUN --mount=type=bind,from=rustsec-advisories,target=/tmp/rustsec-feed \
+RUN --mount=type=cache,id=iapolitique-cargo-registry-test,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=bind,from=rustsec-advisories,target=/tmp/rustsec-feed \
     cargo deny --locked --config ../devops/deny.toml check advisories bans sources
 
 COPY --chmod=0755 devops/run-tests.sh /usr/local/bin/run-tests

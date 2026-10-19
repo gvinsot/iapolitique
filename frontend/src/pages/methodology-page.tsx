@@ -93,7 +93,8 @@ export function MethodologyPage() {
             Tout chiffre clé est accompagné d’au moins une source, de préférence publique : Cour des
             comptes, INSEE, projets de loi de finances et de financement de la sécurité sociale,
             DREES, rapports parlementaires, comptes des collectivités. Les hypothèses de calcul sont
-            explicitées.
+            explicitées. Une recherche web qui ne renvoie aucune page est relancée : sans page
+            consultée, aucune analyse n’est publiée.
           </p>
 
           <h2 id="score">3. Le score de rentabilité</h2>

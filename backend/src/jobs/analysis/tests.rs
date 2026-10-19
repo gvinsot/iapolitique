@@ -637,6 +637,129 @@ async fn an_idea_deleted_during_the_research_stops_the_analysis(pool: PgPool) {
     assert_eq!(budget.spent.0, calls[0].2);
 }
 
+/// A research answer whose memo cites no page: the model answered without searching (no
+/// `tool.execution`, no `tool_reference`), as Mistral's web search guide allows.
+fn research_without_pages(memo: &str) -> Value {
+    let mut response = research_response(memo, 3_000);
+    response["outputs"] = json!([{
+        "object": "entry", "type": "message.output", "role": "assistant",
+        "model": "mistral-large-test", "id": "m1", "content": memo
+    }]);
+    response["usage"]["connectors"] = Value::Null;
+    response
+}
+
+async fn research_calls(pool: &PgPool, idea: Uuid) -> Vec<Option<i32>> {
+    sqlx::query_scalar(
+        "SELECT consulted_pages FROM ai_calls WHERE idea_id = $1 AND purpose = 'analysis_research'
+         ORDER BY id",
+    )
+    .bind(idea)
+    .fetch_all(pool)
+    .await
+    .unwrap()
+}
+
+/// A research that consulted no page is asked once more in the same run; the second one is
+/// used.
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn a_research_without_page_is_asked_once_more(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), true, &[]).await;
+    let ctx = app.job_context();
+    let server = app.mistral.as_ref().unwrap();
+    Mock::given(path("/v1/conversations"))
+        .respond_with(
+            ResponseTemplate::new(200).set_body_json(research_without_pages("Mémo de mémoire.")),
+        )
+        .up_to_n_times(1)
+        .mount(server)
+        .await;
+    app.research("Mémo sourcé [S1].").await;
+    app.structured(&analysis_output()).await;
+    let idea = queued_idea(&pool).await;
+    let job = job_for(&pool, idea, AnalysisTrigger::Initial).await;
+    let (outcome, logs) =
+        crate::http::security_tests::capture_logs(AnalyzeHandler.handle(&ctx, &job)).await;
+    assert_eq!(outcome, Ok(JobOutcome::Done));
+    assert_eq!(status_of(&pool, idea).await, "published");
+    assert_eq!(research_calls(&pool, idea).await, [Some(0), Some(2)]);
+    let chat = &requests(&app, "/v1/chat/completions").await[0];
+    let user = chat["messages"][1]["content"].as_str().unwrap();
+    assert!(user.contains("Mémo sourcé [S1]."));
+    assert!(!user.contains("Mémo de mémoire."));
+    assert!(logs.contains("the web research consulted no page; asking once more"));
+    assert!(!logs.contains("Mémo"), "{logs}");
+    // The searches of both research calls count (0 + 2).
+    let (searches,): (i32,) =
+        sqlx::query_as("SELECT web_search_count FROM analyses WHERE idea_id = $1")
+            .bind(idea)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(searches, 2);
+}
+
+/// Still no page after the second research: the job is retried later by the queue (the
+/// attempt counts), and the last attempt fails the analysis with a clear reason. No
+/// structuring call is ever paid without a page to cite.
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn a_research_that_never_consults_a_page_is_retried_then_fails(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), true, &[]).await;
+    let ctx = app.job_context();
+    Mock::given(path("/v1/conversations"))
+        .respond_with(ResponseTemplate::new(200).set_body_json(research_without_pages("Mémo.")))
+        .mount(app.mistral.as_ref().unwrap())
+        .await;
+    app.structured(&analysis_output()).await;
+    let idea = queued_idea(&pool).await;
+    let mut job = job_for(&pool, idea, AnalysisTrigger::Initial).await;
+    match AnalyzeHandler.handle(&ctx, &job).await {
+        Err(JobError::Transient(message)) => {
+            assert!(message.contains("consulted no page"), "{message}");
+        }
+        other => panic!("expected a transient error, got {other:?}"),
+    }
+    assert_eq!(status_of(&pool, idea).await, "analyzing");
+    assert_eq!(research_calls(&pool, idea).await, [Some(0), Some(0)]);
+
+    // Through the queue: the attempt is counted and the job comes back after a backoff.
+    queue::fail(&pool, &job, "test-worker", "no page", false)
+        .await
+        .unwrap();
+    let (status, attempts, delayed): (String, i32, bool) =
+        sqlx::query_as("SELECT status, attempts, run_after > now() FROM jobs WHERE id = $1")
+            .bind(job.id)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!((status.as_str(), attempts, delayed), ("queued", 1, true));
+
+    job.attempts = job.max_attempts;
+    match AnalyzeHandler.handle(&ctx, &job).await {
+        Err(JobError::Permanent(message)) => {
+            assert!(message.contains("consulted no page"), "{message}");
+        }
+        other => panic!("expected a permanent error, got {other:?}"),
+    }
+    assert_eq!(status_of(&pool, idea).await, "analysis_failed");
+    let (details,): (Value,) = sqlx::query_as(
+        "SELECT details FROM idea_events WHERE idea_id = $1 AND to_status = 'analysis_failed'",
+    )
+    .bind(idea)
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    assert!(
+        details["error"]
+            .as_str()
+            .unwrap()
+            .contains("the web research consulted no page"),
+        "{details}"
+    );
+    assert_eq!(research_calls(&pool, idea).await.len(), 4);
+    assert!(requests(&app, "/v1/chat/completions").await.is_empty());
+}
+
 /// INJ-6: a value PostgreSQL cannot store fails the analysis for good (no rerun of the paid
 /// calls); other database errors stay transient.
 #[sqlx::test(migrator = "crate::db::MIGRATOR")]

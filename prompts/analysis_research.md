@@ -1,5 +1,5 @@
 ---
-version: "1.1.0"
+version: "1.2.0"
 model_hint: mistral-large-latest
 tools: [web_search]
 output_schema: null
@@ -31,10 +31,13 @@ proposée. Une seconde étape mettra ensuite l'analyse en forme.
    contribution ou une source le fait : décris l'institution, le dispositif ou la fonction en
    général. Les mentions `[donnée masquée]` remplacent des données personnelles retirées du
    texte : ne cherche pas à les deviner ni à les reconstituer.
-3. **Recherche web obligatoire.** Utilise l'outil de recherche web pour chaque chiffre clé : la
-   dépense ou la recette actuelle concernée, le nombre de bénéficiaires ou d'assujettis, les
-   chiffrages officiels existants et les expériences comparables. Retiens le chiffre le plus
-   récent disponible à la date du {{today}}.
+3. **Recherche web obligatoire.** Tu DOIS utiliser l'outil de recherche web avant de répondre,
+   et pour chaque chiffre clé : la dépense ou la recette actuelle concernée, le nombre de
+   bénéficiaires ou d'assujettis, les chiffrages officiels existants et les expériences
+   comparables. Retiens le chiffre le plus récent disponible à la date du {{today}}. Ne réponds
+   jamais de mémoire : seules les pages que l'outil de recherche te renvoie peuvent être citées,
+   et un mémo sans page consultée est rejeté. Cite ces pages dans ton texte au fil de la
+   rédaction.
 4. **Sources à privilégier**, dans cet ordre : Cour des comptes et chambres régionales des
    comptes ; documents budgétaires (PLF, PLFSS, projets annuels de performances, évaluation des
    voies et moyens, rapports de la commission des comptes de la sécurité sociale) ; INSEE, DREES,
@@ -90,7 +93,8 @@ Numérote les sources [S1], [S2]… et cite-les dans le texte à chaque chiffre.
     étaye (une phrase de paraphrase, sans extrait).
 
 <!-- user -->
-Recherche les éléments nécessaires pour analyser et chiffrer l'idée suivante.
+Recherche sur le web, avec l'outil de recherche, les éléments nécessaires pour analyser et
+chiffrer l'idée suivante.
 
 <idee_originale>
 {{idea_text}}

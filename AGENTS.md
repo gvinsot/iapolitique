@@ -398,7 +398,15 @@ version de prompt (l'admin peut relancer manuellement).
   entretenu pendant ce temps (heartbeat, `JOB_LOCK_TIMEOUT_SECS`).
 - **Recherche web obligatoire** pour le chiffrage (outil `web_search` de l'API Agents /
   Conversations de Mistral). Vérifier la documentation Mistral en vigueur au moment de
-  l'implémentation (noms d'outils, sortie structurée).
+  l'implémentation (noms d'outils, sortie structurée). Le modèle décide lui-même d'appeler
+  l'outil (guide web search : « autonomously decides whether to invoke the search ») ;
+  `completion_args.tool_choice` (`auto|none|any|required`) figure bien dans le schéma
+  `CompletionArgs` des Conversations, mais seule la doc des chat completions dit que `any` /
+  `required` force un appel d'outil, et rien n'en décrit l'effet sur les connecteurs intégrés,
+  exécutés côté serveur dans une boucle outil → modèle (relevé le 2026-10-19). Il n'est donc
+  pas envoyé : le prompt `analysis_research.md` (1.2.0) exige la recherche (« Tu DOIS utiliser
+  l'outil de recherche web avant de répondre ») et une recherche sans page est redemandée
+  (§6.2, `sources`).
 - Sortie **JSON validée contre un schéma** côté Rust. Si la recherche web et la sortie
   structurée ne sont pas compatibles dans un même appel : étape 1 recherche (texte + sources),
   étape 2 structuration via `response_format` JSON schema. Toute sortie invalide est rejetée et
@@ -472,7 +480,7 @@ version de prompt (l'admin peut relancer manuellement).
 | `assumptions` | Hypothèses de calcul, explicites |
 | `pros`, `cons`, `risks` | Listes courtes et factuelles |
 | `impacts` | Pour **chaque** public de `taxonomy.yaml` (ménages modestes, classes moyennes, ménages aisés, entreprises, agents publics, usagers des services publics, territoires ruraux, territoires urbains, environnement) : `positive` / `neutral` / `negative` / `uncertain` + explication |
-| `sources` | `{ id, title, publisher, url, used_for }` ; au moins une source pour tout chiffre clé, citée `[S1]`, `[S2]`… dans les textes ; `url` doit être une page renvoyée par la recherche web de l'analyse (`tool_reference`) ou une source de l'analyse remplacée (comparaison sans schéma, port par défaut, fragment, `/` final ni paramètres `utm_*` ; refusées : identifiants, port explicite, adresse IP, plus de 2 048 caractères). Une recherche qui ne renvoie aucune page fait échouer l'analyse (`analysis_failed`) sans appel de structuration |
+| `sources` | `{ id, title, publisher, url, used_for }` ; au moins une source pour tout chiffre clé, citée `[S1]`, `[S2]`… dans les textes ; `url` doit être une page renvoyée par la recherche web de l'analyse (`tool_reference`) ou une source de l'analyse remplacée (comparaison sans schéma, port par défaut, fragment, `/` final ni paramètres `utm_*` ; refusées : identifiants, port explicite, adresse IP, plus de 2 048 caractères). Une recherche qui ne renvoie aucune page (le modèle décide lui-même de chercher) est redemandée une fois dans la même exécution ; toujours aucune page et rien à citer de l'analyse remplacée : le job est relancé par la file (erreur transitoire, tentative comptée, backoff), puis la dernière tentative échoue (`analysis_failed`, motif « the web research consulted no page… ») ; jamais d'appel de structuration ni de publication sans page à citer |
 | `existing_situation` | Droit et pratique actuels, mesures proches déjà en vigueur (le gain chiffré est le gain **supplémentaire**) |
 | `confidence_explanation` | Justification du niveau de confiance |
 | `contributions_considered` | Pour chaque contribution intégrée : `{ contribution_id, summary, taken_into_account, response }` (résumé neutre affiché sur le portail, §5.5) |

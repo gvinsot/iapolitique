@@ -8,6 +8,12 @@
 //! ([`crate::domain::scoring`]) and the analysis stored as a new version with its provenance
 //! (prompt versions, schema fingerprint, scoring version, model, web searches).
 //!
+//! A research that consulted no page (no citable `tool_reference`: the model may answer without
+//! searching) is asked once more in the same run. Still none, and nothing citable from the
+//! analysis being replaced: the job is retried later by the queue (transient, the attempt
+//! counts, with its backoff), and the last attempt gives up (`analysis_failed`). An analysis is
+//! never structured nor published without a page to cite.
+//!
 //! - **First analysis** (`queued_analysis → analyzing → published`): the publication columns
 //!   are copied to the idea, a slug is chosen (suffix `-2`, `-3`… on collision) and the idea
 //!   is published. When the analysis cannot be obtained (invalid output after the client's
@@ -34,7 +40,9 @@ use super::guard::{self, Gate};
 use super::pipeline::{self, AnalyzePayload};
 use super::worker::{HandlerFuture, JobContext, JobHandler};
 use super::{Job, JobError, JobKind, JobOutcome, queue};
-use crate::ai::mistral::{CallContext, MistralClient, MistralError, ModelTier};
+use crate::ai::mistral::{
+    CallContext, MistralClient, MistralError, ModelTier, consulted_page_count,
+};
 use crate::ai::outputs::{AllowedSources, AnalysisOutput};
 use crate::ai::prompts::{OutputSchema, PromptVars, Prompts, Taxonomy};
 use crate::db::analyses::{self, NewAnalysis, PendingContribution, Provenance, StoreError};
@@ -282,6 +290,36 @@ enum Analysed {
     Vanished,
 }
 
+/// Error of a research that consulted no page, asked twice in this run: retried later by the
+/// queue while the job has attempts left, a failure at the last one.
+fn no_page_failure(job: &Job) -> Failure {
+    if job.attempts >= job.max_attempts {
+        Failure::GiveUp(format!(
+            "the web research consulted no page (asked twice in each of {} attempts): nothing \
+             can be cited",
+            job.attempts
+        ))
+    } else {
+        Failure::Retry("the web research consulted no page (asked twice): retried later".to_owned())
+    }
+}
+
+/// Before a paid step: the daily budget (`Postponed`) and the idea, which its author may delete
+/// at any time (`Vanished`): never pay for a step about a vanished idea (BUD-1).
+async fn before_paid_step(ctx: &JobContext, idea_id: Uuid) -> Result<Option<Analysed>, Failure> {
+    match guard::budget_gate(ctx).await {
+        Ok(Some(outcome)) => return Ok(Some(Analysed::Postponed(outcome))),
+        Ok(None) => {}
+        Err(err) => return Err(Failure::Retry(err.to_string())),
+    }
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ideas WHERE id = $1)")
+        .bind(idea_id)
+        .fetch_one(&ctx.pool)
+        .await
+        .map_err(|err| Failure::Retry(err.to_string()))?;
+    Ok((!exists).then_some(Analysed::Vanished))
+}
+
 /// `queued_analysis → analyzing`. Returns whether the analysis should go on.
 async fn start(pool: &PgPool, idea_id: Uuid) -> Result<bool, JobError> {
     let mut tx = pool.begin().await?;
@@ -329,30 +367,31 @@ async fn analyse(
     let rendered = research_template
         .render(&inputs.vars(prompts))
         .map_err(render_failure)?;
-    let research = client
-        .research(
-            pool,
-            &call(AiPurpose::AnalysisResearch, &research_template.version),
-            ModelTier::Analysis,
-            &rendered,
-        )
+    let research_ctx = call(AiPurpose::AnalysisResearch, &research_template.version);
+    let mut research = client
+        .research(pool, &research_ctx, ModelTier::Analysis, &rendered)
         .await
         .map_err(|err| classify(err, job))?;
-
-    match guard::budget_gate(ctx).await {
-        Ok(Some(outcome)) => return Ok(Analysed::Postponed(outcome)),
-        Ok(None) => {}
-        Err(err) => return Err(Failure::Retry(err.to_string())),
+    let mut research_searches = research.usage.web_searches;
+    if consulted_page_count(&research.value.references) == 0 {
+        // The model decides itself whether to search (Mistral's web search guide): asked once
+        // more, never more in one run.
+        tracing::warn!(
+            idea_id = %inputs.idea_id,
+            web_searches = research.usage.web_searches,
+            "the web research consulted no page; asking once more"
+        );
+        if let Some(stop) = before_paid_step(ctx, inputs.idea_id).await? {
+            return Ok(stop);
+        }
+        research = client
+            .research(pool, &research_ctx, ModelTier::Analysis, &rendered)
+            .await
+            .map_err(|err| classify(err, job))?;
+        research_searches += research.usage.web_searches;
     }
-    // The author may delete the idea at any time: never pay for a step about a vanished idea
-    // (BUD-1).
-    let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ideas WHERE id = $1)")
-        .bind(inputs.idea_id)
-        .fetch_one(pool)
-        .await
-        .map_err(|err| Failure::Retry(err.to_string()))?;
-    if !exists {
-        return Ok(Analysed::Vanished);
+    if let Some(stop) = before_paid_step(ctx, inputs.idea_id).await? {
+        return Ok(stop);
     }
 
     let template = &prompts.analysis;
@@ -389,9 +428,7 @@ async fn analyse(
             .chain(previous_sources),
     );
     if allowed.is_empty() {
-        return Err(Failure::GiveUp(
-            "the web research consulted no page: nothing can be cited".to_owned(),
-        ));
+        return Err(no_page_failure(job));
     }
     let completion = client
         .structured::<AnalysisOutput>(
@@ -420,7 +457,7 @@ async fn analyse(
             prompt_version: template.version.clone(),
             research_prompt_version: research_template.version.clone(),
             schema_version: schema_version(schema),
-            web_search_count: research.usage.web_searches + completion.usage.web_searches,
+            web_search_count: research_searches + completion.usage.web_searches,
         },
         output,
         score,

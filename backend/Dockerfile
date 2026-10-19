@@ -31,18 +31,15 @@ ENV CARGO_TERM_COLOR=always \
     CARGO_INCREMENTAL=0
 WORKDIR /src/backend
 
-# 1. Dependencies only: this layer is reused as long as Cargo.toml and Cargo.lock are unchanged.
-COPY backend/Cargo.toml backend/Cargo.lock backend/build.rs ./
-RUN --mount=type=cache,id=iapolitique-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
-    mkdir -p src migrations \
-    && echo 'fn main() {}' > src/main.rs \
-    && touch src/lib.rs \
-    && cargo build --release --locked \
-    && rm -rf src
-
-# 2. The crate itself (migrations are embedded by sqlx::migrate!).
+# The registry and target/ are cache mounts at the paths cargo uses: dependencies stay compiled
+# between builds whatever changed (Cargo.toml included) and only the crate is rebuilt; the binary
+# leaves the cache through /out. The ids are those of this release build only (the CI test image
+# has its own), so the two builds never wait for each other's lock. The touch rebuilds the crate
+# even when a source file is older than target/ (sources from an archive); migrations are
+# embedded by sqlx::migrate!.
 COPY backend/ ./
-RUN --mount=type=cache,id=iapolitique-cargo-registry,target=/usr/local/cargo/registry,sharing=locked \
+RUN --mount=type=cache,id=iapolitique-cargo-registry-release,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,id=iapolitique-cargo-target-release,target=/src/backend/target,sharing=locked \
     touch src/main.rs src/lib.rs build.rs \
     && cargo build --release --locked \
     && mkdir -p /out \

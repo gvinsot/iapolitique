@@ -1097,12 +1097,13 @@ Le service `test` du compose construit `devops/Dockerfile.test` (contexte `..`) 
 Caches BuildKit : npm, et pour cargo le registre et `target/` montés directement aux chemins
 qu'utilise cargo (`/usr/local/cargo/registry`, `/src/backend/target`), jamais recopiés : ni l'un
 ni l'autre n'est dans l'image (les tests lisent à l'exécution `../prompts`,
-`../frontend/src/api/openapi.json` et `src/`, d'où la même arborescence sous `/src`). Leurs id,
-`iapolitique-cargo-registry-test` et `iapolitique-cargo-target-test` (le registre sert aussi à
-`cargo deny`), sont propres au stage `backend-test` : `docker compose build api frontend test`
-construit `backend/Dockerfile` en parallèle sans attendre son verrou. Le stage touche
-`src/main.rs`, `src/lib.rs` et `build.rs` : le crate est toujours recompilé (jamais un `target/`
-périmé), les dépendances jamais. Il n'y a pas de doctest (les blocs
+`../frontend/src/api/openapi.json` et `src/`, d'où la même arborescence sous `/src`). Les id sont
+propres à chaque build, pour que `docker compose build api frontend test`, qui les lance en
+parallèle, n'attende pas un verrou : `iapolitique-cargo-registry-test` et
+`iapolitique-cargo-target-test` (stage `backend-test`, et `cargo deny` pour le registre),
+`iapolitique-cargo-registry-release` et `iapolitique-cargo-target-release` (`backend/Dockerfile`).
+Les deux builds touchent `src/main.rs`, `src/lib.rs` et `build.rs` : le crate est toujours
+recompilé (jamais un `target/` périmé), les dépendances jamais. Il n'y a pas de doctest (les blocs
 de code des commentaires sont en `text`) : en ajouter un demande d'ajouter `cargo test --doc` au
 stage `backend-test`. La version de Rust de `Dockerfile.test` (`RUST_VERSION`) suit celle de
 `backend/Dockerfile`.

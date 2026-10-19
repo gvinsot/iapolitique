@@ -11,6 +11,7 @@ import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { Button } from "@/components/ui/button";
 import { Card, CardContent, CardHeader, CardTitle } from "@/components/ui/card";
 import { useDocumentTitle } from "@/hooks/use-document-title";
+import { usePageDescription } from "@/hooks/use-page-meta";
 import { formatDate } from "@/lib/format";
 
 const dos = [
@@ -27,6 +28,9 @@ const donts = [
 
 export function ProposePage() {
   useDocumentTitle("Proposer une idée");
+  usePageDescription(
+    "Proposez anonymement, sans compte, une mesure pour réduire une dépense ou augmenter une recette publique : réponse du filtre en quelques secondes et lien de suivi privé.",
+  );
   const submission = useMutation({
     mutationFn: submitIdea,
     // Shown inline next to the form, which keeps its content for a retry.

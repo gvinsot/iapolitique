@@ -98,3 +98,14 @@ describe("ProposePage", () => {
     expect(screen.getByRole("textbox", { name: "Votre idée" })).toHaveValue(IDEA);
   });
 });
+
+describe("ProposePage metadata", () => {
+  it("describes the page for search engines and previews", async () => {
+    renderRoute("/proposer");
+    await screen.findByRole("heading", { level: 1, name: "Proposer une idée" });
+    expect(document.head.querySelector('meta[name="description"]')).toHaveAttribute(
+      "content",
+      expect.stringMatching(/^Proposez anonymement/) as string,
+    );
+  });
+});

@@ -1056,7 +1056,8 @@ ALTCHA, rate limits (§7.2), `HTTP_BODY_LIMIT_BYTES`, `HTTP_REQUEST_TIMEOUT_SECS
 modèle de décision, budget Mistral (§6.4), `statement_timeout` PostgreSQL côté application
 (`DATABASE_STATEMENT_TIMEOUT_SECS` pour l'api, `DATABASE_JOB_STATEMENT_TIMEOUT_SECS` pour le worker,
 posé à chaque connexion du pool ; migrations sur une connexion dédiée sans limite),
-concurrence du worker bornée, pagination bornée, regex à temps linéaire uniquement (crate
+concurrence du worker bornée, pagination bornée (toute liste servie a une limite : `per_page ≤ 50`,
+contributions et droits de réponse d'une idée plafonnés), regex à temps linéaire uniquement (crate
 `regex`), taille maximale des réponses IA acceptées (`ai::read_capped` : 2 Mio pour Mistral, réponse
 refusée comme sortie invalide ; 256 Kio pour le modèle de décision), exports servis depuis la base (pas de
 génération à la demande).

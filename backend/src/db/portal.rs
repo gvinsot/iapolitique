@@ -352,9 +352,10 @@ pub struct PublishedReply {
 pub async fn replies(pool: &PgPool, idea_id: Uuid) -> sqlx::Result<Vec<PublishedReply>> {
     sqlx::query_as(
         "SELECT author_label, body, published_at, updated_at FROM rights_of_reply
-         WHERE idea_id = $1 ORDER BY published_at, id",
+         WHERE idea_id = $1 ORDER BY published_at, id LIMIT $2",
     )
     .bind(idea_id)
+    .bind(crate::db::replies::MAX_REPLIES)
     .fetch_all(pool)
     .await
 }

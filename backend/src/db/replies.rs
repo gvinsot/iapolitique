@@ -17,6 +17,9 @@ pub struct ReplyRow {
     pub updated_at: DateTime<Utc>,
 }
 
+/// Most rights of reply listed for an idea (they are written by the administrator only).
+pub const MAX_REPLIES: i64 = 200;
+
 /// Content of a right of reply.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct ReplyContent<'a> {
@@ -25,16 +28,17 @@ pub struct ReplyContent<'a> {
     pub requested_on: NaiveDate,
 }
 
-/// Replies of an idea, oldest first.
+/// Replies of an idea, oldest first, at most [`MAX_REPLIES`] (§14.5: every list is bounded).
 pub async fn of_idea<'e>(
     executor: impl PgExecutor<'e>,
     idea_id: Uuid,
 ) -> sqlx::Result<Vec<ReplyRow>> {
     sqlx::query_as(
         "SELECT id, idea_id, author_label, body, requested_on, published_at, updated_at
-         FROM rights_of_reply WHERE idea_id = $1 ORDER BY published_at, id",
+         FROM rights_of_reply WHERE idea_id = $1 ORDER BY published_at, id LIMIT $2",
     )
     .bind(idea_id)
+    .bind(MAX_REPLIES)
     .fetch_all(executor)
     .await
 }
@@ -83,4 +87,29 @@ pub async fn delete(conn: &mut PgConnection, id: Uuid) -> sqlx::Result<Option<Uu
         .bind(id)
         .fetch_optional(conn)
         .await
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use sqlx::PgPool;
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn reply_lists_are_bounded(pool: PgPool) {
+        let idea = crate::test_support::published_idea(&pool, "idee-bornee").await;
+        sqlx::query(
+            "INSERT INTO rights_of_reply (idea_id, author_label, body, requested_on)
+             SELECT $1, 'Auteur ' || n, 'Réponse ' || n, current_date
+             FROM generate_series(1, $2) AS n",
+        )
+        .bind(idea)
+        .bind(i32::try_from(MAX_REPLIES).unwrap() + 5)
+        .execute(&pool)
+        .await
+        .unwrap();
+        let admin = of_idea(&pool, idea).await.unwrap();
+        assert_eq!(admin.len() as i64, MAX_REPLIES);
+        let public = crate::db::portal::replies(&pool, idea).await.unwrap();
+        assert_eq!(public.len() as i64, MAX_REPLIES);
+    }
 }

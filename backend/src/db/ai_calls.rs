@@ -3,7 +3,7 @@
 
 use std::time::Duration;
 
-use sqlx::PgExecutor;
+use sqlx::{PgExecutor, PgPool};
 use uuid::Uuid;
 
 use crate::domain::money::MicroEur;
@@ -59,13 +59,15 @@ fn clamp_i32(value: u64) -> i32 {
     i32::try_from(value).unwrap_or(i32::MAX)
 }
 
-/// Inserts the call and returns its id.
+/// Inserts the call and returns its id. `idea_id` is kept only if the idea still exists: an
+/// author may delete an idea while a paid call about it runs, and the call must still be
+/// recorded (its cost counts in the daily budget, §6.4) — without the idea.
 pub async fn insert<'e>(executor: impl PgExecutor<'e>, call: &NewAiCall) -> sqlx::Result<i64> {
     let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO ai_calls (provider, purpose, model, target_kind, target_id, idea_id, job_id,
              prompt_version, input_tokens, output_tokens, web_search_count, cost_micro_eur,
              latency_ms, status, http_status, error_code)
-         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
+         VALUES ($1, $2, $3, $4, $5, (SELECT id FROM ideas WHERE id = $6::uuid), $7, $8, $9, $10, $11, $12, $13, $14, $15, $16)
          RETURNING id",
     )
     .bind(call.provider.as_str())
@@ -92,6 +94,27 @@ pub async fn insert<'e>(executor: impl PgExecutor<'e>, call: &NewAiCall) -> sqlx
     .fetch_one(executor)
     .await?;
     Ok(id)
+}
+
+/// [`insert`] outside a transaction, retried once without the idea when a concurrent deletion
+/// of the idea makes the insert fail on its foreign key (`23503`), so that the cost of a paid
+/// call is never lost (BUD-1).
+pub async fn record(pool: &PgPool, call: &NewAiCall) -> sqlx::Result<i64> {
+    match insert(pool, call).await {
+        Err(sqlx::Error::Database(err))
+            if call.idea_id.is_some() && err.code().as_deref() == Some("23503") =>
+        {
+            insert(
+                pool,
+                &NewAiCall {
+                    idea_id: None,
+                    ..call.clone()
+                },
+            )
+            .await
+        }
+        other => other,
+    }
 }
 
 #[cfg(test)]
@@ -142,5 +165,47 @@ mod tests {
         ] {
             assert_eq!(row[column], expected, "{column}");
         }
+    }
+
+    /// BUD-1: a call about an idea deleted in the meantime is still recorded (its cost counts
+    /// in the daily budget), without the idea.
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn a_call_about_a_deleted_idea_is_recorded_without_it(pool: PgPool) {
+        let call = NewAiCall {
+            idea_id: Some(Uuid::new_v4()),
+            cost: MicroEur(5_000),
+            ..NewAiCall::new(
+                AiProvider::Mistral,
+                AiPurpose::AnalysisResearch,
+                "mistral-large",
+            )
+        };
+        let id = record(&pool, &call).await.unwrap();
+        let (idea_id, cost): (Option<Uuid>, i64) =
+            sqlx::query_as("SELECT idea_id, cost_micro_eur FROM ai_calls WHERE id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!((idea_id, cost), (None, 5_000));
+
+        // An existing idea is kept.
+        let idea = crate::test_support::idea_with_status(&pool, "analyzing").await;
+        let id = record(
+            &pool,
+            &NewAiCall {
+                idea_id: Some(idea),
+                ..call
+            },
+        )
+        .await
+        .unwrap();
+        let (idea_id,): (Option<Uuid>,) =
+            sqlx::query_as("SELECT idea_id FROM ai_calls WHERE id = $1")
+                .bind(id)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(idea_id, Some(idea));
     }
 }

@@ -579,3 +579,48 @@ async fn stale_jobs_do_nothing(pool: PgPool) {
             .is_empty()
     );
 }
+
+/// BUD-1: the author deletes the idea while the research runs. The research call is paid, so
+/// it is recorded (without the idea) and counts in the budget; the structuring is not called.
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn an_idea_deleted_during_the_research_stops_the_analysis(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), true, &[]).await;
+    let ctx = app.job_context();
+    let idea = queued_idea(&pool).await;
+    Mock::given(path("/v1/conversations"))
+        .respond_with(
+            ResponseTemplate::new(200)
+                .set_body_json(research_response("Mémo [S1].", 3_000))
+                .set_delay(std::time::Duration::from_millis(400)),
+        )
+        .mount(app.mistral.as_ref().unwrap())
+        .await;
+    app.structured(&analysis_output()).await;
+
+    let job = job_for(&pool, idea, AnalysisTrigger::Initial).await;
+    let delete = async {
+        tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+        sqlx::query("DELETE FROM ideas WHERE id = $1")
+            .bind(idea)
+            .execute(&pool)
+            .await
+            .unwrap();
+    };
+    let (outcome, ()) = tokio::join!(AnalyzeHandler.handle(&ctx, &job), delete);
+    assert_eq!(outcome, Ok(JobOutcome::Done));
+    assert!(requests(&app, "/v1/chat/completions").await.is_empty());
+
+    let calls: Vec<(String, Option<Uuid>, i64)> =
+        sqlx::query_as("SELECT purpose, idea_id, cost_micro_eur FROM ai_calls ORDER BY id")
+            .fetch_all(&pool)
+            .await
+            .unwrap();
+    assert_eq!(calls.len(), 1, "{calls:?}");
+    assert_eq!(calls[0].0, "analysis_research");
+    assert_eq!(calls[0].1, None);
+    assert!(calls[0].2 > 0);
+    let budget = crate::ai::budget::status(&pool, crate::domain::money::MicroEur(100_000_000))
+        .await
+        .unwrap();
+    assert_eq!(budget.spent.0, calls[0].2);
+}

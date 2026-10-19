@@ -169,6 +169,10 @@ impl JobHandler for AnalyzeHandler {
             };
             match analyse(ctx, client, job, &inputs).await {
                 Ok(Analysed::Postponed(outcome)) => Ok(outcome),
+                Ok(Analysed::Vanished) => {
+                    tracing::info!(idea_id = %idea_id, "idea deleted during its analysis; stopped");
+                    Ok(JobOutcome::Done)
+                }
                 Ok(Analysed::Ready(result)) => {
                     publish(pool, &inputs, mode, &result).await?;
                     if analyses::has_pending_inputs(pool, idea_id).await? {
@@ -251,6 +255,8 @@ enum Analysed {
     Ready(Box<AnalysisResult>),
     /// Budget reached between the two steps.
     Postponed(JobOutcome),
+    /// The idea was deleted by its author during the research: no further paid call.
+    Vanished,
 }
 
 /// `queued_analysis → analyzing`. Returns whether the analysis should go on.
@@ -314,6 +320,16 @@ async fn analyse(
         Ok(Some(outcome)) => return Ok(Analysed::Postponed(outcome)),
         Ok(None) => {}
         Err(err) => return Err(Failure::Retry(err.to_string())),
+    }
+    // The author may delete the idea at any time: never pay for a step about a vanished idea
+    // (BUD-1).
+    let exists: bool = sqlx::query_scalar("SELECT EXISTS (SELECT 1 FROM ideas WHERE id = $1)")
+        .bind(inputs.idea_id)
+        .fetch_one(pool)
+        .await
+        .map_err(|err| Failure::Retry(err.to_string()))?;
+    if !exists {
+        return Ok(Analysed::Vanished);
     }
 
     let template = &prompts.analysis;

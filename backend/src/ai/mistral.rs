@@ -489,7 +489,16 @@ impl MistralClient {
                 error_code: attempt.result.as_ref().err().map(MistralError::code),
                 ..NewAiCall::new(AiProvider::Mistral, ctx.purpose, model.clone())
             };
-            db::ai_calls::insert(pool, &call).await?;
+            // The attempt is paid whatever happens next: a recording failure is logged, never
+            // turned into an error that a job would retry with a new paid call (BUD-1).
+            if let Err(err) = db::ai_calls::record(pool, &call).await {
+                tracing::error!(
+                    purpose = ctx.purpose.as_str(),
+                    cost_micro_eur = cost.0,
+                    error = %err,
+                    "Mistral call not recorded in ai_calls"
+                );
+            }
             match attempt.result {
                 Ok(value) => {
                     return Ok(Completion {
@@ -1151,6 +1160,58 @@ mod tests {
         let err = structured_call(&client, &pool).await.unwrap_err();
         assert_eq!(err, MistralError::Timeout);
         assert_eq!(calls(&pool).await[0]["status"], "timeout");
+    }
+
+    /// BUD-1: an author may delete an idea while a paid call about it runs; the call must still
+    /// be recorded (with `idea_id` NULL) so that the daily budget sees its cost.
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn cost_of_a_call_for_a_vanished_idea_is_still_recorded(pool: PgPool) {
+        let server = MockServer::start().await;
+        Mock::given(path("/v1/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_json(chat_response(json!(ACCEPT)))
+                    .set_delay(Duration::from_millis(300)),
+            )
+            .expect(1)
+            .mount(&server)
+            .await;
+        let idea = crate::test_support::idea_with_status(&pool, "second_opinion").await;
+        let client = client(&server);
+        let schema = test_prompts().second_opinion.output_schema.clone().unwrap();
+        let ctx = CallContext {
+            idea_id: Some(idea),
+            target: Some((TargetKind::Idea, idea)),
+            ..ctx()
+        };
+        let prompt = second_opinion_prompt();
+        let call = client.structured::<SecondOpinion>(
+            &pool,
+            &ctx,
+            ModelTier::Review,
+            &prompt,
+            &schema,
+            |_| Ok(()),
+        );
+        let delete = async {
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            sqlx::query("DELETE FROM ideas WHERE id = $1")
+                .bind(idea)
+                .execute(&pool)
+                .await
+                .unwrap();
+        };
+        let (completion, ()) = tokio::join!(call, delete);
+        assert_eq!(completion.unwrap().cost, MicroEur(3_200));
+
+        let calls = calls(&pool).await;
+        assert_eq!(calls.len(), 1, "the paid call must be recorded");
+        assert_eq!(calls[0]["cost_micro_eur"], 3_200);
+        assert_eq!(calls[0]["idea_id"], Value::Null);
+        let budget = crate::ai::budget::status(&pool, MicroEur(1_000_000))
+            .await
+            .unwrap();
+        assert_eq!(budget.spent, MicroEur(3_200));
     }
 
     fn conversation_response() -> Value {

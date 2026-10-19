@@ -394,7 +394,8 @@ version de prompt (l'admin peut relancer manuellement).
   choisir un modèle qui le prend en charge ; pour s'en passer, vider la variable. Le worker
   journalise au démarrage modèles et efforts configurés. Délais
   par requête (`ai::mistral::Timeouts`) : chat 180 s et Conversations 300 s, portés à 360 s et
-  480 s avec l'effort `high` (la réflexion allonge la réponse) ; le verrou du job est
+  1 200 s avec l'effort `high` (la réflexion allonge la réponse ; une recherche détaillée prend
+  15 min ou plus, et un délai de 480 s a coupé une recherche en production le 2026-10-19) ; le verrou du job est
   entretenu pendant ce temps (heartbeat, `JOB_LOCK_TIMEOUT_SECS`).
 - **Recherche web obligatoire** pour le chiffrage (outil `web_search` de l'API Agents /
   Conversations de Mistral). Vérifier la documentation Mistral en vigueur au moment de

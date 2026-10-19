@@ -106,7 +106,8 @@ impl Default for Timeouts {
             conversation: Duration::from_secs(300),
             embedding: Duration::from_secs(30),
             reasoning_chat: Duration::from_secs(360),
-            reasoning_conversation: Duration::from_secs(480),
+            // A detailed web research with thinking takes 15 minutes or more.
+            reasoning_conversation: Duration::from_secs(1_200),
         }
     }
 }
@@ -2598,13 +2599,13 @@ mod tests {
         let timeouts = Timeouts::default();
         let high = Some(ReasoningEffort::High);
         assert_eq!(timeouts.chat(high), Duration::from_secs(360));
-        assert_eq!(timeouts.conversation(high), Duration::from_secs(480));
+        assert_eq!(timeouts.conversation(high), Duration::from_secs(1_200));
         for effort in [None, Some(ReasoningEffort::Off)] {
             assert_eq!(timeouts.chat(effort), Duration::from_secs(180));
             assert_eq!(timeouts.conversation(effort), Duration::from_secs(300));
         }
         // The client-wide bound never cuts a request short.
-        assert_eq!(timeouts.longest(), Duration::from_secs(480));
+        assert_eq!(timeouts.longest(), Duration::from_secs(1_200));
     }
 
     #[test]

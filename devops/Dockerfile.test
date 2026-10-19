@@ -16,7 +16,9 @@ ARG NGINX_VERSION=1.31
 ARG ALPINE_VERSION=3.24
 
 # ---------------------------------------------------------------------------------------------
-# 1. Frontend: ESLint + Prettier, tsc, Vitest, production build, no third-party origin in it.
+# 1. Frontend: known vulnerabilities of the runtime dependencies (npm audit, blocking from
+#    "high", AGENTS.md §14.7), ESLint + Prettier, tsc, Vitest, production build, no third-party
+#    origin in it. The audit asks the npm registry at every frontend change.
 # ---------------------------------------------------------------------------------------------
 FROM node:${NODE_VERSION}-alpine AS frontend-check
 WORKDIR /app
@@ -25,7 +27,8 @@ COPY frontend/package.json frontend/package-lock.json frontend/.npmrc* ./
 RUN --mount=type=cache,id=iapolitique-npm,target=/root/.npm,sharing=locked \
     npm ci --no-audit --no-fund
 COPY frontend/ ./
-RUN npm run lint \
+RUN npm audit --omit=dev --audit-level=high \
+    && npm run lint \
     && npm run typecheck \
     && npm test \
     && npm run build \
@@ -81,6 +84,24 @@ RUN PYTHONDONTWRITEBYTECODE=1 python3 check_compose_security.py \
 # ---------------------------------------------------------------------------------------------
 FROM rust:${RUST_VERSION}-trixie AS backend-test
 RUN rustup component add rustfmt clippy
+# cargo-deny (AGENTS.md §14.7): prebuilt release, checked against the SHA-256 published with it.
+# To upgrade, take both checksums from https://github.com/EmbarkStudios/cargo-deny/releases.
+ARG CARGO_DENY_VERSION=0.20.2
+RUN set -eu; \
+    arch="$(uname -m)"; \
+    case "$arch" in \
+        x86_64) sum=9f12ed4c49936e09b48bf862b595cde2fe64fcbd9d74dfacac6131ca824c8d5f ;; \
+        aarch64) sum=995c82be0defc7a025cae49a2aa2644ce8245c9a3318fc4103907c6a285e8c7d ;; \
+        *) echo "no cargo-deny build for $arch" >&2; exit 1 ;; \
+    esac; \
+    name="cargo-deny-${CARGO_DENY_VERSION}-${arch}-unknown-linux-musl"; \
+    curl -fsSL -o /tmp/cargo-deny.tar.gz \
+        "https://github.com/EmbarkStudios/cargo-deny/releases/download/${CARGO_DENY_VERSION}/${name}.tar.gz"; \
+    echo "$sum  /tmp/cargo-deny.tar.gz" | sha256sum -c -; \
+    tar -xzf /tmp/cargo-deny.tar.gz -C /tmp; \
+    install -m 0755 "/tmp/$name/cargo-deny" /usr/local/cargo/bin/cargo-deny; \
+    rm -rf /tmp/cargo-deny.tar.gz "/tmp/$name"; \
+    cargo deny --version
 # CI profile: no incremental artifacts, line tables only (readable backtraces, smaller target/).
 ENV CARGO_TERM_COLOR=always \
     CARGO_INCREMENTAL=0 \
@@ -116,6 +137,11 @@ RUN --mount=type=cache,id=iapolitique-cargo-registry,target=/cache/registry,shar
     cp -a "$CARGO_HOME/registry/." /cache/registry/; \
     cp -a target/. /cache/target/; \
     exit "$rc"
+
+# Supply chain (AGENTS.md §14.7), blocking: RustSec advisories (fetched now), banned crates,
+# crates.io as the only source. Runs on the registry left in the image by the step above.
+COPY devops/deny.toml /src/devops/deny.toml
+RUN cargo deny --locked --config ../devops/deny.toml check advisories bans sources
 
 COPY --chmod=0755 devops/run-tests.sh /usr/local/bin/run-tests
 ENTRYPOINT ["/usr/local/bin/run-tests"]

@@ -1,0 +1,37 @@
+# cargo-deny configuration of the backend (AGENTS.md §14.7). Lives in devops/ (CI tooling); run
+# by devops/Dockerfile.test, blocking, from backend/:
+#   cargo deny --locked check --config ../devops/deny.toml advisories bans
+# The RustSec advisory database is fetched at every run of that step.
+
+[graph]
+# The images are built for Linux only (amd64 build hosts, arm64 nodes in the cluster).
+targets = ["x86_64-unknown-linux-gnu", "aarch64-unknown-linux-gnu"]
+
+[advisories]
+# Every RustSec advisory (vulnerability, unsound, unmaintained crate, notice) and every yanked
+# version fails the check. An exception goes in `ignore` with its advisory id, a reason and
+# the date it must be reviewed again, e.g.:
+#   { id = "RUSTSEC-0000-0000", reason = "not reachable: … (review 2027-01-01)" },
+unmaintained = "all"
+unsound = "all"
+yanked = "deny"
+ignore = []
+
+[bans]
+# Duplicate versions are common in the async ecosystem and not a security problem.
+multiple-versions = "allow"
+# A `*` requirement would accept any future version.
+wildcards = "deny"
+allow-wildcard-paths = true
+# TLS is rustls with ring only (AGENTS.md §4.1): no OpenSSL nor second TLS stack slips in.
+deny = [
+    { crate = "openssl", reason = "TLS is rustls + ring" },
+    { crate = "openssl-sys", reason = "TLS is rustls + ring" },
+    { crate = "native-tls", reason = "TLS is rustls + ring" },
+    { crate = "aws-lc-sys", reason = "rustls uses the ring provider" },
+]
+
+[sources]
+# Crates come from crates.io only: no git dependency, no other registry.
+unknown-registry = "deny"
+unknown-git = "deny"

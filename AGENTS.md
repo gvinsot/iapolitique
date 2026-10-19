@@ -924,8 +924,8 @@ au démarrage (un fichier invalide empêche le démarrage).
 ### 13.5 Tests en CI
 
 Le service `test` du compose construit `devops/Dockerfile.test` (contexte `..`) :
-1. stage `frontend-check` (node 22) : `npm ci`, lint, typecheck, Vitest, build, puis
-   `npm run check:dist` (`scripts/check-dist-urls.mjs` : le build ne nomme aucune origine tierce
+1. stage `frontend-check` (node 22) : `npm ci`, `npm audit --omit=dev --audit-level=high`, lint,
+   typecheck, Vitest, build, puis `npm run check:dist` (`scripts/check-dist-urls.mjs` : le build ne nomme aucune origine tierce
    hors d'une liste justifiée d'identifiants et de liens de documentation ; aussi exécuté par
    `frontend/Dockerfile`) ;
 2. stage `frontend-headers` (même image nginx que le runtime) : le `dist/` de `frontend-check`
@@ -934,8 +934,8 @@ Le service `test` du compose construit `devops/Dockerfile.test` (contexte `..`) 
 3. stage `devops-check` (alpine, python3 + PyYAML du paquet `py3-yaml`) :
    `devops/check_compose_security.py` (invariants du compose, §14.4 et §14.7) et ses tests ;
 4. stage `backend-test` (rust) : `cargo fmt --check`, `cargo clippy -D warnings`, compilation des
-   tests ; il copie un fichier témoin produit par chacun des stages précédents (sinon BuildKit
-   les saute) ;
+   tests, puis `cargo deny` (advisories, bans, sources ; §14.7) ; il copie un fichier témoin
+   produit par chacun des stages précédents (sinon BuildKit les saute) ;
 5. à l'exécution (`devops/run-tests.sh`) : attente du port de `test-db`, puis
    `cargo test --locked --offline` (rien n'est recompilé) avec `DATABASE_URL` vers le service
    `test-db` (`pgvector/pgvector:pg18` en mémoire, sans mot de passe, réseau interne au compose).
@@ -1127,7 +1127,14 @@ aucune valeur de la requête ne peut y figurer.
   `dashboard-allowlist@file` (§14.4).
 - CI (`devops/Dockerfile.test`) : `cargo deny check advisories bans` (ou `cargo audit`) et
   `npm audit --omit=dev --audit-level=high` bloquants ; `Cargo.lock` et `package-lock.json`
-  committés ; `npm ci` uniquement.
+  committés ; `npm ci` uniquement. Réalisation : `npm audit` en tête du stage `frontend-check` ;
+  `cargo deny --locked --config ../devops/deny.toml check advisories bans sources` à la fin du
+  stage `backend-test` (binaire officiel épinglé par version et SHA-256). `devops/deny.toml` :
+  toute alerte RustSec (vulnérabilité, crate non maintenue ou unsound) et toute version retirée
+  bloquent, une exception se note dans `ignore` avec sa raison et une date de réexamen ; crates
+  interdites `openssl`, `openssl-sys`, `native-tls`, `aws-lc-sys` (TLS = rustls + ring) ;
+  crates.io comme seule source. Ces deux contrôles interrogent leur base à chaque exécution de
+  leur étape (relancée quand les sources du frontend, resp. du backend, changent).
 - Le worker n'est pas sur le réseau `proxy` ; seuls api et frontend y sont.
 
 ### 14.8 Vérification

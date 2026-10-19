@@ -23,8 +23,9 @@ import sys
 from pathlib import Path
 
 DOCKERFILES = ("backend/Dockerfile", "frontend/Dockerfile", "devops/Dockerfile.test")
-# backend/Dockerfile (rust, debian) is owned by the backend: pinning it is tracked by SUP-1/IMG-1.
-PENDING = {"backend/Dockerfile"}
+# Dockerfiles not pinned yet (reported without failing). Empty since backend/Dockerfile was
+# pinned (IMG-1): every Dockerfile is checked strictly.
+PENDING: set[str] = set()
 COMPOSE = "devops/docker-compose.swarm.yml"
 OWN_REGISTRY = "registry.methodinfo.fr/"
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")

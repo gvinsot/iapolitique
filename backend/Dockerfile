@@ -7,15 +7,26 @@
 # that prompts/ can be embedded; backend/Dockerfile.dockerignore keeps everything else out.
 # The CI checks (fmt, clippy, tests) live in devops/Dockerfile.test.
 
-# Keep RUST_VERSION aligned with devops/Dockerfile.test. The runtime uses the same Debian
-# release as the rust image, so the binary finds the glibc it was linked against.
+# Base images are pinned by version and by the digest of their multi-architecture index
+# (AGENTS.md §14.7, finding IMG-1): a tag can be moved, a digest cannot. To upgrade, change the
+# version and take the new digest from `docker buildx imagetools inspect <image>:<tag>` (first
+# "Digest:" line), in every file that uses the image (RUST_*: devops/Dockerfile.test too);
+# devops/check_image_pins.py fails the CI otherwise.
+#
+# Keep RUST_VERSION aligned with devops/Dockerfile.test. The runtime is distroless/cc on the same
+# Debian release as the rust image (trixie = Debian 13), so the binary finds the glibc it was
+# linked against.
 ARG RUST_VERSION=1.99
+ARG RUST_DIGEST=sha256:e259494b14672950a909b4c54527e19d29cae6ebf980672114c8bb85e5594e4a
 ARG DEBIAN_RELEASE=trixie
+# gcr.io/distroless/cc-debian13:latest: glibc, libgcc, CA certificates, tzdata; no shell, no
+# package manager, no curl/wget (the binary has its own `healthcheck` command).
+ARG DISTROLESS_CC_DIGEST=sha256:159783207c2cd44c2aa5715961d13c8612368ac9bd450f887e3f08fc8ea461e3
 
 # ---------------------------------------------------------------------------------------------
 # build: release binary at /out/iapolitique
 # ---------------------------------------------------------------------------------------------
-FROM rust:${RUST_VERSION}-${DEBIAN_RELEASE} AS build
+FROM rust:${RUST_VERSION}-${DEBIAN_RELEASE}@${RUST_DIGEST} AS build
 ENV CARGO_TERM_COLOR=always \
     CARGO_INCREMENTAL=0
 WORKDIR /src/backend
@@ -39,15 +50,10 @@ RUN --mount=type=cache,id=iapolitique-cargo-registry,target=/usr/local/cargo/reg
     && /out/iapolitique --version
 
 # ---------------------------------------------------------------------------------------------
-# runtime: non-root, no shell tools needed (the binary has its own `healthcheck` command)
+# runtime: distroless (no shell, no package manager), non-root (uid 10001, as before: the
+# distroless image has no entry for it in /etc/passwd, which the binary does not need)
 # ---------------------------------------------------------------------------------------------
-FROM debian:${DEBIAN_RELEASE}-slim AS runtime
-RUN apt-get update \
-    && apt-get install -y --no-install-recommends ca-certificates \
-    && rm -rf /var/lib/apt/lists/* \
-    && groupadd --system --gid 10001 iapolitique \
-    && useradd --system --uid 10001 --gid iapolitique --home-dir /app --no-create-home \
-        --shell /usr/sbin/nologin iapolitique
+FROM gcr.io/distroless/cc-debian13@${DISTROLESS_CC_DIGEST} AS runtime
 WORKDIR /app
 COPY --from=build /out/iapolitique /app/iapolitique
 # Versioned prompts, published on the methodology page (§13.4).

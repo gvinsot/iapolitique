@@ -815,7 +815,7 @@ commit.
 | worker | `iapolitique worker` | 8082 `/health` interne |
 | migrations | `iapolitique migrate` (aussi exécutées au démarrage de l'api) | — |
 | openapi | `iapolitique openapi [--output FICHIER] [--public]` : écrit la spec OpenAPI (complète, ou publique seule avec `--public`) sur stdout ou dans `FICHIER` | — |
-| healthcheck | `iapolitique healthcheck [--url URL] [--timeout-secs N]` : GET HTTP, code de sortie 0 si 2xx (URL par défaut `http://127.0.0.1:8080/api/health` ; worker : `--url http://127.0.0.1:8082/health`). L'image runtime n'a ni curl ni wget. | — |
+| healthcheck | `iapolitique healthcheck [--url URL] [--timeout-secs N]` : GET HTTP, code de sortie 0 si 2xx (URL par défaut `http://127.0.0.1:8080/api/health` ; worker : `--url http://127.0.0.1:8082/health`). L'image runtime (distroless, §14.7) n'a ni shell, ni curl, ni wget : sondes en forme exec (`CMD`, jamais `CMD-SHELL` ni `docker run --health-cmd`). | — |
 | frontend | nginx (image `nginx:alpine`, workers non root) ; variables `LEGAL_CONTACT_EMAIL`, `TRAEFIK_HOST` lues au démarrage pour `/.well-known/security.txt` | 80 (`/health` : sonde de vivacité) |
 
 Variables de test : `DATABASE_URL` (utilisée **uniquement** par `#[sqlx::test]` en test). En
@@ -1177,14 +1177,17 @@ stderr.
 - Images non root, système de fichiers en lecture seule là où Swarm le permet (sinon
   documenter), capacités minimales, aucun outil inutile dans l'image runtime, images de base
   épinglées.
-- Épinglage : `frontend/Dockerfile` et `devops/Dockerfile.test` fixent chaque image de base par
-  version **et** digest de l'index multi-architecture (`ARG *_DIGEST`, procédure de mise à jour en
-  tête de fichier) ; `backend/Dockerfile` (rust, debian) reste à épingler de la même façon. Toute
+- Épinglage : `backend/Dockerfile`, `frontend/Dockerfile` et `devops/Dockerfile.test` fixent
+  chaque image de base par version **et** digest de l'index multi-architecture (`ARG *_DIGEST`,
+  procédure de mise à jour en tête de fichier). Runtime du backend :
+  `gcr.io/distroless/cc-debian13` (glibc, libgcc, certificats CA, tzdata ; ni shell, ni
+  gestionnaire de paquets, ni curl/wget : la sonde est la sous-commande `healthcheck`), même
+  version de Debian (trixie) que l'image `rust` de compilation, uid 10001 (revue IMG-1). Toute
   image du compose qui n'est pas construite ici (`registry.methodinfo.fr`) est épinglée par
   `@sha256:` (`test-db`). `devops/check_image_pins.py` (CI) le vérifie : chaque `FROM` nomme un
   stage ou une image `@${*_DIGEST}` / `@sha256:`, et un `ARG` présent dans plusieurs Dockerfiles
-  (`RUST_VERSION`, `RUST_DIGEST`, `NGINX_DIGEST`…) a la même valeur partout ; `backend/Dockerfile`
-  y figure en attente (`PENDING`, signalé sans bloquer) jusqu'à son épinglage.
+  (`RUST_VERSION`, `RUST_DIGEST`, `NGINX_DIGEST`…) a la même valeur partout ; aucun Dockerfile
+  n'est plus en attente (`PENDING` vide) : tous sont contrôlés de façon bloquante.
 - Dans `devops/docker-compose.swarm.yml`, api, worker et frontend ont `read_only: true`,
   `init: true` et `cap_drop: [ALL]` (tous pris en charge par `docker stack deploy`, vérifié sur
   Docker 29) ; les seuls chemins inscriptibles sont des volumes `type: tmpfs` (la clé courte

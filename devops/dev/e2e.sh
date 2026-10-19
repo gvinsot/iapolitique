@@ -106,15 +106,16 @@ start_backend() {
         -e "LEGAL_PUBLISHER_NAME=Éditeur de test" -e "LEGAL_CONTACT_EMAIL=contact@example.org" \
         --health-interval 2s --health-start-period 120s \
         "$api_image" api >/dev/null
-    # Same probe as the compose file: the image's default HEALTHCHECK targets the api port.
+    # The image's default HEALTHCHECK targets the api port. The runtime image is distroless (no
+    # shell): `docker run --health-cmd` would go through /bin/sh, so the worker is probed in exec
+    # form, like the compose file does it, through `docker exec`.
     docker run -d --name e2e-worker --network "$net" --add-host=host.docker.internal:host-gateway \
         "${backend_hardening[@]}" "${backend_env[@]}" -e "MISTRAL_DAILY_BUDGET_EUR=$budget" \
-        --health-cmd "/app/iapolitique healthcheck --url http://127.0.0.1:8082/health" \
-        --health-interval 2s --health-start-period 120s \
-        "$api_image" worker >/dev/null
+        --no-healthcheck "$api_image" worker >/dev/null
     for _ in $(seq 1 90); do
-        if [[ "$(docker inspect -f '{{.State.Health.Status}}' e2e-api)" == healthy &&
-              "$(docker inspect -f '{{.State.Health.Status}}' e2e-worker)" == healthy ]]; then
+        if [[ "$(docker inspect -f '{{.State.Health.Status}}' e2e-api)" == healthy ]] &&
+            docker exec e2e-worker /app/iapolitique healthcheck \
+                --url http://127.0.0.1:8082/health >/dev/null 2>&1; then
             return 0
         fi
         sleep 2

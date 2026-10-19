@@ -726,9 +726,13 @@ décidée par l'humain.
 - Coordonnées légales (non secrètes mais hors git) : `LEGAL_PUBLISHER_NAME`,
   `LEGAL_PUBLISHER_ADDRESS`, `LEGAL_PUBLISHER_PHONE`, `LEGAL_CONTACT_EMAIL`, `LEGAL_PRIVACY_EMAIL`.
 - Variables non sensibles : `TRAEFIK_HOST`, `ADMIN_HOST`, `LLM_NETWORK`, `DECISION_SERVICE_URL`,
+  `DECISION_SERVICE_TIMEOUT_SECS`, `DECISION_SERVICE_JOB_TIMEOUT_SECS`, `MISTRAL_API_BASE_URL`,
   `MISTRAL_ANALYSIS_MODEL`, `MISTRAL_REVIEW_MODEL`, `MISTRAL_EMBED_MODEL`,
   `MISTRAL_DAILY_BUDGET_EUR`, prix unitaires Mistral, `DEDUP_SIMILARITY_THRESHOLD`, limites de
-  rate limit, `RUST_LOG`.
+  rate limit, `RUST_LOG`, `DATABASE_MAX_CONNECTIONS`, `WORKER_CONCURRENCY`, `TRUSTED_PROXY_HOPS`,
+  et pour PulsarCD seul `DEPLOY_HEALTHCHECK_PATH`, `DEPLOY_CONVERGE_TIMEOUT`. Toute variable de
+  `.env.example` lue par le backend est transmise par `x-backend-env` (api et worker) ou par
+  l'environnement de l'api dans `docker-compose.swarm.yml`.
 
 ---
 

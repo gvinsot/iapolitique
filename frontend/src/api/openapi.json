@@ -1098,6 +1098,94 @@
         ]
       }
     },
+    "/api/admin/ideas/{id}/text": {
+      "put": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Corrects the text of a refused idea before accepting it (§8): validated and masked like a\nsubmission, never screened again (the administrator decides). Once published, the idea\nsays « texte modifié par l'éditeur du site » (page and exports).",
+        "operationId": "editAdminIdeaText",
+        "parameters": [
+          {
+            "name": "id",
+            "in": "path",
+            "description": "Identifiant de l'idée",
+            "required": true,
+            "schema": {
+              "type": "string",
+              "format": "uuid"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AdminIdeaText"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "description": "Texte corrigé.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminIdea"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "404": {
+            "description": "Idée inconnue (`idea_not_found`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "409": {
+            "description": "Idée non refusée, ou texte déjà purgé (`idea_not_rejected`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          },
+          "422": {
+            "description": "Texte trop court ou trop long (`text_*`).",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
     "/api/admin/jobs": {
       "get": {
         "tags": [
@@ -3863,6 +3951,21 @@
             ],
             "description": "Beginning of the masked original text (`null` once purged)."
           },
+          "text": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Whole masked text of a refused idea, which may be corrected before accepting it (`null`\nfor any other status and once purged). Declared optional for older clients."
+          },
+          "text_edited_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When the administrator corrected its text (`null` if never)."
+          },
           "submitted_admin_level": {
             "type": [
               "string",
@@ -4011,6 +4114,22 @@
             "type": "string"
           }
         }
+      },
+      "AdminIdeaText": {
+        "type": "object",
+        "description": "Corrected text of a refused idea.",
+        "required": [
+          "text"
+        ],
+        "properties": {
+          "text": {
+            "type": "string",
+            "description": "50 to 4 000 characters, like a submission; personal data is masked the same way.",
+            "maxLength": 4000,
+            "minLength": 50
+          }
+        },
+        "additionalProperties": false
       },
       "AdminJob": {
         "type": "object",
@@ -6612,6 +6731,10 @@
           "personal_data_masked": {
             "type": "boolean",
             "description": "Personal data was masked automatically (`[donnée masquée]`)."
+          },
+          "edited_by_publisher": {
+            "type": "boolean",
+            "description": "The publisher corrected the text before accepting the idea (§8): shown « texte modifié\npar l'éditeur du site ». Declared optional for older clients."
           },
           "attribution": {
             "type": "string",

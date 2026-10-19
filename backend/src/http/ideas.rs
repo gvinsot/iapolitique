@@ -342,6 +342,10 @@ pub struct OriginalText {
     pub text: String,
     /// Personal data was masked automatically (`[donnée masquée]`).
     pub personal_data_masked: bool,
+    /// The publisher corrected the text before accepting the idea (§8): shown « texte modifié
+    /// par l'éditeur du site ». Declared optional for older clients.
+    #[schema(required = false)]
+    pub edited_by_publisher: bool,
     #[schema(example = "Contribution anonyme – iapolitique.fr")]
     pub attribution: String,
     /// Heading shown above the text.
@@ -698,6 +702,7 @@ pub async fn detail(
         original: OriginalText {
             text: original_text,
             personal_data_masked: true,
+            edited_by_publisher: page.text_edited,
             attribution: ATTRIBUTION.to_owned(),
             notice: ORIGINAL_TEXT_NOTICE.to_owned(),
         },

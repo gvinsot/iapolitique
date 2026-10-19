@@ -72,6 +72,7 @@ pub fn routes() -> Router<AppState> {
         .route("/ideas/{id}/hide", post(ideas::hide))
         .route("/ideas/{id}/reject", post(ideas::reject))
         .route("/ideas/{id}/accept", post(ideas::accept))
+        .route("/ideas/{id}/text", put(ideas::edit_text))
         .route("/ideas/{id}/republish", post(ideas::republish))
         .route("/ideas/{id}/reanalyze", post(ideas::reanalyze))
         .route("/ideas/reanalyze-failed", post(ideas::reanalyze_failed))

@@ -16,11 +16,13 @@ use crate::db::ideas::{self, AdminIdeaRow};
 use crate::db::status::{self, Change};
 use crate::domain::status::IdeaStatus;
 use crate::domain::types::{Actor, AnalysisTrigger, HiddenReason, TargetKind};
+use crate::domain::validation::{IDEA_TEXT_LIMITS, validate_text};
 use crate::http::AppState;
 use crate::http::error::{ApiError, ErrorBody};
 use crate::http::extract::{ApiJson, ApiPath, ApiQuery};
 use crate::http::ideas::{SEARCH_MAX_CHARS, optional_text};
 use crate::http::pagination::{PageRequest, page_type};
+use crate::http::submissions::masked;
 use crate::jobs::{pipeline, queue};
 
 /// Longest reason of a masking or a republication.
@@ -42,6 +44,13 @@ pub struct AdminIdea {
     /// Beginning of the masked original text (`null` once purged).
     #[schema(required = true)]
     pub excerpt: Option<String>,
+    /// Whole masked text of a refused idea, which may be corrected before accepting it (`null`
+    /// for any other status and once purged). Declared optional for older clients.
+    #[schema(required = false)]
+    pub text: Option<String>,
+    /// When the administrator corrected its text (`null` if never).
+    #[schema(required = false)]
+    pub text_edited_at: Option<DateTime<Utc>>,
     #[schema(required = true)]
     pub submitted_admin_level: Option<String>,
     pub created_at: DateTime<Utc>,
@@ -81,6 +90,8 @@ impl TryFrom<AdminIdeaRow> for AdminIdea {
             slug: row.slug,
             title: row.title,
             excerpt: row.excerpt,
+            text: row.text,
+            text_edited_at: row.text_edited_at,
             submitted_admin_level: row.submitted_admin_level,
             created_at: row.created_at,
             status_changed_at: row.status_changed_at,
@@ -353,6 +364,75 @@ pub async fn accept(
     admin_actions::record(
         &mut tx,
         &NewAdminAction::new("idea.accept").target("idea", id),
+    )
+    .await?;
+    tx.commit().await?;
+    idea_after(&state, id).await
+}
+
+/// Corrected text of a refused idea.
+#[derive(Debug, Deserialize, ToSchema)]
+#[serde(deny_unknown_fields)]
+pub struct AdminIdeaText {
+    /// 50 to 4 000 characters, like a submission; personal data is masked the same way.
+    #[schema(min_length = 50, max_length = 4000)]
+    pub text: String,
+}
+
+/// Corrects the text of a refused idea before accepting it (§8): validated and masked like a
+/// submission, never screened again (the administrator decides). Once published, the idea
+/// says « texte modifié par l'éditeur du site » (page and exports).
+#[utoipa::path(
+    put,
+    path = "/api/admin/ideas/{id}/text",
+    tag = "admin",
+    operation_id = "editAdminIdeaText",
+    security(("admin_token" = [])),
+    params(("id" = Uuid, Path, description = "Identifiant de l'idée")),
+    request_body = AdminIdeaText,
+    responses(
+        (status = 200, description = "Texte corrigé.", body = AdminIdea),
+        (status = 401, description = "Jeton absent ou invalide.", body = ErrorBody),
+        (status = 404, description = "Idée inconnue (`idea_not_found`).", body = ErrorBody),
+        (status = 409, description = "Idée non refusée, ou texte déjà purgé \
+            (`idea_not_rejected`).", body = ErrorBody),
+        (status = 422, description = "Texte trop court ou trop long (`text_*`).", body = ErrorBody)
+    )
+)]
+pub async fn edit_text(
+    State(state): State<AppState>,
+    ApiPath(id): ApiPath<Uuid>,
+    ApiJson(body): ApiJson<AdminIdeaText>,
+) -> Result<Json<AdminIdea>, ApiError> {
+    let text = validate_text(&body.text, IDEA_TEXT_LIMITS)?;
+    let text = masked(&text, IDEA_TEXT_LIMITS)?;
+    let mut tx = state.pool.begin().await?;
+    exists(&mut tx, id).await?;
+    let current = status::lock::<IdeaStatus>(&mut tx, id)
+        .await
+        .map_err(status_error)?;
+    let updated = current == Some(IdeaStatus::Rejected)
+        && sqlx::query(
+            "UPDATE ideas SET original_text = $2, text_edited_at = now()
+             WHERE id = $1 AND original_text IS NOT NULL",
+        )
+        .bind(id)
+        .bind(&text)
+        .execute(&mut *tx)
+        .await?
+        .rows_affected()
+            == 1;
+    if !updated {
+        return Err(conflict(
+            "idea_not_rejected",
+            "Seul le texte d'une idée refusée, et pas encore effacée, peut être corrigé.",
+        ));
+    }
+    admin_actions::record(
+        &mut tx,
+        &NewAdminAction::new("idea.edit_text")
+            .target("idea", id)
+            .details(json!({ "length": text.chars().count() })),
     )
     .await?;
     tx.commit().await?;

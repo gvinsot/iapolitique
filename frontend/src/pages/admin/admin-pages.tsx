@@ -349,6 +349,12 @@ export function AdminIdeasPage() {
     toast.success("Idée refusée. Elle sera effacée dans 30 jours.");
     await refresh();
   };
+  const editText = async (id: string, text: string) => {
+    await apiClient.PUT("/api/admin/ideas/{id}/text", {
+      params: { path: { id } },
+      body: { text },
+    });
+  };
   const accept = async (id: string) => {
     await apiClient.POST("/api/admin/ideas/{id}/accept", { params: { path: { id } } });
     toast.success("Idée acceptée : son analyse est relancée.");
@@ -410,6 +416,7 @@ export function AdminIdeasPage() {
               onReanalyze={reanalyze}
               onReject={reject}
               onAccept={accept}
+              onEditText={editText}
             />
             <AdminPagination
               page={page.page}

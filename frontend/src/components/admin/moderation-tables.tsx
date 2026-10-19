@@ -25,6 +25,7 @@ import {
 } from "@/components/ui/dialog";
 import { Label } from "@/components/ui/label";
 import { RadioGroup, RadioGroupItem } from "@/components/ui/radio-group";
+import { Textarea } from "@/components/ui/textarea";
 import { useTaxonomy, useTaxonomyLabels } from "@/hooks/use-taxonomy";
 import {
   escalationOutcomeLabels,
@@ -216,6 +217,120 @@ function RejectIdeaDialog({
   );
 }
 
+/** Bounds of the text of an idea, as for a submission (AGENTS.md §5.1). */
+const IDEA_TEXT_MIN = 50;
+const IDEA_TEXT_MAX = 4000;
+
+/**
+ * Acceptance of a refused idea by the administrator, with its text editable beforehand: a
+ * corrected text is saved first (validated and masked like a submission), then the idea is
+ * accepted and resumes the pipeline. Errors of the API stay in the dialog.
+ */
+function AcceptIdeaDialog({
+  name,
+  text,
+  onEditText,
+  onAccept,
+}: {
+  name: string;
+  text: string | null;
+  onEditText: (text: string) => Promise<void>;
+  onAccept: () => Promise<void>;
+}) {
+  const id = useId();
+  const [open, setOpen] = useState(false);
+  const [value, setValue] = useState(text ?? "");
+  const [error, setError] = useState<string | null>(null);
+  const [pending, setPending] = useState(false);
+  const length = value.trim().length;
+  const changed = text !== null && value.trim() !== text.trim();
+
+  const submit = async (event: SubmitEvent<HTMLFormElement>) => {
+    event.preventDefault();
+    if (changed && (length < IDEA_TEXT_MIN || length > IDEA_TEXT_MAX)) {
+      setError(`Texte : entre ${IDEA_TEXT_MIN} et ${IDEA_TEXT_MAX} caractères.`);
+      return;
+    }
+    setPending(true);
+    setError(null);
+    try {
+      if (changed) await onEditText(value.trim());
+      await onAccept();
+      setOpen(false);
+    } catch (cause) {
+      setError(errorMessage(cause));
+    } finally {
+      setPending(false);
+    }
+  };
+
+  return (
+    <Dialog
+      open={open}
+      onOpenChange={(next) => {
+        setOpen(next);
+        if (next) setValue(text ?? "");
+        else setError(null);
+      }}
+    >
+      <DialogTrigger asChild>
+        <Button type="button" size="sm" variant="outline" aria-label={`Accepter « ${name} »`}>
+          Accepter
+        </Button>
+      </DialogTrigger>
+      <DialogContent className="sm:max-w-2xl">
+        <form
+          onSubmit={(event) => {
+            void submit(event);
+          }}
+          noValidate
+          className="space-y-4"
+        >
+          <DialogHeader>
+            <DialogTitle>Accepter cette idée</DialogTitle>
+            <DialogDescription>
+              Le refus est levé : l’idée reprend son traitement (dédoublonnage, puis analyse et
+              chiffrage par IA, 15 minutes ou plus) et sera publiée à la fin de l’analyse.
+            </DialogDescription>
+          </DialogHeader>
+          {text === null ? (
+            <p className="text-sm text-muted-foreground">Le texte de cette idée a été effacé.</p>
+          ) : (
+            <div className="space-y-2">
+              <Label htmlFor={`${id}-text`}>Texte de l’idée (modifiable avant d’accepter)</Label>
+              <Textarea
+                id={`${id}-text`}
+                value={value}
+                rows={10}
+                maxLength={IDEA_TEXT_MAX}
+                onChange={(event) => {
+                  setValue(event.target.value);
+                }}
+                aria-describedby={`${id}-help`}
+              />
+              <p id={`${id}-help`} className="text-xs text-muted-foreground">
+                {length} / {IDEA_TEXT_MAX} caractères. Un texte modifié est validé et masqué comme
+                un dépôt, puis publié avec la mention « texte modifié par l’éditeur du site ».
+              </p>
+            </div>
+          )}
+          {error ? (
+            <p role="alert" className="text-sm font-medium text-destructive">
+              {error}
+            </p>
+          ) : null}
+          <DialogFooter>
+            <Button type="submit" disabled={pending}>
+              {pending ? <Loader2Icon className="animate-spin" aria-hidden="true" /> : null}
+              {changed ? "Enregistrer le texte et accepter" : "Accepter l’idée"}
+            </Button>
+          </DialogFooter>
+        </form>
+      </DialogContent>
+    </Dialog>
+  );
+}
+
 interface IdeasTableProps {
   rows: AdminIdea[];
   onHide: (id: string, reason: string) => Promise<void>;
@@ -223,6 +338,7 @@ interface IdeasTableProps {
   onReanalyze: (id: string) => Promise<void>;
   onReject: (id: string, reasonCode: string) => Promise<void>;
   onAccept: (id: string) => Promise<void>;
+  onEditText: (id: string, text: string) => Promise<void>;
 }
 
 /**
@@ -237,6 +353,7 @@ export function IdeasTable({
   onReanalyze,
   onReject,
   onAccept,
+  onEditText,
 }: IdeasTableProps) {
   return (
     <AdminTable
@@ -339,13 +456,11 @@ export function IdeasTable({
                   />
                 ) : null}
                 {row.status === "rejected" ? (
-                  <ConfirmDialog
-                    trigger="Accepter"
-                    triggerLabel={`Accepter « ${name} »`}
-                    title="Accepter cette idée"
-                    description="Le refus est levé : l’idée reprend son traitement (dédoublonnage, puis analyse et chiffrage par IA, 15 minutes ou plus) et sera publiée à la fin de l’analyse."
-                    confirm="Accepter l’idée"
-                    onConfirm={() => onAccept(row.id)}
+                  <AcceptIdeaDialog
+                    name={name}
+                    text={row.text ?? null}
+                    onEditText={(text) => onEditText(row.id, text)}
+                    onAccept={() => onAccept(row.id)}
                   />
                 ) : null}
                 {["published", "hidden", "analysis_failed"].includes(row.status) ? (

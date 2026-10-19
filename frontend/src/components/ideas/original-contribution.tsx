@@ -8,6 +8,10 @@ import { cn } from "@/lib/utils";
 export const ORIGINAL_CONTRIBUTION_HEADING =
   "Contribution d’un internaute (texte original, données personnelles masquées)";
 
+/** Shown when the publisher corrected the text before accepting the idea (AGENTS.md §8). */
+export const EDITED_BY_PUBLISHER_NOTICE =
+  "Texte modifié par l’éditeur du site avant sa publication.";
+
 /** Anchor of the original text, referenced by the JSON-LD `isBasedOn` (lib/ai-marking.ts). */
 export const ORIGINAL_TEXT_ANCHOR = "texte-original";
 
@@ -16,6 +20,8 @@ interface OriginalContributionProps {
   text: string;
   /** Submission day, `YYYY-MM-DD`. */
   submittedOn?: string | null;
+  /** The publisher corrected the text before accepting the idea. */
+  editedByPublisher?: boolean;
   headingLevel?: 2 | 3;
   className?: string;
 }
@@ -27,6 +33,7 @@ interface OriginalContributionProps {
 export function OriginalContribution({
   text,
   submittedOn,
+  editedByPublisher = false,
   headingLevel = 2,
   className,
 }: OriginalContributionProps) {
@@ -47,6 +54,7 @@ export function OriginalContribution({
       <p className="text-sm text-muted-foreground">
         {CONTRIBUTOR_ATTRIBUTION}
         {submittedOn ? <>, proposée le {formatDate(submittedOn)}</> : null}.
+        {editedByPublisher ? <> {EDITED_BY_PUBLISHER_NOTICE}</> : null}
       </p>
     </section>
   );

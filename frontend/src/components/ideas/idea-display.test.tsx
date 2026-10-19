@@ -84,6 +84,14 @@ describe("AI transparency", () => {
     expect(region).toHaveTextContent(
       "Contribution anonyme – iapolitique.fr, proposée le 1 octobre 2026.",
     );
+    expect(region).not.toHaveTextContent("modifié par l’éditeur");
+  });
+
+  it("says when the publisher corrected the original text", () => {
+    renderComponent(<OriginalContribution text="Texte corrigé." editedByPublisher />);
+    expect(
+      screen.getByText(/Texte modifié par l’éditeur du site avant sa publication/),
+    ).toBeInTheDocument();
   });
 });
 

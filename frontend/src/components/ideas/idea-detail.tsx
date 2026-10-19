@@ -97,7 +97,11 @@ export function IdeaDetailView({ idea, actions }: { idea: IdeaDetail; actions?: 
       </div>
 
       <aside aria-label="Origine et provenance" className="space-y-6">
-        <OriginalContribution text={idea.original.text} headingLevel={2} />
+        <OriginalContribution
+          text={idea.original.text}
+          editedByPublisher={idea.original.edited_by_publisher === true}
+          headingLevel={2}
+        />
         <Provenance idea={idea} />
       </aside>
     </div>

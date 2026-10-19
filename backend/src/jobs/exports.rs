@@ -35,7 +35,7 @@ use crate::domain::scoring::{self, SCORING_VERSION};
 use crate::domain::types::ExportFormat;
 
 /// Version of the layout of the export files; bump it when a field changes.
-pub const EXPORT_SCHEMA_VERSION: &str = "1.1";
+pub const EXPORT_SCHEMA_VERSION: &str = "1.2";
 
 /// Nightly regeneration, Europe/Paris time (after the 03:30 purge).
 pub const SCHEDULE: DailySchedule =
@@ -146,6 +146,7 @@ fn idea_json(host: &str, idea: &ExportedIdea, contributions: &[(String, String)]
             "source_type": "user",
             "attribution": ATTRIBUTION,
             "personal_data_masked": true,
+            "edited_by_publisher": idea.text_edited,
         },
         "analysis": analysis,
         "score": {
@@ -244,6 +245,7 @@ const CSV_COLUMNS: &[&str] = &[
     "date_publication",
     "date_derniere_mise_a_jour",
     "original_text",
+    "original_text_edited_by_publisher",
     "source_type",
     "attribution",
     "title",
@@ -334,6 +336,7 @@ pub fn ideas_csv(host: &str, ideas: &[ExportedIdea]) -> Vec<u8> {
             day(idea.published_on),
             day(idea.updated_on),
             idea.original_text.clone(),
+            idea.text_edited.to_string(),
             "user".to_owned(),
             ATTRIBUTION.to_owned(),
             idea.title.clone(),

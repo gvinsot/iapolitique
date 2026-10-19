@@ -20,6 +20,8 @@ pub struct ExportedIdea {
     pub slug: String,
     /// Masked original text.
     pub original_text: String,
+    /// The publisher corrected the text before accepting the idea (§8).
+    pub text_edited: bool,
     pub proposal_count: i32,
     pub contribution_count: i32,
     pub published_on: NaiveDate,
@@ -59,7 +61,8 @@ pub struct ExportedIdea {
 /// Published ideas, by score (the default ranking of the portal).
 pub async fn published_ideas(pool: &PgPool) -> sqlx::Result<Vec<ExportedIdea>> {
     sqlx::query_as(
-        "SELECT i.id, i.slug, i.original_text, i.proposal_count, i.contribution_count,
+        "SELECT i.id, i.slug, i.original_text, i.text_edited_at IS NOT NULL AS text_edited,
+                i.proposal_count, i.contribution_count,
                 (coalesce(i.first_published_at, i.published_at)
                     AT TIME ZONE 'Europe/Paris')::date AS published_on,
                 (coalesce(i.last_analyzed_at, a.created_at)

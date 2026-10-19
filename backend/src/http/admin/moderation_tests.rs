@@ -720,3 +720,69 @@ async fn refuses_an_idea_from_every_accepted_status(pool: PgPool) {
         ("done", Some("confirmed"))
     );
 }
+
+/// The administrator corrects the text of a refused idea before accepting it (§8): validated
+/// and masked like a submission, refused for any other status; once published, the idea says
+/// « texte modifié par l'éditeur du site ».
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn corrects_the_text_of_a_refused_idea_before_accepting_it(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), false, &[]).await;
+    let idea = published_idea(&pool, "texte-corrige").await;
+    let uri = format!("/api/admin/ideas/{idea}/text");
+    let corrected = "Mutualiser les achats de fournitures des communes voisines, contact : \
+                     jean.dupont@example.fr, pour obtenir de meilleurs prix.";
+
+    // Published: not editable.
+    let (status, body) =
+        admin_call(&app, Method::PUT, &uri, Some(&json!({ "text": corrected }))).await;
+    assert_eq!(status, StatusCode::CONFLICT, "{body}");
+    assert_eq!(body["error"]["code"], "idea_not_rejected");
+
+    let (status, _) = post(
+        &app,
+        &format!("/api/admin/ideas/{idea}/reject"),
+        Some(json!({ "reason_code": "personal_data" })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::OK);
+    let (status, body) = admin_call(
+        &app,
+        Method::PUT,
+        &uri,
+        Some(&json!({ "text": "Trop court." })),
+    )
+    .await;
+    assert_eq!(status, StatusCode::UNPROCESSABLE_ENTITY);
+    assert_eq!(body["error"]["code"], "text_too_short");
+
+    let (status, body) =
+        admin_call(&app, Method::PUT, &uri, Some(&json!({ "text": corrected }))).await;
+    assert_eq!(status, StatusCode::OK, "{body}");
+    let text = body["text"].as_str().unwrap();
+    assert!(text.contains("[donnée masquée]"), "{text}");
+    assert!(!text.contains("example.fr"), "{text}");
+    assert!(body["text_edited_at"].is_string());
+    let (_, list) = admin_get(&app, "/api/admin/ideas?status=rejected").await;
+    assert_eq!(list["items"][0]["text"], text);
+
+    let (status, _) = post(&app, &format!("/api/admin/ideas/{idea}/accept"), None).await;
+    assert_eq!(status, StatusCode::OK);
+    // Published again at the end of its analysis: the page says the publisher edited it.
+    sqlx::query("UPDATE ideas SET status = 'published' WHERE id = $1")
+        .bind(idea)
+        .execute(&pool)
+        .await
+        .unwrap();
+    let (status, _, page) =
+        crate::test_support::get_json(&app.router, "/api/ideas/texte-corrige", &[]).await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(page["original"]["edited_by_publisher"], true);
+    assert_eq!(page["original"]["text"], text);
+
+    let actions: Vec<String> = admin_actions(&pool)
+        .await
+        .into_iter()
+        .map(|a| a.0)
+        .collect();
+    assert_eq!(actions, ["idea.reject", "idea.edit_text", "idea.accept"]);
+}

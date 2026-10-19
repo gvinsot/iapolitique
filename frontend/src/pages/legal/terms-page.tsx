@@ -181,8 +181,9 @@ export function TermsPage() {
         Les consignes données aux modèles, la grille de filtrage et ses seuils sont publiés sur la
         page <Link to={paths.methodology}>Méthodologie</Link>. L’éditeur peut à tout moment masquer
         ou republier une idée, refuser une idée acceptée (même publiée) pour l’un des motifs de
-        l’article 4, accepter une idée refusée (son analyse est alors relancée) et relancer une
-        analyse.
+        l’article 4, accepter une idée refusée (son analyse est alors relancée), au besoin après en
+        avoir corrigé le texte (l’idée porte alors la mention « texte modifié par l’éditeur du site
+        »), et relancer une analyse.
       </p>
 
       <h2 id="mesures">Article 7 – Mesures et durées</h2>

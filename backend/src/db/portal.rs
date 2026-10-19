@@ -202,6 +202,8 @@ pub struct IdeaPage {
     pub slug: String,
     /// Masked original text.
     pub original_text: Option<String>,
+    /// The publisher corrected the text before accepting the idea (§8).
+    pub text_edited: bool,
     pub proposal_count: i32,
     pub contribution_count: i32,
     pub published_on: Option<NaiveDate>,
@@ -213,7 +215,8 @@ pub struct IdeaPage {
 /// The idea of `slug` (whatever its status), `None` when no idea has this slug.
 pub async fn idea_page(pool: &PgPool, slug: &str) -> sqlx::Result<Option<IdeaPage>> {
     sqlx::query_as(
-        "SELECT i.id, i.status, i.slug, i.original_text, i.proposal_count, i.contribution_count,
+        "SELECT i.id, i.status, i.slug, i.original_text, i.text_edited_at IS NOT NULL AS text_edited,
+                i.proposal_count, i.contribution_count,
                 (coalesce(i.first_published_at, i.published_at)
                     AT TIME ZONE 'Europe/Paris')::date AS published_on,
                 i.current_analysis_id,

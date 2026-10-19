@@ -135,6 +135,7 @@ describe("components accessibility audit", () => {
           onReanalyze={vi.fn()}
           onReject={vi.fn()}
           onAccept={vi.fn()}
+          onEditText={vi.fn()}
         />
         <ReportsTable rows={reportsFixture} />
         <EscalationsTable rows={escalationsFixture} onHandle={vi.fn()} />

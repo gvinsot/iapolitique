@@ -117,6 +117,9 @@ pub struct AdminIdeaRow {
     pub title: Option<String>,
     /// Beginning of the masked original text (`None` once purged).
     pub excerpt: Option<String>,
+    /// Whole masked text of a refused idea, which the administrator may correct (§8).
+    pub text: Option<String>,
+    pub text_edited_at: Option<DateTime<Utc>>,
     pub submitted_admin_level: Option<String>,
     pub created_at: DateTime<Utc>,
     pub status_changed_at: DateTime<Utc>,
@@ -136,7 +139,8 @@ pub struct AdminIdeaRow {
 macro_rules! admin_idea_select {
     () => {
         "SELECT i.id, i.status, i.slug, i.title, left(i.original_text, 280) AS excerpt,
-                i.submitted_admin_level, i.created_at, i.status_changed_at,
+                CASE WHEN i.status = 'rejected' THEN i.original_text END AS text,
+                i.text_edited_at, i.submitted_admin_level, i.created_at, i.status_changed_at,
                 i.rejection_reason_code, i.hidden_reason, i.hidden_at, i.parent_idea_id,
                 i.proposal_count, i.contribution_count, i.score_eur,
                 (SELECT count(*) FROM reports r WHERE r.idea_id = i.id AND r.status = 'accepted')

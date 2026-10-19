@@ -129,6 +129,7 @@ describe("moderation tables", () => {
         onReanalyze={onReanalyze}
         onReject={vi.fn()}
         onAccept={vi.fn()}
+        onEditText={vi.fn()}
       />,
     );
 
@@ -158,6 +159,7 @@ describe("moderation tables", () => {
     stubFetch(apiRoutes({ "GET /api/taxonomy": taxonomyFixture }));
     const onReject = vi.fn(() => Promise.resolve());
     const onAccept = vi.fn(() => Promise.resolve());
+    const onEditText = vi.fn(() => Promise.resolve());
     const published = ideasFixture[1];
     if (!published) throw new Error("missing fixture");
     const refused = {
@@ -165,6 +167,7 @@ describe("moderation tables", () => {
       id: "idee-refusee",
       title: "Une idée refusée",
       status: "rejected" as const,
+      text: "Texte refusé de l’idée, assez long pour être modifié avant son acceptation.",
     };
     const { user } = renderComponent(
       <IdeasTable
@@ -174,6 +177,7 @@ describe("moderation tables", () => {
         onReanalyze={vi.fn()}
         onReject={onReject}
         onAccept={onAccept}
+        onEditText={onEditText}
       />,
     );
 
@@ -193,7 +197,23 @@ describe("moderation tables", () => {
     expect(screen.queryByRole("button", { name: "Refuser « Une idée refusée »" })).toBeNull();
     await user.click(screen.getByRole("button", { name: "Accepter « Une idée refusée »" }));
     const accept = await screen.findByRole("dialog", { name: "Accepter cette idée" });
-    await user.click(within(accept).getByRole("button", { name: "Accepter l’idée" }));
+    const textbox = within(accept).getByRole("textbox", {
+      name: "Texte de l’idée (modifiable avant d’accepter)",
+    });
+    expect(textbox).toHaveValue(refused.text);
+    // A corrected text is checked, saved first, then the idea is accepted.
+    await user.clear(textbox);
+    await user.type(textbox, "Trop court.");
+    const save = within(accept).getByRole("button", { name: "Enregistrer le texte et accepter" });
+    await user.click(save);
+    expect(within(accept).getByRole("alert")).toHaveTextContent("entre 50 et 4000 caractères");
+    expect(onEditText).not.toHaveBeenCalled();
+    const corrected =
+      "Mutualiser les achats de fournitures entre les communes voisines du département.";
+    await user.clear(textbox);
+    await user.type(textbox, corrected);
+    await user.click(save);
+    expect(onEditText).toHaveBeenCalledWith("idee-refusee", corrected);
     expect(onAccept).toHaveBeenCalledWith("idee-refusee");
   });
 
@@ -215,6 +235,7 @@ describe("moderation tables", () => {
         onReanalyze={vi.fn()}
         onReject={vi.fn()}
         onAccept={vi.fn()}
+        onEditText={vi.fn()}
       />,
     );
     await user.click(
@@ -235,6 +256,7 @@ describe("moderation tables", () => {
         onReanalyze={vi.fn()}
         onReject={vi.fn()}
         onAccept={vi.fn()}
+        onEditText={vi.fn()}
       />,
     );
     const row = screen.getAllByRole("row")[1];

@@ -264,6 +264,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/ideas/{id}/text": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        /**
+         * Corrects the text of a refused idea before accepting it (§8): validated and masked like a
+         *     submission, never screened again (the administrator decides). Once published, the idea
+         *     says « texte modifié par l'éditeur du site » (page and exports).
+         */
+        put: operations["editAdminIdeaText"];
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/jobs": {
         parameters: {
             query?: never;
@@ -1162,6 +1183,16 @@ export interface components {
             title: string | null;
             /** @description Beginning of the masked original text (`null` once purged). */
             excerpt: string | null;
+            /**
+             * @description Whole masked text of a refused idea, which may be corrected before accepting it (`null`
+             *     for any other status and once purged). Declared optional for older clients.
+             */
+            text?: string | null;
+            /**
+             * Format: date-time
+             * @description When the administrator corrected its text (`null` if never).
+             */
+            text_edited_at?: string | null;
             submitted_admin_level: string | null;
             /** Format: date-time */
             created_at: string;
@@ -1220,6 +1251,11 @@ export interface components {
             slug: string | null;
             title: string | null;
             status: string;
+        };
+        /** @description Corrected text of a refused idea. */
+        AdminIdeaText: {
+            /** @description 50 to 4 000 characters, like a submission; personal data is masked the same way. */
+            text: string;
         };
         /** @description A job of the queue. Payloads and errors hold internal identifiers only (§7.1). */
         AdminJob: {
@@ -2163,6 +2199,11 @@ export interface components {
             text: string;
             /** @description Personal data was masked automatically (`[donnée masquée]`). */
             personal_data_masked: boolean;
+            /**
+             * @description The publisher corrected the text before accepting the idea (§8): shown « texte modifié
+             *     par l'éditeur du site ». Declared optional for older clients.
+             */
+            edited_by_publisher?: boolean;
             /** @example Contribution anonyme – iapolitique.fr */
             attribution: string;
             /** @description Heading shown above the text. */
@@ -2598,6 +2639,7 @@ export type SchemaAdminEscalationSealSummary = components['schemas']['AdminEscal
 export type SchemaAdminIdea = components['schemas']['AdminIdea'];
 export type SchemaAdminIdeaPage = components['schemas']['AdminIdeaPage'];
 export type SchemaAdminIdeaRef = components['schemas']['AdminIdeaRef'];
+export type SchemaAdminIdeaText = components['schemas']['AdminIdeaText'];
 export type SchemaAdminJob = components['schemas']['AdminJob'];
 export type SchemaAdminJobCount = components['schemas']['AdminJobCount'];
 export type SchemaAdminJobLog = components['schemas']['AdminJobLog'];
@@ -3434,6 +3476,69 @@ export interface operations {
                 };
             };
             /** @description Motif absent ou trop long (`invalid_field`). */
+            422: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    editAdminIdeaText: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path: {
+                /** @description Identifiant de l'idée */
+                id: string;
+            };
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["AdminIdeaText"];
+            };
+        };
+        responses: {
+            /** @description Texte corrigé. */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminIdea"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Idée inconnue (`idea_not_found`). */
+            404: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Idée non refusée, ou texte déjà purgé (`idea_not_rejected`). */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Texte trop court ou trop long (`text_*`). */
             422: {
                 headers: {
                     [name: string]: unknown;

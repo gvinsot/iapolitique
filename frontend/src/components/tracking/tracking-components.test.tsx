@@ -257,6 +257,9 @@ describe("SubmissionOutcome", () => {
       screen.getByRole("heading", { level: 2, name: "Merci, c’est enregistré" }),
     ).toHaveFocus();
     expect(screen.getByText(/elle va être améliorée et chiffrée par IA/)).toBeInTheDocument();
+    expect(
+      screen.getByText(/peut facilement prendre plus de 30 minutes.*revenez plus tard/),
+    ).toBeInTheDocument();
     expect(screen.getByText(/il ne sera plus jamais affiché/)).toBeInTheDocument();
     const url = `http://localhost:3000/suivi#${TRACKING_TOKEN}`;
     expect(screen.getByText(url)).toBeInTheDocument();
@@ -279,6 +282,26 @@ describe("SubmissionOutcome", () => {
     expect(window.localStorage.getItem("iapolitique-tracking-links")).toContain(TRACKING_TOKEN);
     await user.click(remember);
     expect(window.localStorage.getItem("iapolitique-tracking-links")).toBeNull();
+  });
+
+  it("warns of the processing delay only for an accepted text that gets analysed", () => {
+    const { unmount } = renderComponent(
+      <SubmissionOutcome
+        kind="contribution"
+        result={acceptedIdeaResultFixture}
+        linkLabel="Contribution"
+      />,
+    );
+    expect(screen.getByText(/La nouvelle analyse de l’idée peut facilement/)).toBeInTheDocument();
+    unmount();
+    renderComponent(
+      <SubmissionOutcome
+        kind="report"
+        result={acceptedIdeaResultFixture}
+        linkLabel="Signalement"
+      />,
+    );
+    expect(screen.queryByText(/plus de 30 minutes/)).not.toBeInTheDocument();
   });
 
   it("gives the refusal reason, the rule and an invitation to rephrase", () => {

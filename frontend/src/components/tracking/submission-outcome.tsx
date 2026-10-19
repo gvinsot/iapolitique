@@ -22,6 +22,13 @@ const ACCEPTED: Record<TrackedKind, string> = {
     "Accusé de réception : votre signalement est enregistré et sera examiné par IA. La suite donnée apparaîtra sur votre lien de suivi.",
 };
 
+/** An analysis takes 15 minutes or more, longer behind a queue (AGENTS.md §6.1). */
+const PROCESSING_DELAY: Partial<Record<TrackedKind, string>> = {
+  idea: "Le traitement de votre idée peut facilement prendre plus de 30 minutes, davantage s’il y a une file d’attente : revenez plus tard, grâce à votre lien de suivi ci-dessous.",
+  contribution:
+    "La nouvelle analyse de l’idée peut facilement prendre plus de 30 minutes, davantage s’il y a une file d’attente : revenez plus tard, grâce à votre lien de suivi ci-dessous.",
+};
+
 const REJECTED_TITLES: Record<TrackedKind, string> = {
   idea: "Votre idée n’a pas été retenue",
   contribution: "Votre contribution n’a pas été retenue",
@@ -83,7 +90,9 @@ export function SubmissionOutcome({ kind, result, linkLabel }: SubmissionOutcome
   const headingId = useId();
   const headingRef = useRef<HTMLHeadingElement>(null);
   const outcome = outcomeOf(kind, result);
-  const rejected = trackingPhase({ kind, status: result.status }) === "rejected";
+  const phase = trackingPhase({ kind, status: result.status });
+  const rejected = phase === "rejected";
+  const delay = outcome.tone === "success" ? PROCESSING_DELAY[kind] : undefined;
 
   useEffect(() => {
     headingRef.current?.focus();
@@ -105,6 +114,12 @@ export function SubmissionOutcome({ kind, result, linkLabel }: SubmissionOutcome
           {outcome.title}
         </h2>
         <p className="text-pretty">{outcome.description}</p>
+        {delay ? (
+          <p className="flex items-start gap-2 text-sm font-medium text-pretty">
+            <HourglassIcon className="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+            {delay}
+          </p>
+        ) : null}
         {rejected ? (
           <p className="text-sm">
             {kind === "idea"

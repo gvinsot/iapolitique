@@ -2,7 +2,8 @@
 //! Conversations API, embeddings. Every HTTP attempt is recorded in `ai_calls` with its usage and
 //! its estimated cost.
 //!
-//! Request and response formats checked against the documentation on 2026-10-18:
+//! Request and response formats checked against the documentation on 2026-10-18 (conversation
+//! outputs again on 2026-10-19, see [`parse_conversation`]):
 //! - API reference and OpenAPI spec: <https://docs.mistral.ai/api/>,
 //!   <https://docs.mistral.ai/openapi.yaml> (`ChatCompletionRequest`, `ResponseFormat`,
 //!   `JsonSchema`, `ChatCompletionResponse`, `UsageInfo`, `ConversationRequest`,
@@ -37,6 +38,7 @@ use sqlx::PgPool;
 use tokio::time::Instant;
 use uuid::Uuid;
 
+use super::outputs::source_url_key;
 use super::prompts::{OutputSchema, RenderedPrompt};
 use crate::config::{MistralConfig, MistralPrices, Secret};
 use crate::db::{self, ai_calls::NewAiCall, provider_alerts};
@@ -323,6 +325,8 @@ struct Attempt<T> {
     retry_after: Option<Duration>,
     /// HTTP 400/422 whose error names `reasoning_effort` ([`mentions_reasoning`]).
     rejects_reasoning: bool,
+    /// Research step: distinct citable pages of the answer (`ai_calls.consulted_pages`).
+    consulted_pages: Option<u64>,
 }
 
 impl<T> Attempt<T> {
@@ -340,6 +344,7 @@ impl<T> Attempt<T> {
             http_status: Some(http_status),
             retry_after: None,
             rejects_reasoning: false,
+            consulted_pages: None,
         }
     }
 }
@@ -600,7 +605,31 @@ impl MistralClient {
                 Err(failure) => return failure.into(),
             };
             let parsed = parse_conversation(&response);
-            Attempt::answered(parsed.research, parsed.usage, parsed.model, http_status)
+            let shape = &parsed.shape;
+            // Structure only (§14.6): never a text, a title or a URL.
+            tracing::info!(
+                purpose = ctx.purpose.as_str(),
+                model = parsed.model.as_deref().unwrap_or(self.model(tier)),
+                reasoning_effort = effort.map_or("omitted", ReasoningEffort::as_str),
+                message_outputs = shape.message_outputs,
+                string_contents = shape.string_contents,
+                tool_executions = shape.tool_executions,
+                other_entries = shape.other_entries,
+                text_chunks = shape.text_chunks,
+                thinking_chunks = shape.thinking_chunks,
+                tool_references = shape.tool_references,
+                tool_references_in_thinking = shape.tool_references_in_thinking,
+                reference_chunks = shape.reference_chunks,
+                other_chunks = shape.other_chunks,
+                consulted_pages = shape.consulted_pages,
+                web_searches = parsed.usage.web_searches,
+                execution_info_keys = shape.execution_info_keys.join(","),
+                "web research answer structure"
+            );
+            let mut attempt =
+                Attempt::answered(parsed.research, parsed.usage, parsed.model, http_status);
+            attempt.consulted_pages = Some(u64::from(shape.consulted_pages));
+            attempt
         })
         .await
     }
@@ -695,6 +724,7 @@ impl MistralClient {
                 input_tokens: attempt.usage.input_tokens,
                 output_tokens: attempt.usage.output_tokens,
                 web_search_count: attempt.usage.web_searches,
+                consulted_pages: attempt.consulted_pages,
                 // The effort really sent: `None` once the model refused it.
                 reasoning_effort: effort,
                 cost,
@@ -902,6 +932,7 @@ impl<T> From<Failure> for Attempt<T> {
             http_status: failure.http_status,
             retry_after: failure.retry_after,
             rejects_reasoning: failure.rejects_reasoning,
+            consulted_pages: None,
         }
     }
 }
@@ -926,9 +957,41 @@ fn output_tokens(response: &Value, input_tokens: u64) -> u64 {
         .max(total.saturating_sub(input_tokens))
 }
 
-/// Type of a content chunk (`text`, `thinking`, `tool_reference`…).
+/// Kind of a content chunk or of a conversation entry. The OpenAPI spec gives every `type` a
+/// default value (`TextChunk.type` defaults to `text`, `ToolReferenceChunk.type` to
+/// `tool_reference`, `MessageOutputEntry.type` to `message.output`…) without making it
+/// required: an object without `type` is recognised by its required fields.
 fn chunk_type(chunk: &Value) -> Option<&str> {
-    chunk.get("type").and_then(Value::as_str)
+    if let Some(kind) = chunk.get("type").and_then(Value::as_str) {
+        return Some(kind);
+    }
+    let has = |key: &str| chunk.get(key).is_some();
+    if chunk.get("thinking").is_some_and(Value::is_array) {
+        Some("thinking")
+    } else if chunk.get("text").is_some_and(Value::is_string) {
+        Some("text")
+    } else if has("tool") && has("title") {
+        Some("tool_reference")
+    } else if has("reference_ids") {
+        Some("reference")
+    } else {
+        None
+    }
+}
+
+/// Kind of a conversation output entry (`message.output`, `tool.execution`…), by `type` or,
+/// without it, by its required fields (`content`; `name` and `arguments`).
+fn entry_type(entry: &Value) -> Option<&str> {
+    if let Some(kind) = entry.get("type").and_then(Value::as_str) {
+        return Some(kind);
+    }
+    if entry.get("content").is_some() {
+        Some("message.output")
+    } else if entry.get("name").is_some() && entry.get("arguments").is_some() {
+        Some("tool.execution")
+    } else {
+        None
+    }
 }
 
 /// The answer of a message `content`: the string itself, or the `text` chunks of a chunk array
@@ -950,16 +1013,25 @@ fn answer_text(content: &Value) -> Option<String> {
     }
 }
 
-/// Adds a `tool_reference` chunk to `references`, unless the same page is already there.
+/// Adds a `tool_reference` chunk to `references`, unless the same page is already there (same
+/// comparison key as INJ-3, [`source_url_key`], or the same raw URL when it has none).
 fn push_reference(references: &mut Vec<WebReference>, chunk: &Value) {
     let text = |key: &str| chunk.get(key).and_then(Value::as_str).map(str::to_owned);
     let reference = WebReference {
         title: text("title").unwrap_or_default(),
-        url: text("url"),
+        url: text("url").filter(|url| !url.trim().is_empty()),
         source: text("source"),
     };
-    let known = references.iter().any(|r| {
-        r.url.is_some() && r.url == reference.url || r.url.is_none() && r.title == reference.title
+    let key = |r: &WebReference| {
+        r.url
+            .as_deref()
+            .map(|url| source_url_key(url).unwrap_or_else(|_| url.to_owned()))
+    };
+    let new_key = key(&reference);
+    let known = references.iter().any(|r| match (&new_key, key(r)) {
+        (Some(new), Some(old)) => *new == old,
+        (None, None) => r.title == reference.title,
+        _ => false,
     });
     if !known {
         references.push(reference);
@@ -1007,16 +1079,104 @@ fn parse_chat(response: &Value) -> ParsedChat {
     }
 }
 
+/// Most `info` keys of the `tool.execution` entries named in the diagnostics.
+const MAX_INFO_KEYS: usize = 12;
+
+/// Structure of a research answer (§6.1): counts and Mistral's own type and key names only,
+/// never a text, a title or a URL (§14.6). Logged once per research answer and summed up in
+/// `ai_calls.consulted_pages`, it tells a model that did not search from references in a shape
+/// the parser misses.
+#[derive(Debug, Clone, Default, PartialEq, Eq, Serialize)]
+pub struct ResearchShape {
+    /// `message.output` entries.
+    pub message_outputs: u32,
+    /// `message.output` entries whose `content` is a plain string (no reference possible).
+    pub string_contents: u32,
+    /// `tool.execution` entries, whatever the tool.
+    pub tool_executions: u32,
+    /// Other entries (`function.call`, `agent.handoff`, unknown).
+    pub other_entries: u32,
+    pub text_chunks: u32,
+    pub thinking_chunks: u32,
+    /// `tool_reference` chunks, inside and outside thinking.
+    pub tool_references: u32,
+    /// Among them, those inside a thinking chunk.
+    pub tool_references_in_thinking: u32,
+    /// `reference` chunks (`reference_ids` only, no page): counted, never cited.
+    pub reference_chunks: u32,
+    pub other_chunks: u32,
+    /// Distinct pages with a publishable http(s) URL: what the analysis may cite.
+    pub consulted_pages: u32,
+    /// Distinct key names of the `info` objects of the `tool.execution` entries (Mistral's
+    /// field names, sanitised), for a shape not documented yet.
+    pub execution_info_keys: Vec<String>,
+}
+
+impl ResearchShape {
+    fn count_chunk(&mut self, kind: Option<&str>, in_thinking: bool) {
+        match kind {
+            Some("text") => self.text_chunks += 1,
+            Some("thinking") => self.thinking_chunks += 1,
+            Some("tool_reference") => {
+                self.tool_references += 1;
+                if in_thinking {
+                    self.tool_references_in_thinking += 1;
+                }
+            }
+            Some("reference") => self.reference_chunks += 1,
+            _ => self.other_chunks += 1,
+        }
+    }
+
+    fn note_info_keys(&mut self, entry: &Value) {
+        let Some(info) = entry.get("info").and_then(Value::as_object) else {
+            return;
+        };
+        for key in info.keys() {
+            // Mistral's field names only: no character a page or a visitor could steer.
+            let name: String = key
+                .chars()
+                .filter(|c| c.is_ascii_alphanumeric() || *c == '_')
+                .take(32)
+                .collect();
+            if !name.is_empty()
+                && !self.execution_info_keys.contains(&name)
+                && self.execution_info_keys.len() < MAX_INFO_KEYS
+            {
+                self.execution_info_keys.push(name);
+            }
+        }
+    }
+}
+
+/// Number of distinct pages of `references` whose URL can be published ([`source_url_key`]).
+pub fn consulted_page_count(references: &[WebReference]) -> usize {
+    references
+        .iter()
+        .filter_map(|r| r.url.as_deref())
+        .filter_map(|url| source_url_key(url).ok())
+        .collect::<HashSet<_>>()
+        .len()
+}
+
 struct ParsedConversation {
     research: Result<Research, MistralError>,
     usage: Usage,
     model: Option<String>,
+    shape: ResearchShape,
 }
 
 /// Text and references of the `message.output` entries; web searches counted from the
-/// `tool.execution` entries and from `usage.connectors`, whichever is larger. A `thinking`
-/// chunk (reasoning, §6.1) contributes only its `tool_reference` chunks — pages the web search
-/// returned, citable like the others —, never its text.
+/// `tool.execution` entries and from `usage.connectors`, whichever is larger. Shapes of the
+/// OpenAPI spec (checked on 2026-10-19): `ConversationResponse.outputs` holds
+/// `MessageOutputEntry`, `ToolExecutionEntry` (`name`, `arguments`, free-form `info`),
+/// `FunctionCallEntry`, `AgentHandoffEntry`; a `MessageOutputEntry.content` is a string or
+/// chunks (`TextChunk`, `ThinkChunk`, `ToolReferenceChunk` with `tool`, `title`, `url`?,
+/// `favicon`?, `description`?, and `source` in the web search guide, images, files); a
+/// `ThinkChunk.thinking` holds `TextChunk`, `ToolReferenceChunk` and `ReferenceChunk`
+/// (`reference_ids` only). A page is citable only from a `tool_reference` chunk, inside or
+/// outside thinking: the search tool writes it, not the model. Thinking text is never read;
+/// `info` is not documented and only its key names are noted.
 fn parse_conversation(response: &Value) -> ParsedConversation {
     let outputs = response
         .get("outputs")
@@ -1027,9 +1187,12 @@ fn parse_conversation(response: &Value) -> ParsedConversation {
     let mut references: Vec<WebReference> = Vec::new();
     let mut executions = 0u64;
     let mut model = None;
+    let mut shape = ResearchShape::default();
     for entry in outputs {
-        match entry.get("type").and_then(Value::as_str) {
+        match entry_type(entry) {
             Some("tool.execution") => {
+                shape.tool_executions += 1;
+                shape.note_info_keys(entry);
                 if entry
                     .get("name")
                     .and_then(Value::as_str)
@@ -1039,6 +1202,7 @@ fn parse_conversation(response: &Value) -> ParsedConversation {
                 }
             }
             Some("message.output") => {
+                shape.message_outputs += 1;
                 if model.is_none() {
                     model = entry
                         .get("model")
@@ -1048,16 +1212,23 @@ fn parse_conversation(response: &Value) -> ParsedConversation {
                 let Some(content) = entry.get("content") else {
                     continue;
                 };
+                if content.is_string() {
+                    shape.string_contents += 1;
+                }
                 if let Some(answer) = answer_text(content) {
                     text.push_str(&answer);
                 }
                 for chunk in content.as_array().map(Vec::as_slice).unwrap_or_default() {
-                    match chunk_type(chunk) {
+                    let kind = chunk_type(chunk);
+                    shape.count_chunk(kind, false);
+                    match kind {
                         Some("tool_reference") => push_reference(&mut references, chunk),
                         Some("thinking") => {
                             let inner = chunk.get("thinking").and_then(Value::as_array);
                             for inner in inner.map(Vec::as_slice).unwrap_or_default() {
-                                if chunk_type(inner) == Some("tool_reference") {
+                                let kind = chunk_type(inner);
+                                shape.count_chunk(kind, true);
+                                if kind == Some("tool_reference") {
                                     push_reference(&mut references, inner);
                                 }
                             }
@@ -1066,9 +1237,10 @@ fn parse_conversation(response: &Value) -> ParsedConversation {
                     }
                 }
             }
-            _ => {}
+            _ => shape.other_entries += 1,
         }
     }
+    shape.consulted_pages = u32::try_from(consulted_page_count(&references)).unwrap_or(u32::MAX);
     let connector_searches: u64 = response
         .pointer("/usage/connectors")
         .and_then(Value::as_object)
@@ -1100,6 +1272,7 @@ fn parse_conversation(response: &Value) -> ParsedConversation {
         research,
         usage,
         model,
+        shape,
     }
 }
 
@@ -1667,6 +1840,18 @@ mod tests {
             "conversation_malformed" => {
                 include_str!("../../tests/fixtures/mistral/conversation_reasoning_malformed.json")
             }
+            "conversation_thinking_only" => include_str!(
+                "../../tests/fixtures/mistral/conversation_references_in_thinking_only.json"
+            ),
+            "conversation_no_tool" => {
+                include_str!("../../tests/fixtures/mistral/conversation_no_tool_call.json")
+            }
+            "conversation_execution_only" => {
+                include_str!("../../tests/fixtures/mistral/conversation_execution_only.json")
+            }
+            "conversation_untyped" => {
+                include_str!("../../tests/fixtures/mistral/conversation_untyped_chunks.json")
+            }
             other => panic!("unknown fixture {other}"),
         };
         serde_json::from_str(text).unwrap()
@@ -1778,6 +1963,159 @@ mod tests {
             MistralError::InvalidOutput("empty research answer".into())
         );
         assert_eq!(malformed.usage.output_tokens, 4_000);
+    }
+
+    fn urls(research: &Research) -> Vec<&str> {
+        research
+            .references
+            .iter()
+            .filter_map(|r| r.url.as_deref())
+            .collect()
+    }
+
+    /// Every documented shape of a research answer (OpenAPI spec and web search guide): the
+    /// pages cited are the `tool_reference` chunks, inside or outside thinking, with or without
+    /// their default `type`; nothing else, whatever the text, the thinking or `info` say (INJ-3).
+    #[test]
+    fn research_references_are_read_from_every_documented_shape() {
+        let ccomptes = "https://www.ccomptes.fr/fr/publications/achats-hopitaux";
+        let phare = "https://www.economie.gouv.fr/dae/programme-phare";
+
+        // References inside thinking only, the same page three ways (slash, utm_*, http and
+        // fragment): one page per comparison key, in order of appearance.
+        let parsed = parse_conversation(&fixture("conversation_thinking_only"));
+        let research = parsed.research.unwrap();
+        assert_eq!(
+            research.text,
+            "1. Mesure étudiée : mutualiser les achats [S1] [S2]."
+        );
+        assert_eq!(
+            urls(&research),
+            [
+                "https://www.ccomptes.fr/fr/publications/achats-hopitaux/",
+                "https://www.economie.gouv.fr/dae/programme-phare?utm_source=search"
+            ]
+        );
+        assert_eq!(parsed.shape.tool_references, 3);
+        assert_eq!(parsed.shape.tool_references_in_thinking, 3);
+        assert_eq!(parsed.shape.consulted_pages, 2);
+        assert_eq!(parsed.usage.web_searches, 2);
+
+        // Defaults left out: entries and chunks recognised by their required fields.
+        let parsed = parse_conversation(&fixture("conversation_untyped"));
+        let research = parsed.research.unwrap();
+        assert_eq!(
+            research.text,
+            "1. Mesure étudiée : mutualiser les achats [S1]."
+        );
+        assert_eq!(urls(&research), [phare, ccomptes]);
+        assert_eq!(
+            research.references.len(),
+            3,
+            "the page without URL is kept apart"
+        );
+        assert_eq!(parsed.shape.consulted_pages, 2);
+        assert_eq!(parsed.shape.tool_executions, 1);
+        assert!(!format!("{research:?}").contains(THINKING_MARKER));
+
+        // The model did not call the tool: a plain string answer, no page, whatever URL its
+        // text writes.
+        let parsed = parse_conversation(&fixture("conversation_no_tool"));
+        let research = parsed.research.unwrap();
+        assert!(research.references.is_empty());
+        assert_eq!(parsed.shape.string_contents, 1);
+        assert_eq!(parsed.shape.tool_executions, 0);
+        assert_eq!(parsed.shape.consulted_pages, 0);
+        assert_eq!(parsed.usage.web_searches, 0);
+
+        // A search ran but no reference came back: `info` and the text are never a source, its
+        // key names only are noted (sanitised).
+        let parsed = parse_conversation(&fixture("conversation_execution_only"));
+        let research = parsed.research.unwrap();
+        assert!(research.references.is_empty());
+        assert_eq!(parsed.shape.consulted_pages, 0);
+        assert_eq!(parsed.usage.web_searches, 1);
+        assert_eq!(parsed.shape.execution_info_keys, ["queryscript", "results"]);
+
+        // Reasoning high: `reference` chunks (ids only) are counted, never cited.
+        let parsed = parse_conversation(&fixture("conversation_high"));
+        assert_eq!(parsed.shape.reference_chunks, 1);
+        assert_eq!(parsed.shape.thinking_chunks, 1);
+        assert_eq!(
+            parsed.shape.text_chunks, 3,
+            "two answer chunks and the thinking text"
+        );
+        assert_eq!(parsed.shape.tool_references_in_thinking, 1);
+        assert_eq!(parsed.shape.consulted_pages, 2);
+        assert_eq!(parsed.shape.execution_info_keys, ["query", "results_count"]);
+        assert_eq!(urls(&parsed.research.unwrap()), [phare, ccomptes]);
+    }
+
+    /// One INFO line per research answer, with its structure only: never a text, a title, a URL
+    /// or the thinking (§14.6). The number of pages is recorded in `ai_calls`.
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn research_structure_is_logged_and_recorded_without_any_text(pool: PgPool) {
+        for (name, pages) in [
+            ("conversation_high", 2),
+            ("conversation_none", 1),
+            ("conversation_thinking_only", 2),
+            ("conversation_no_tool", 0),
+            ("conversation_execution_only", 0),
+            ("conversation_untyped", 2),
+        ] {
+            sqlx::query("TRUNCATE ai_calls")
+                .execute(&pool)
+                .await
+                .unwrap();
+            let server = MockServer::start().await;
+            Mock::given(path("/v1/conversations"))
+                .respond_with(ResponseTemplate::new(200).set_body_json(fixture(name)))
+                .expect(1)
+                .mount(&server)
+                .await;
+            let prompt = test_prompts()
+                .analysis_research
+                .render(
+                    &PromptVars::new()
+                        .set("today", "2026-10-19")
+                        .set("idea_text", "Idée"),
+                )
+                .unwrap();
+            let client = client(&server);
+            let (completion, logs) = crate::http::security_tests::capture_logs(client.research(
+                &pool,
+                &CallContext::new(AiPurpose::AnalysisResearch),
+                ModelTier::Analysis,
+                &prompt,
+            ))
+            .await;
+            completion.unwrap();
+            let lines: Vec<&str> = logs
+                .lines()
+                .filter(|l| l.contains("web research answer structure"))
+                .collect();
+            assert_eq!(lines.len(), 1, "{name}: {logs}");
+            let line = lines[0];
+            assert!(
+                line.contains(&format!("\"consulted_pages\":{pages}")),
+                "{name}: {line}"
+            );
+            assert!(!line.contains("http"), "{name}: {line}");
+            assert!(line.contains("high"), "{name}: {line}");
+            assert!(line.contains("mistral-large-4-0"), "{name}: {line}");
+            for secret in [
+                THINKING_MARKER,
+                "ccomptes",
+                "evil.example",
+                "Mesure étudiée",
+                "fonction achats",
+                "PHARE",
+            ] {
+                assert!(!logs.contains(secret), "{name}: {secret} logged: {logs}");
+            }
+            let calls = calls(&pool).await;
+            assert_eq!(calls[0]["consulted_pages"], pages, "{name}");
+        }
     }
 
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]

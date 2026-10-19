@@ -24,6 +24,9 @@ pub struct NewAiCall {
     pub input_tokens: u64,
     pub output_tokens: u64,
     pub web_search_count: u64,
+    /// Web research (§6.1): distinct pages of the answer that an analysis may cite; `None` for
+    /// the other calls and for a research call without an answer.
+    pub consulted_pages: Option<u64>,
     /// `reasoning_effort` sent to Mistral (§6.1); `None` when omitted or not applicable.
     pub reasoning_effort: Option<ReasoningEffort>,
     pub cost: MicroEur,
@@ -48,6 +51,7 @@ impl NewAiCall {
             input_tokens: 0,
             output_tokens: 0,
             web_search_count: 0,
+            consulted_pages: None,
             reasoning_effort: None,
             cost: MicroEur::ZERO,
             latency: Duration::ZERO,
@@ -69,8 +73,8 @@ pub async fn insert<'e>(executor: impl PgExecutor<'e>, call: &NewAiCall) -> sqlx
     let (id,): (i64,) = sqlx::query_as(
         "INSERT INTO ai_calls (provider, purpose, model, target_kind, target_id, idea_id, job_id,
              prompt_version, input_tokens, output_tokens, web_search_count, cost_micro_eur,
-             latency_ms, status, http_status, error_code, reasoning_effort)
-         VALUES ($1, $2, $3, $4, $5, (SELECT id FROM ideas WHERE id = $6::uuid), $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17)
+             latency_ms, status, http_status, error_code, reasoning_effort, consulted_pages)
+         VALUES ($1, $2, $3, $4, $5, (SELECT id FROM ideas WHERE id = $6::uuid), $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18)
          RETURNING id",
     )
     .bind(call.provider.as_str())
@@ -95,6 +99,7 @@ pub async fn insert<'e>(executor: impl PgExecutor<'e>, call: &NewAiCall) -> sqlx
     )
     .bind(call.error_code.as_deref())
     .bind(call.reasoning_effort.map(ReasoningEffort::as_str))
+    .bind(call.consulted_pages.map(clamp_i32))
     .fetch_one(executor)
     .await?;
     Ok(id)
@@ -166,6 +171,7 @@ mod tests {
             ("status", serde_json::json!("timeout")),
             ("http_status", serde_json::json!(504)),
             ("error_code", serde_json::json!("timeout")),
+            ("consulted_pages", serde_json::Value::Null),
         ] {
             assert_eq!(row[column], expected, "{column}");
         }

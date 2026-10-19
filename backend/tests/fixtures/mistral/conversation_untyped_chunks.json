@@ -1,0 +1,40 @@
+{
+  "conversation_id": "conv_untyped",
+  "outputs": [
+    {
+      "id": "tool_exec_1",
+      "name": "web_search",
+      "arguments": "{\"query\": \"achats hospitaliers\"}"
+    },
+    {
+      "id": "msg_1",
+      "model": "mistral-large-4-0",
+      "content": [
+        {
+          "thinking": [
+            { "text": "PENSEE-PRIVEE every type left to its default." },
+            {
+              "tool": "web_search",
+              "title": "Le programme PHARE",
+              "url": "https://www.economie.gouv.fr/dae/programme-phare"
+            }
+          ]
+        },
+        { "text": "1. Mesure étudiée : mutualiser les achats [S1]." },
+        {
+          "tool": "web_search",
+          "title": "La fonction achats des hôpitaux",
+          "url": "https://www.ccomptes.fr/fr/publications/achats-hopitaux"
+        },
+        { "tool": "web_search", "title": "Page sans adresse", "url": null }
+      ]
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 3000,
+    "completion_tokens": 700,
+    "total_tokens": 9700,
+    "connector_tokens": 6000,
+    "connectors": { "web_search": 1 }
+  }
+}

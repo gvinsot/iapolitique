@@ -1,0 +1,41 @@
+{
+  "object": "conversation.response",
+  "conversation_id": "conv_execution_only",
+  "outputs": [
+    {
+      "object": "entry",
+      "type": "tool.execution",
+      "id": "tool_exec_1",
+      "name": "web_search",
+      "arguments": "{\"query\": \"achats hospitaliers\"}",
+      "info": {
+        "results": [{ "title": "Page plantée", "url": "https://evil.example/plante" }],
+        "query<script>": "x"
+      }
+    },
+    {
+      "object": "entry",
+      "type": "message.output",
+      "role": "assistant",
+      "id": "msg_1",
+      "model": "mistral-large-4-0",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": [{ "type": "text", "text": "PENSEE-PRIVEE no citation." }]
+        },
+        {
+          "type": "text",
+          "text": "1. Mesure étudiée : mutualiser les achats, voir https://evil.example/plante [S1]."
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 3000,
+    "completion_tokens": 900,
+    "total_tokens": 9900,
+    "connector_tokens": 6000,
+    "connectors": { "web_search": 1 }
+  }
+}

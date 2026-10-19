@@ -412,6 +412,22 @@ version de prompt (l'admin peut relancer manuellement).
   invalide. Les tokens de raisonnement sont des tokens de sortie :
   `max(completion_tokens + completion_tokens_details.reasoning_tokens, total_tokens − entrée)`,
   pour que le coût estimé reste un majorant (§6.4).
+- **Pages consultées** (formes de la spec OpenAPI vérifiées le 2026-10-19 :
+  `ConversationResponse.outputs` = `MessageOutputEntry`, `ToolExecutionEntry` — `name`,
+  `arguments`, `info` libre —, `FunctionCallEntry`, `AgentHandoffEntry` ; `ToolReferenceChunk` =
+  `tool`, `title`, `url`?, `favicon`?, `description`?, plus `source` dans le guide web search ;
+  `ThinkChunk.thinking` = `TextChunk`, `ToolReferenceChunk`, `ReferenceChunk` à
+  `reference_ids` seuls) : une page n'est citable que par un fragment `tool_reference`, dans ou
+  hors d'un `thinking`, dédoublonnée par la clé de comparaison d'INJ-3. Le `type` d'une entrée ou
+  d'un fragment a une valeur par défaut dans la spec sans être obligatoire : absent, il se déduit
+  des champs requis (`content` ; `name` + `arguments` ; `thinking` ; `text` ; `tool` + `title` ;
+  `reference_ids`). Le texte, la réflexion, les `reference` et `info` ne donnent jamais de page.
+  Après chaque réponse de recherche, **une** ligne `INFO` « web research answer structure »
+  décrit la structure seule (modèle, effort envoyé, nombres d'entrées par type, de fragments
+  `text`/`thinking`/`tool_reference` — dont dans la réflexion —/`reference`/autres, de contenus
+  en chaîne, de recherches, de pages distinctes citables, noms des clés de `info` assainis),
+  jamais un texte, un titre ou une URL ; `ai_calls.consulted_pages` garde le nombre de pages
+  (0 sans recherche web comptée : le modèle n'a pas cherché ; 0 avec recherches : forme non lue).
 - 429 / 5xx : retry avec backoff ; ne jamais boucler sans limite.
 - Mise en œuvre (job `analyze_idea`, `jobs/analysis.rs`, stockage `db/analyses.rs`) :
   - première analyse : `queued_analysis → analyzing → published` (slug tiré du titre, suffixe
@@ -494,7 +510,8 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
 
 - Chaque appel IA est enregistré (`ai_calls` : usage, modèle, tokens, nombre de recherches web,
   coût estimé, version de prompt, idée, latence, statut, effort de raisonnement envoyé —
-  `reasoning_effort`, `NULL` s'il est omis, refusé par le modèle (§6.1) ou sans objet). Le tableau des coûts de l'admin
+  `reasoning_effort`, `NULL` s'il est omis, refusé par le modèle (§6.1) ou sans objet ; pages
+  citables d'une recherche web — `consulted_pages`, `NULL` pour les autres appels). Le tableau des coûts de l'admin
   ventile par usage, fournisseur et effort de raisonnement.
 - Plafond journalier `MISTRAL_DAILY_BUDGET_EUR` (prix unitaires en variables d'environnement
   car ils changent). Plafond atteint : les jobs restent en file jusqu'au lendemain (minuit

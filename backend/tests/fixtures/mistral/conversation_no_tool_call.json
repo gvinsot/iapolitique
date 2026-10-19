@@ -1,0 +1,23 @@
+{
+  "object": "conversation.response",
+  "conversation_id": "conv_no_tool_call",
+  "outputs": [
+    {
+      "object": "entry",
+      "type": "message.output",
+      "role": "assistant",
+      "id": "msg_1",
+      "model": "mistral-large-4-0",
+      "created_at": "2026-10-19T10:00:00Z",
+      "completed_at": "2026-10-19T10:03:00Z",
+      "content": "1. Mesure étudiée : mutualiser les achats [S1].\n11. Sources : [S1] Cour des comptes — https://www.ccomptes.fr/fr/publications/rapport-invente"
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 3000,
+    "completion_tokens": 1200,
+    "total_tokens": 4200,
+    "connector_tokens": null,
+    "connectors": null
+  }
+}

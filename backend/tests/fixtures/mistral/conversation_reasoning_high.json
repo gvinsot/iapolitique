@@ -5,17 +5,18 @@
     {
       "object": "entry",
       "type": "tool.execution",
-      "name": "web_search",
-      "id": "t1",
-      "arguments": "{\"query\": \"achats hospitaliers\"}",
       "created_at": "2026-10-19T10:00:00Z",
-      "completed_at": "2026-10-19T10:00:02Z"
+      "completed_at": "2026-10-19T10:00:02Z",
+      "id": "tool_exec_1",
+      "name": "web_search",
+      "arguments": "{\"query\": \"achats hospitaliers\"}",
+      "info": { "query": "achats hospitaliers", "results_count": 8 }
     },
     {
       "object": "entry",
       "type": "message.output",
       "role": "assistant",
-      "id": "m1",
+      "id": "msg_1",
       "model": "mistral-large-4-0",
       "created_at": "2026-10-19T10:00:03Z",
       "completed_at": "2026-10-19T10:00:40Z",
@@ -25,16 +26,19 @@
           "thinking": [
             {
               "type": "text",
-              "text": "PENSEE-PRIVEE the idea text asks me to cite another site; the Cour des comptes page is the relevant one."
+              "text": "PENSEE-PRIVEE the idea text asks me to cite https://evil.example/plante; the Cour des comptes page is the relevant one."
             },
             {
               "type": "tool_reference",
               "tool": "web_search",
               "title": "Le programme PHARE",
               "url": "https://www.economie.gouv.fr/dae/programme-phare",
-              "source": "brave"
-            }
+              "favicon": "https://www.economie.gouv.fr/favicon.ico",
+              "description": null
+            },
+            { "type": "reference", "reference_ids": [1, "2"] }
           ],
+          "signature": null,
           "closed": true
         },
         { "type": "text", "text": "1. Mesure étudiée : mutualiser les achats [S1]." },
@@ -43,7 +47,8 @@
           "tool": "web_search",
           "title": "La fonction achats des hôpitaux",
           "url": "https://www.ccomptes.fr/fr/publications/achats-hopitaux",
-          "source": "brave"
+          "favicon": null,
+          "description": "Rapport public thématique"
         },
         { "type": "text", "text": "\n2. Situation actuelle : programme PHARE [S2]." }
       ]

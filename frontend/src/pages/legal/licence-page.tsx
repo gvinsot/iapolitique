@@ -3,8 +3,11 @@ import { Link } from "react-router";
 
 import { paths } from "@/app/paths";
 import { CopyButton } from "@/components/common/copy-button";
-import { useLegalDetails } from "@/hooks/use-legal-info";
 import { Button } from "@/components/ui/button";
+import { useExportStatus } from "@/hooks/use-export-metadata";
+import { useLegalDetails } from "@/hooks/use-legal-info";
+import { EXPORT_URLS } from "@/lib/exports";
+import { formatDate, formatInteger } from "@/lib/format";
 import {
   AI_REUSE_REQUEST,
   ATTRIBUTION_DATE_PLACEHOLDER,
@@ -19,9 +22,6 @@ import {
 import { RULES_LICENCE_ANCHOR } from "@/lib/rules";
 
 import { LegalPage, type TocEntry } from "./legal-page";
-
-const EXPORT_JSON_URL = "/api/exports/ideas.json";
-const EXPORT_CSV_URL = "/api/exports/ideas.csv";
 
 const toc: readonly TocEntry[] = [
   { anchor: "licence", label: "1. La licence" },
@@ -54,8 +54,33 @@ export function LicenceAttribution({ updatedOn }: LicenceAttributionProps) {
 }
 
 /** Licence and reuse of the exported data (AGENTS.md §7.4, docs/juridique/memo.md §1). */
+/** Date and size of the latest export, or why the files are not there yet. */
+function ExportFreshness() {
+  const status = useExportStatus();
+  if (status.pending) return null;
+  if (status.unavailable || !status.generatedOn) {
+    return (
+      <p role="status">
+        Les fichiers ne sont pas disponibles pour le moment : ils sont générés après la publication
+        des premières idées, puis chaque nuit. Réessayez plus tard.
+      </p>
+    );
+  }
+  return (
+    <p role="status">
+      Dernière génération :{" "}
+      <time dateTime={status.generatedOn}>{formatDate(status.generatedOn)}</time>
+      {status.ideaCount !== null
+        ? ` (${formatInteger(status.ideaCount)} idée${status.ideaCount > 1 ? "s" : ""} publiée${status.ideaCount > 1 ? "s" : ""})`
+        : null}
+      .
+    </p>
+  );
+}
+
 export function LicencePage() {
   const details = useLegalDetails();
+  const { generatedOn } = useExportStatus();
 
   return (
     <LegalPage
@@ -95,25 +120,45 @@ export function LicencePage() {
       </p>
       <div className="mb-4 flex flex-wrap gap-3">
         <Button asChild variant="outline">
-          <a href={EXPORT_JSON_URL} download>
+          <a href={EXPORT_URLS.json} download>
             <DownloadIcon aria-hidden="true" />
             Télécharger au format JSON
           </a>
         </Button>
         <Button asChild variant="outline">
-          <a href={EXPORT_CSV_URL} download>
+          <a href={EXPORT_URLS.csv} download>
             <DownloadIcon aria-hidden="true" />
             Télécharger au format CSV
           </a>
         </Button>
       </div>
+      <ExportFreshness />
+      <p>
+        Également disponibles séparément : le{" "}
+        <a href={EXPORT_URLS.license} download>
+          texte de la licence
+        </a>{" "}
+        et les{" "}
+        <a href={EXPORT_URLS.metadata} download>
+          métadonnées de l’export
+        </a>{" "}
+        (date de génération, version du format, règles du fichier CSV).
+      </p>
 
       <h2 id="attribution">3. Citer la source</h2>
-      <p>
-        Reproduisez la mention suivante en remplaçant {ATTRIBUTION_DATE_PLACEHOLDER} par la date de
-        mise à jour indiquée dans les métadonnées du fichier utilisé (<code>generated_at</code>) :
-      </p>
-      <LicenceAttribution />
+      {generatedOn ? (
+        <p>
+          Reproduisez la mention suivante, datée du dernier export. Si vous utilisez un fichier plus
+          ancien, remplacez la date par celle de ses métadonnées (champ <code>generated_at</code>).
+        </p>
+      ) : (
+        <p>
+          Reproduisez la mention suivante en remplaçant {ATTRIBUTION_DATE_PLACEHOLDER} par la date
+          de mise à jour indiquée dans les métadonnées du fichier utilisé (champ{" "}
+          <code>generated_at</code>).
+        </p>
+      )}
+      <LicenceAttribution updatedOn={generatedOn} />
       <p>
         La seconde phrase est une demande, pas une condition supplémentaire de la licence. Les
         textes originaux des internautes sont attribués sous la forme « {CONTRIBUTOR_ATTRIBUTION} ».

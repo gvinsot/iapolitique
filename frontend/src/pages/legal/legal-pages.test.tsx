@@ -137,6 +137,38 @@ describe("legal pages", () => {
     expect(await screen.findByText("Copié dans le presse-papiers.")).toBeInTheDocument();
   });
 
+  it("dates the attribution from the latest export", async () => {
+    const legal = legalApi();
+    stubFetch((request) =>
+      new URL(request.url).pathname === "/api/exports/metadata.json"
+        ? Response.json({ generated_at: "2026-10-19", idea_count: 6, licence: {} })
+        : legal(request),
+    );
+    renderRoute("/licence");
+    expect(await screen.findByText(/Dernière génération/)).toHaveTextContent(
+      "Dernière génération : 19 octobre 2026 (6 idées publiées).",
+    );
+    expect(screen.getByText(/mise à jour du 2026-10-19 – Licence Ouverte 2.0$/)).toBeVisible();
+    expect(screen.getByRole("link", { name: "texte de la licence" })).toHaveAttribute(
+      "href",
+      "/api/exports/LICENSE",
+    );
+  });
+
+  it("says when no export was generated yet", async () => {
+    const legal = legalApi();
+    stubFetch((request) =>
+      new URL(request.url).pathname === "/api/exports/metadata.json"
+        ? Response.json(
+            { error: { code: "exports_unavailable", message: "Aucun export." } },
+            { status: 503 },
+          )
+        : legal(request),
+    );
+    renderRoute("/licence");
+    expect(await screen.findByText(/ne sont pas disponibles pour le moment/)).toBeInTheDocument();
+  });
+
   it("invites to copy by hand when the clipboard is unavailable", async () => {
     stubFetch(legalApi());
     const { user } = renderRoute("/licence");

@@ -3,8 +3,10 @@
 //
 // seed.py published an idea whose analysis the mock Mistral filled with payloads (title,
 // summary, every list, sources with hostile http(s) URLs, contribution summaries), an idea whose
-// visitor text carries HTML, a report (details, reporter name) and an admin right of reply with
-// payloads. This script opens every page that renders them, public and admin, in Chromium and
+// visitor text carries HTML, a report (details, reporter name), an admin right of reply with
+// payloads, and a second hostile idea escalated by a report, whose sealed copy (§7.5, D3) holds
+// the payloads of its analysis. This script opens every page that renders them, public and
+// admin (the sealed copy after the explicit click that its page requires), in Chromium and
 // Firefox, and fails when:
 //   - a payload runs: `window.__xss` is set (a trap records any write), a dialog opens, or the
 //     CSP reports a violation (an injected inline handler or script would be blocked AND
@@ -176,7 +178,23 @@ async function runBrowser(browserType) {
     if (ideaId) {
       adminPages.push([`/admin/idees/${ideaId}/reponses`, ['<img src=x onerror="window.__xss=14">']]);
     }
+    adminPages.push(["/admin/copies-scellees", []]);
     for (const [path, texts] of adminPages) await visit(page, browserName, ADMIN_ORIGIN + path, texts);
+
+    // Sealed copy of the escalated hostile idea: fetched only after the explicit click (each
+    // read is journaled), then rendered as plain text.
+    const escalationId = SEED.escalation?.escalation_id;
+    if (!escalationId) throw new Error("seed.json has no escalation (re-run seed.py)");
+    const sealUrl = `${ADMIN_ORIGIN}/admin/escalades/${encodeURIComponent(escalationId)}/copie-scellee`;
+    await page.goto(sealUrl);
+    await inspect(page, browserName, `${sealUrl} (before the click)`, ["Consultation journalisée"]);
+    await page.getByRole("button", { name: "Afficher la copie scellée" }).click();
+    await page.getByRole("article", { name: "Copie scellée" }).waitFor();
+    await inspect(page, browserName, `${sealUrl} (revealed)`, [
+      "=HYPERLINK(",
+      "<script>window.__xss=2</script>",
+      '<img src=x onerror="window.__xss=1">',
+    ]);
   } catch (error) {
     problems.push(`[${browserName}] ${String(error.message ?? error).split("\n")[0]}`);
   } finally {

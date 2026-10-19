@@ -158,7 +158,11 @@ de charges XSS (`<img onerror>`, `</script><script>`, `<svg onload>`, `<iframe s
 attributs cassés), de formules CSV (`=HYPERLINK(…)`, `+SUM`, `-`, `@`) et d'URL `https://` porteuses
 de charges, citées par la recherche web pour passer le contrôle INJ-3. S'y ajoutent une idée dont
 le texte du visiteur contient du HTML (acceptée par le modèle de décision, donc publiée), une
-contribution, un signalement (nom du signalant `<script>…`) et un droit de réponse admin.
+contribution, un signalement (nom du signalant `<script>…`) et un droit de réponse admin. Depuis
+la décision D3, une seconde idée hostile est signalée en `contenu_problematique` : masquée et
+escaladée par la revue, sa copie scellée (titre, résumé, analyse porteurs de charges) est ouverte
+par `xss_check.mjs`, avec la liste des copies scellées, après le clic « Afficher la copie
+scellée » que la page exige (lecture journalisée).
 
 Résultats :
 
@@ -337,9 +341,9 @@ par période, une seule ERROR journalisée, puis publication complète.
 
 | Script | Rôle |
 |---|---|
-| `seed.py` | idées publiées, charges hostiles à travers toute la chaîne, aller-retour CSV |
+| `seed.py` | idées publiées, charges hostiles à travers toute la chaîne, idée hostile escaladée (copie scellée), aller-retour CSV |
 | `probes.py` | sondes manuelles (en-têtes de chaque famille de réponses, CORS, CSRF, `Origin` et `Host`, corps et en-têtes démesurés, isolement de l'admin, réutilisation des connexions, `X-Forwarded-For`) |
-| `xss_check.mjs` | XSS stocké dans Chromium et Firefox : piège sur `window.__xss`, dialogues, violations de CSP, éléments injectés, JSON-LD, liens de sources |
+| `xss_check.mjs` | XSS stocké dans Chromium et Firefox, pages publiques et admin (copies scellées comprises : liste, puis copie affichée après le clic) : piège sur `window.__xss`, dialogues, violations de CSP, éléments injectés, JSON-LD, liens de sources |
 | `zap.sh` | ZAP baseline (frontend), API scan (spec committée), scan actif ciblé (routes publiques, paramètres réels, règles alpha) ; triage par `zap-rules.tsv`, synthèse par `zap_summary.py` |
 | `trivy.sh` | vulnérabilités `HIGH`/`CRITICAL` corrigeables des images runtime de l'api et du frontend (Trivy épinglé, archive `docker save` scannée hors ligne, base gardée dans le volume `iapolitique_trivy_cache`) ; exceptions dans `trivy-ignore.yaml` (raison et date d'expiration) ; lançable seul : `devops/dev/security/trivy.sh [répertoire]` |
 

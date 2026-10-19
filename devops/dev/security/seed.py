@@ -13,7 +13,10 @@ mock Mistral (devops/dev/mock_mistral.py), it publishes:
   - a contribution, a report (payloads in `details` and `reporter_name`) and an admin right of
     reply (payload in `body`) on that idea;
   - one idea whose visitor text itself carries HTML (published or refused by the decision
-    model: both are recorded).
+    model: both are recorded);
+  - a second hostile idea, reported as `contenu_problematique`: the mock review hides and
+    escalates it, so that its sealed copy (AGENTS.md §7.5, D3), full of the payloads of its
+    analysis, can be rendered by the admin pages of xss_check.mjs.
 
 Then it waits for the exports and checks the CSV round trip: every cell that starts with
 `=`, `+`, `-`, `@`, TAB or CR is prefixed with `'` (AGENTS.md §14.1).
@@ -51,6 +54,11 @@ VISITOR_HTML_IDEA = (
 CONTRIBUTION = (
     "Il faudrait préciser que les contrats régionaux restent ouverts aux petites entreprises de "
     "maintenance locales grâce à un découpage en lots adapté (complément sondexss)."
+)
+ESCALATED_IDEA = (
+    "Vendre aux enchères les véhicules de service inutilisés des préfectures et des directions "
+    "départementales plutôt que de les laisser vieillir sur les parkings, afin de dégager des "
+    "recettes et d'économiser l'assurance et l'entretien (escalade sondexss)."
 )
 REPORT_DETAILS = "Le chiffrage me semble surestimé <svg/onload=window.__xss=12> (sondexss)."
 REPORTER_NAME = "<script>window.__xss=13</script>"
@@ -93,6 +101,30 @@ def try_publish(api: e2e.Api, text: str) -> dict:
     )
     return {"status": item["status"], "slug": (item.get("idea") or {}).get("slug"),
             "token": token}
+
+
+def escalate(api: e2e.Api) -> dict:
+    """Publishes a second hostile idea and has it escalated by a `contenu_problematique` report
+    (no details: accepted without the decision model, and the mock review stays out of its
+    hostile mode, which never escalates). Returns the escalation and its idea."""
+    _, slug = publish(api, ESCALATED_IDEA)
+    body = {"reason": "contenu_problematique", "good_faith": True, "altcha": api.altcha()}
+    status, answer = api.post(f"/api/ideas/{slug}/reports", body, ip=api.next_ip())
+    e2e.expect(status == 201 and answer["status"] != "rejected",
+               f"escalation report accepted ({status}, {answer.get('status')})")
+    e2e.wait_for("escalation report reviewed",
+                 e2e.track_status(api, answer["tracking_token"], "reviewed"), timeout=180)
+
+    def escalation() -> dict | None:
+        status, page = api.admin_call("GET", "/escalations?status=pending&per_page=50")
+        if status != 200:
+            return None
+        return next((e for e in page["items"] if e["idea"]["slug"] == slug), None)
+
+    item = e2e.wait_for("hostile idea escalated", escalation, timeout=60)
+    status, _ = api.admin_call("GET", f"/escalations/{item['id']}/seal")
+    e2e.expect(status == 200, f"sealed copy of the escalated hostile idea ({status})")
+    return {"escalation_id": item["id"], "slug": slug}
 
 
 def check_csv(api: e2e.Api, hostile_slug: str) -> dict:
@@ -167,6 +199,7 @@ def main() -> None:
 
     visitor_html = try_publish(api, VISITOR_HTML_IDEA)
     print(f"      visitor-HTML idea: {visitor_html['status']}")
+    escalation = escalate(api)
 
     # The contribution re-analysis may still be running: wait until the hostile idea is
     # published again before checking the exports.
@@ -181,6 +214,7 @@ def main() -> None:
         "contribution": contribution,
         "report": report,
         "visitor_html_idea": visitor_html,
+        "escalation": escalation,
         "csv": csv_result,
         "seconds": round(time.monotonic() - started),
     }

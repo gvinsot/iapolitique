@@ -481,7 +481,9 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
     ce qui s'y rattache (historique, analyses, embedding, contributions et signalements
     d'autres visiteurs, doublons fusionnés ; leurs jetons deviennent inconnus), un doublon
     fusionné quitte aussi l'idée parente (compteur de propositions décrémenté), une idée
-    publiée ou masquée quitte le site et les exports sont régénérés (job `generate_exports`) ;
+    publiée ou masquée quitte le site et les exports sont régénérés (job `generate_exports`),
+    une escalade en attente part avec l'idée mais laisse dans le journal admin l'action
+    `escalation.deleted_by_author` (identifiants de l'idée et de l'escalade, date, aucun texte) ;
     contribution → la ligne, et son résumé est retiré de `contributions_considered` des
     analyses (exports régénérés si elle était intégrée) ; signalement → la ligne et les
     coordonnées du signalant. Dans tous les cas : demande de réexamen, jobs en file et
@@ -635,7 +637,9 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
   (diffamation, menace, haine, terrorisme, pédocriminalité) : masquage immédiat et file admin
   « escalade » (transmission manuelle à PHAROS, cible 24 h) ; l'admin la clôt avec `outcome`
   (`transmitted` ou `dismissed`) et une note facultative ; l'idée reste masquée (republication
-  séparée).
+  séparée). Si l'auteur supprime l'idée avant la clôture, l'entrée disparaît mais le journal
+  admin garde `escalation.deleted_by_author` (§7.1) ; refuser cette suppression ou garder une
+  copie scellée du texte reste à décider (mémo juridique, section 5).
 - **Droit de réponse** (LCEN art. 1-1 III) : l'admin peut publier une réponse attachée à une
   idée (insertion sous 3 jours) : table `rights_of_reply` (`author_label`, `body` en texte
   brut, `requested_on`), affichée par `GET /api/ideas/{slug}`, effacée avec l'idée (suppression

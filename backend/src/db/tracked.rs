@@ -10,7 +10,8 @@
 //!   tracking tokens, which then answer like unknown tokens); a merged duplicate also leaves the
 //!   idea it was merged into (whose proposal counter goes down). A published or masked idea
 //!   leaves the site at once and the open data exports are regenerated; copies already
-//!   downloaded cannot be recalled (§7.4).
+//!   downloaded cannot be recalled (§7.4). A pending escalation of the idea goes with it, and
+//!   the admin journal records `escalation.deleted_by_author` (identifiers only).
 //! - **contribution**: the contribution row and its history; its neutral summary is removed from
 //!   the analyses of the idea, and the exports are regenerated if it had been taken into account.
 //! - **report**: the report row, its history and the reporter's contact.
@@ -20,10 +21,12 @@
 //! stay, without text, for calibration (§7.3). The author's token becomes a tombstone that
 //! confirms the deletion for 30 days.
 
-use chrono::NaiveDate;
+use chrono::{DateTime, NaiveDate, Utc};
+use serde_json::json;
 use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
+use super::admin_actions::{self, NewAdminAction};
 use super::tracking::{self, TokenHash};
 use crate::domain::types::{ReviewOutcome, ReviewRequestStatus, TargetKind};
 use crate::jobs::pipeline::exports_job;
@@ -191,6 +194,32 @@ async fn delete_idea(conn: &mut PgConnection, id: Uuid) -> sqlx::Result<()> {
     let Some((status, parent)) = row else {
         return Ok(());
     };
+    // A pending escalation (serious content awaiting transmission to PHAROS, §7.5) goes with
+    // the idea: the admin journal keeps a trace of it, identifiers only (AUTHZ-1).
+    let escalation: Option<(Uuid, DateTime<Utc>)> = sqlx::query_as(
+        "SELECT id, created_at FROM escalations WHERE idea_id = $1 AND status = 'pending'
+         FOR UPDATE",
+    )
+    .bind(id)
+    .fetch_optional(&mut *conn)
+    .await?;
+    if let Some((escalation_id, created_at)) = escalation {
+        admin_actions::record(
+            conn,
+            &NewAdminAction::new("escalation.deleted_by_author")
+                .target("idea", id)
+                .details(json!({
+                    "escalation_id": escalation_id,
+                    "escalation_created_at": created_at,
+                })),
+        )
+        .await?;
+        tracing::warn!(
+            idea_id = %id,
+            escalation_id = %escalation_id,
+            "escalated idea deleted by its author before the escalation was handled"
+        );
+    }
     let contributions = ids(conn, "SELECT id FROM contributions WHERE idea_id = $1", id).await?;
     let reports = ids(conn, "SELECT id FROM reports WHERE idea_id = $1", id).await?;
     let duplicates = ids(conn, "SELECT id FROM ideas WHERE parent_idea_id = $1", id).await?;

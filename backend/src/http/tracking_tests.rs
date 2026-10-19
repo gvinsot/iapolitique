@@ -525,3 +525,54 @@ async fn deleting_a_merged_duplicate_or_a_contribution(pool: PgPool) {
     );
     assert_eq!(track(&app, &token).await.1["status"], "deleted");
 }
+
+/// AUTHZ-1 (phase 1): an author who deletes an idea escalated for serious content leaves a
+/// trace in the admin journal (identifiers only), so that the PHAROS queue is not silently
+/// emptied.
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn deleting_an_escalated_idea_leaves_a_trace_for_the_admin(pool: PgPool) {
+    let app = TestApp::new(pool.clone(), false, &[]).await;
+    let idea = published_idea(&pool, "mutualiser-achats").await;
+    sqlx::query(
+        "UPDATE ideas SET status = 'hidden', hidden_at = now(), hidden_reason = 'escalation'
+         WHERE id = $1",
+    )
+    .bind(idea)
+    .execute(&pool)
+    .await
+    .unwrap();
+    let escalation: Uuid =
+        sqlx::query_scalar("INSERT INTO escalations (idea_id) VALUES ($1) RETURNING id")
+            .bind(idea)
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    let author = token_for(&pool, TargetKind::Idea, idea).await;
+
+    let (status, _) = app
+        .post("/api/track/delete", &json!({ "token": author }))
+        .await;
+    assert_eq!(status, StatusCode::OK);
+    assert_eq!(count(&pool, "SELECT count(*) FROM ideas").await, 0);
+    let actions: Vec<(String, Option<String>, Option<String>, Value)> = sqlx::query_as(
+        "SELECT action, target_kind, target_id, details FROM admin_actions ORDER BY id",
+    )
+    .fetch_all(&pool)
+    .await
+    .unwrap();
+    assert_eq!(actions.len(), 1, "{actions:?}");
+    let (action, kind, target, details) = &actions[0];
+    assert_eq!(action, "escalation.deleted_by_author");
+    assert_eq!(kind.as_deref(), Some("idea"));
+    assert_eq!(target.as_deref(), Some(idea.to_string().as_str()));
+    assert_eq!(details["escalation_id"], json!(escalation));
+    assert!(details["escalation_created_at"].is_string());
+    assert!(!details.to_string().contains("Mutualiser"));
+
+    // Without a pending escalation, a deletion leaves no admin trace.
+    let other = published_idea(&pool, "autre-idee").await;
+    let other_author = token_for(&pool, TargetKind::Idea, other).await;
+    app.post("/api/track/delete", &json!({ "token": other_author }))
+        .await;
+    assert_eq!(count(&pool, "SELECT count(*) FROM admin_actions").await, 1);
+}

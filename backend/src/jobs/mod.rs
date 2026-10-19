@@ -35,6 +35,9 @@ pub mod reports;
 pub mod schedule;
 pub mod worker;
 
+#[cfg(test)]
+mod auth_tests;
+
 /// Queue priorities: a higher value is claimed first (AGENTS.md §6.4:
 /// second opinion > report > new idea > contribution > admin relaunch).
 pub mod priority {

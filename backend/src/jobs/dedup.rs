@@ -12,6 +12,8 @@
 //!
 //! In doubt, no merge: when the embedding cannot be obtained (non transient Mistral error, or
 //! the last attempt of the job failed), the idea goes on to its analysis without deduplication.
+//! A refused API key (401/403) is a configuration error, not such a failure: the job waits for a
+//! working key without consuming an attempt (`jobs::guard`), the idea staying in `dedup`.
 //! An idea deleted by its author meanwhile, or no longer waiting for deduplication, is left
 //! alone.
 
@@ -73,6 +75,9 @@ impl JobHandler for DedupHandler {
 
             let outcome = match search(ctx, client, idea_id, &text, job.id).await {
                 Ok(outcome) => outcome,
+                // Configuration error: wait for a working key rather than analyse without
+                // duplicate detection (the idea stays in `dedup`).
+                Err(err) if err.is_auth() => return guard::auth_postponed(ctx).await,
                 Err(err) if err.is_transient() && job.attempts < job.max_attempts => {
                     return Err(JobError::Transient(err.to_string()));
                 }

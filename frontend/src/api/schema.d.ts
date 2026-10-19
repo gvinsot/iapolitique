@@ -89,6 +89,27 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/admin/ideas/reanalyze-failed": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /**
+         * Puts every idea whose analysis failed back in the queue (`analysis_failed →
+         *     queued_analysis`, trigger `admin`), oldest first, 500 per request; one admin action
+         *     `idea.reanalyze_failed` with their identifiers.
+         */
+        post: operations["reanalyzeFailedAdminIdeas"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/admin/ideas/{id}/hide": {
         parameters: {
             query?: never;
@@ -806,6 +827,46 @@ export interface components {
             next_reset: string;
             by_purpose: components["schemas"]["AdminPurposeCost"][];
         };
+        /**
+         * @description A configuration alert in progress: the jobs concerned wait (no attempt consumed) until it
+         *     ends by itself at the first accepted call.
+         */
+        AdminAlert: {
+            /** @description `mistral_auth`: Mistral refuses the API key (HTTP 401 or 403). */
+            code: string;
+            /**
+             * Format: date-time
+             * @description First refusal of the alert.
+             */
+            since: string;
+            /**
+             * Format: date-time
+             * @description Last refusal.
+             */
+            last_seen_at: string;
+            /** Format: int32 */
+            http_status: number | null;
+            /**
+             * Format: int64
+             * @description Refused calls since the beginning of the alert.
+             */
+            failures: number;
+            /** @description French message to display as is. */
+            message: string;
+        };
+        /** @description Result of a bulk re-analysis. */
+        AdminBulkReanalysis: {
+            /**
+             * Format: int64
+             * @description Ideas moved from `analysis_failed` to `queued_analysis`.
+             */
+            requeued: number;
+            /**
+             * Format: int64
+             * @description Ideas still in `analysis_failed` (beyond the 500 of one request): call again.
+             */
+            remaining: number;
+        };
         /** @description One criterion of a screening: probability of passing it, thresholds applied, verdict. */
         AdminCriterionScore: {
             key: string;
@@ -836,6 +897,11 @@ export interface components {
             adjusted: boolean;
         };
         AdminDashboard: {
+            /**
+             * @description Configuration alerts in progress, oldest first (empty when all is well). Always sent;
+             *     declared optional so that clients built before it keep compiling.
+             */
+            alerts?: components["schemas"]["AdminAlert"][];
             jobs: components["schemas"]["AdminJobSummary"];
             /** Format: int32 */
             screening_window_days: number;
@@ -2210,6 +2276,8 @@ export interface components {
 export type SchemaAdminAction = components['schemas']['AdminAction'];
 export type SchemaAdminActionPage = components['schemas']['AdminActionPage'];
 export type SchemaAdminAiCosts = components['schemas']['AdminAiCosts'];
+export type SchemaAdminAlert = components['schemas']['AdminAlert'];
+export type SchemaAdminBulkReanalysis = components['schemas']['AdminBulkReanalysis'];
 export type SchemaAdminCriterionScore = components['schemas']['AdminCriterionScore'];
 export type SchemaAdminCriterionThresholds = components['schemas']['AdminCriterionThresholds'];
 export type SchemaAdminDashboard = components['schemas']['AdminDashboard'];
@@ -2542,6 +2610,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+            /** @description Jeton absent ou invalide. */
+            401: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ErrorBody"];
+                };
+            };
+        };
+    };
+    reanalyzeFailedAdminIdeas: {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description Analyses mises en file. */
+            202: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["AdminBulkReanalysis"];
                 };
             };
             /** @description Jeton absent ou invalide. */

@@ -281,7 +281,8 @@ n'appeler que `/v1/systemone`.
   informé via son lien de suivi. Jobs `screen_idea` / `screen_contribution` / `screen_report` : backoff exponentiel
   plafonné à 1 h, 20 tentatives (une panne d'environ une demi-journée), puis `dead` (admin). Le
   job `second_opinion` (5 tentatives) échoue définitivement sur une erreur Mistral non
-  transitoire (4xx hors 408/429) ; le texte reste alors en `second_opinion` jusqu'à l'admin.
+  transitoire (4xx hors 401/403/408/429) ; le texte reste alors en `second_opinion` jusqu'à
+  l'admin. Une clé refusée (401/403) n'est pas un échec du job : voir [§6.4](#64-budget).
 - Les scores bruts sont stockés pour **calibrer les seuils** (l'admin peut étiqueter des
   décisions, voir [§8](#8-administration-lan-uniquement), et les exporter au format du banc
   `docs/calibration/bench_screening.py`). Les probabilités ne sont pas
@@ -303,8 +304,9 @@ n'appeler que `/v1/systemone`.
   parmi les idées `published` uniquement, puis `merged` (contribution `doublon` acceptée de
   l'idée parente, sans texte : celui de l'idée fusionnée est fourni à la ré-analyse, déclencheur
   `merge`) ou `queued_analysis` (première analyse). Si l'embedding est impossible (erreur
-  Mistral non transitoire, ou dernière tentative du job), l'idée part en analyse sans
-  dédoublonnage.
+  Mistral non transitoire autre qu'une clé refusée, ou dernière tentative du job), l'idée part
+  en analyse sans dédoublonnage. Une clé refusée (401/403) ne fait jamais sauter le
+  dédoublonnage : l'idée reste en `dedup` et le job attend une clé valide (§6.4).
 
 ### 5.5 Contributions (améliorations et objections)
 
@@ -366,8 +368,8 @@ version de prompt (l'admin peut relancer manuellement).
 - Mise en œuvre (job `analyze_idea`, `jobs/analysis.rs`, stockage `db/analyses.rs`) :
   - première analyse : `queued_analysis → analyzing → published` (slug tiré du titre, suffixe
     `-2`, `-3`… en cas de collision, jamais modifié ensuite) ; sortie encore invalide après les
-    3 tentatives du client, erreur Mistral non transitoire ou dernière tentative du job :
-    `analysis_failed` (motif `analysis_failed`) et job `dead` ;
+    3 tentatives du client, erreur Mistral non transitoire (hors clé refusée, §6.4) ou dernière
+    tentative du job : `analysis_failed` (motif `analysis_failed`) et job `dead` ;
   - ré-analyse d'une idée `published` ou `hidden` : entrées = analyse courante, contributions
     `accepted` (20 au plus par analyse, un doublon fusionné y figure avec le texte de l'idée
     fusionnée) et corrections des revues `update` non encore appliquées
@@ -446,6 +448,19 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
 - Plafond journalier `MISTRAL_DAILY_BUDGET_EUR` (prix unitaires en variables d'environnement
   car ils changent). Plafond atteint : les jobs restent en file jusqu'au lendemain (minuit
   Europe/Paris) ; les seconds avis attendent aussi (l'auteur voit « en cours de vérification »).
+- **Clé refusée** (HTTP 401 ou 403 de Mistral) : erreur de **configuration**, traitée comme une
+  clé absente, jamais comme un échec (`jobs/guard.rs`, `db/provider_alerts.rs`). Le client
+  enregistre l'alerte `mistral_auth` (table `provider_alerts` : début, dernier refus, statut
+  HTTP, nombre de refus) et journalise **un seul** événement `ERROR` par heure (jamais un par
+  job, jamais la clé) ; le job (analyse, dédoublonnage, second avis, revue de signalement) est
+  replanifié sans consommer de tentative ni changer d'étape, 15 min plus tard puis jusqu'à 1 h
+  (un quart de l'âge de l'alerte). Pendant l'alerte, un seul job par période appelle Mistral
+  pour vérifier la clé, les autres sont replanifiés sans appel ; l'api ne tente plus le second
+  avis en ligne (le job en file prend le relais). Le premier appel qui franchit
+  l'authentification (réponse, sortie invalide, autre 4xx) clôt l'alerte. Le tableau de bord
+  admin l'affiche (`alerts`, « Clé Mistral refusée depuis le … ») ; les idées passées en
+  `analysis_failed` avant la correction se relancent en masse
+  (`POST /api/admin/ideas/reanalyze-failed`, §13.2).
 - Priorité de la file : second avis > signalement > nouvelle idée > contribution > relance admin.
 - QA : plafond bien plus bas (dans `.env.qa`).
 
@@ -681,8 +696,9 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
   `/admin/…` du host public vers `https://ADMIN_HOST/admin…` (routeur
   `iapolitique-admin-redirect`, priorité 50, `global@file`, `noop@internal`) : les pages admin ne
   s'exécutent pas sur l'origine publique.
-- Fonctions : tableau de bord (file de jobs, taux d'acceptation, coûts IA du jour/mois), idées
-  masquées et signalements, masquer/republier, relancer une analyse, consulter les scores bruts
+- Fonctions : tableau de bord (file de jobs, taux d'acceptation, coûts IA du jour/mois, alertes
+  de configuration comme une clé Mistral refusée), idées masquées et signalements,
+  masquer/republier, relancer une analyse ou toutes les analyses échouées, consulter les scores bruts
   du modèle de décision, **étiqueter** des décisions (accepter/refuser à raison) pour calibrer
   les seuils, réglage des seuils de doublon et de filtrage.
 - Toute action admin est journalisée (`admin_actions`).
@@ -828,7 +844,7 @@ configuration liste tous les problèmes et empêche le démarrage) :
 |---|---|---|
 | `DATABASE_CONNECTION_STRING` | **requis** | URL `postgres://` (secret). Une liste d'hôtes `h1,h2` est réduite au premier. |
 | `ADMIN_API_TOKEN`, `ALTCHA_HMAC_KEY` | **requis pour l'api** | secrets, 32 caractères minimum |
-| `MISTRAL_API_KEY` | absent | secret ; sans clé, le worker laisse les jobs IA en file (avertissement) ; un handler IA appelé sans client replanifie son job 1 h plus tard (`jobs/guard.rs`), sans le faire échouer |
+| `MISTRAL_API_KEY` | absent | secret ; sans clé, le worker laisse les jobs IA en file (avertissement) ; un handler IA appelé sans client replanifie son job 1 h plus tard (`jobs/guard.rs`), sans le faire échouer ; une clé refusée (401/403) est traitée de même, avec alerte au tableau de bord (§6.4) |
 | `BIND_ADDRESS`, `PUBLIC_PORT`, `ADMIN_PORT`, `WORKER_HEALTH_PORT` | `0.0.0.0`, 8080, 8081, 8082 | écoute |
 | `HTTP_REQUEST_TIMEOUT_SECS`, `HTTP_BODY_LIMIT_BYTES` | 30, 65536 | limites HTTP |
 | `TRUSTED_PROXY_HOPS` | 1 | nombre de proxys (Traefik) qui ajoutent à `X-Forwarded-For` |
@@ -888,13 +904,14 @@ total_pages }`) et refusent les paramètres inconnus (`400 invalid_query`).
 | Méthode | Route | Rôle |
 |---|---|---|
 | GET | `/api/admin/session` | vérifie le jeton (`200 { "authenticated": true }` ou `401` ; `429 admin_locked` pendant un verrouillage, §14.4) |
-| GET | `/api/admin/dashboard` | `{ jobs: { queued, running, succeeded, dead, by_kind: [{ kind, status, count }] }, screening_window_days (30), screening: [{ kind, total, accepted, rejected, gray_zone, errors, acceptance_rate, rejection_rate, gray_zone_rate, second_opinion_accept, second_opinion_reject, labeled }], ai_costs: { today_eur, month_eur, daily_budget_eur, remaining_today_eur, budget_reached, next_reset, by_purpose: [{ purpose, provider, calls_today, calls_month, today_eur, month_eur }] }, queues: { escalations_pending, review_requests_pending, ideas_analysis_failed, texts_second_opinion, texts_submitted_stale, ideas_hidden, reports_awaiting_review, jobs_dead } }` (jour et mois Europe/Paris) |
+| GET | `/api/admin/dashboard` | `{ alerts: [{ code (mistral_auth), since, last_seen_at, http_status, failures, message (français, « Clé Mistral refusée depuis le JJ/MM/AAAA à HH:MI (HTTP 401) : … ») }] (toujours présent, vide sans alerte ; facultatif dans la spec pour les anciens clients), jobs: { queued, running, succeeded, dead, by_kind: [{ kind, status, count }] }, screening_window_days (30), screening: [{ kind, total, accepted, rejected, gray_zone, errors, acceptance_rate, rejection_rate, gray_zone_rate, second_opinion_accept, second_opinion_reject, labeled }], ai_costs: { today_eur, month_eur, daily_budget_eur, remaining_today_eur, budget_reached, next_reset, by_purpose: [{ purpose, provider, calls_today, calls_month, today_eur, month_eur }] }, queues: { escalations_pending, review_requests_pending, ideas_analysis_failed, texts_second_opinion, texts_submitted_stale, ideas_hidden, reports_awaiting_review, jobs_dead } }` (jour et mois Europe/Paris) |
 | GET | `/api/admin/jobs` | jobs, filtres `status`, `kind` ; plus récents d'abord |
 | POST | `/api/admin/jobs/{id}/retry` | remet en file un job `dead` (tentatives remises à zéro) → `200` job ; `404 job_not_found`, `409 job_not_dead` / `job_already_queued` (même clé de dédoublonnage en file) ; action `job.retry` |
 | GET | `/api/admin/ideas` | idées de tout statut, filtre `status`, recherche `q` (identifiant, ou partie du slug, du titre, du résumé ou du texte, sans accents ni casse) ; plus récemment changées d'abord ; extrait du texte masqué, motifs, signalements en attente, réexamen et escalade en attente |
 | POST | `/api/admin/ideas/{id}/hide` | `{ reason }` (1 000 caractères) : `published → hidden` (`hidden_reason = admin`), exports régénérés → `200` idée ; `409 idea_not_published` ; action `idea.hide` |
 | POST | `/api/admin/ideas/{id}/republish` | `{ reason }` : `hidden → published` (champs de masquage effacés), exports régénérés ; `409 idea_not_hidden` ; action `idea.republish` |
 | POST | `/api/admin/ideas/{id}/reanalyze` | analyse déclencheur `admin` d'une idée `published`/`hidden`, ou `analysis_failed → queued_analysis` → `202 { queued, status }` (`queued: false` si une analyse était déjà en file) ; `409 reanalysis_not_available` ; action `idea.reanalyze` |
+| POST | `/api/admin/ideas/reanalyze-failed` | sans corps : toutes les idées `analysis_failed` (500 au plus par appel, plus anciennes d'abord) passent `queued_analysis` avec un job d'analyse (déclencheur `admin`) → `202 { requeued, remaining }` (`remaining` > 0 : rappeler) ; action `idea.reanalyze_failed` (`count`, `remaining`, `idea_ids`), journalisée même à vide |
 | GET | `/api/admin/reports` | signalements (filtres `status`, `reason`, `idea_id`) avec idée, précision masquée, coordonnées facultatives du signalant et revue (`outcome`, `escalate`, `explanation`, `corrections`) |
 | GET | `/api/admin/escalations` | file d'escalade (filtre `status` `pending`/`done`, en attente d'abord, plus anciennes d'abord) avec `due_at` (cible 24 h) et explication de la revue |
 | POST | `/api/admin/escalations/{id}/handle` | `{ outcome: transmitted\|dismissed, note? }` (2 000 caractères) → `200` ; `404 escalation_not_found`, `409 escalation_already_handled` ; action `escalation.handle` |

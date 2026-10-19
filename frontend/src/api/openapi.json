@@ -387,6 +387,42 @@
         ]
       }
     },
+    "/api/admin/ideas/reanalyze-failed": {
+      "post": {
+        "tags": [
+          "admin"
+        ],
+        "summary": "Puts every idea whose analysis failed back in the queue (`analysis_failed →\nqueued_analysis`, trigger `admin`), oldest first, 500 per request; one admin action\n`idea.reanalyze_failed` with their identifiers.",
+        "operationId": "reanalyzeFailedAdminIdeas",
+        "responses": {
+          "202": {
+            "description": "Analyses mises en file.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminBulkReanalysis"
+                }
+              }
+            }
+          },
+          "401": {
+            "description": "Jeton absent ou invalide.",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorBody"
+                }
+              }
+            }
+          }
+        },
+        "security": [
+          {
+            "admin_token": []
+          }
+        ]
+      }
+    },
     "/api/admin/ideas/{id}/hide": {
       "post": {
         "tags": [
@@ -2875,6 +2911,70 @@
           }
         }
       },
+      "AdminAlert": {
+        "type": "object",
+        "description": "A configuration alert in progress: the jobs concerned wait (no attempt consumed) until it\nends by itself at the first accepted call.",
+        "required": [
+          "code",
+          "since",
+          "last_seen_at",
+          "http_status",
+          "failures",
+          "message"
+        ],
+        "properties": {
+          "code": {
+            "type": "string",
+            "description": "`mistral_auth`: Mistral refuses the API key (HTTP 401 or 403)."
+          },
+          "since": {
+            "type": "string",
+            "format": "date-time",
+            "description": "First refusal of the alert."
+          },
+          "last_seen_at": {
+            "type": "string",
+            "format": "date-time",
+            "description": "Last refusal."
+          },
+          "http_status": {
+            "type": [
+              "integer",
+              "null"
+            ],
+            "format": "int32"
+          },
+          "failures": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Refused calls since the beginning of the alert."
+          },
+          "message": {
+            "type": "string",
+            "description": "French message to display as is."
+          }
+        }
+      },
+      "AdminBulkReanalysis": {
+        "type": "object",
+        "description": "Result of a bulk re-analysis.",
+        "required": [
+          "requeued",
+          "remaining"
+        ],
+        "properties": {
+          "requeued": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Ideas moved from `analysis_failed` to `queued_analysis`."
+          },
+          "remaining": {
+            "type": "integer",
+            "format": "int64",
+            "description": "Ideas still in `analysis_failed` (beyond the 500 of one request): call again."
+          }
+        }
+      },
       "AdminCriterionScore": {
         "type": "object",
         "description": "One criterion of a screening: probability of passing it, thresholds applied, verdict.",
@@ -2974,6 +3074,13 @@
           "queues"
         ],
         "properties": {
+          "alerts": {
+            "type": "array",
+            "items": {
+              "$ref": "#/components/schemas/AdminAlert"
+            },
+            "description": "Configuration alerts in progress, oldest first (empty when all is well). Always sent;\ndeclared optional so that clients built before it keep compiling."
+          },
           "jobs": {
             "$ref": "#/components/schemas/AdminJobSummary"
           },

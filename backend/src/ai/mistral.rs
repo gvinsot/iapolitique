@@ -30,7 +30,7 @@ use uuid::Uuid;
 
 use super::prompts::{OutputSchema, RenderedPrompt};
 use crate::config::{MistralConfig, MistralPrices, Secret};
-use crate::db::{self, ai_calls::NewAiCall};
+use crate::db::{self, ai_calls::NewAiCall, provider_alerts};
 use crate::domain::money::MicroEur;
 use crate::domain::types::{AiCallStatus, AiProvider, AiPurpose, TargetKind};
 
@@ -122,6 +122,13 @@ pub enum MistralError {
 }
 
 impl MistralError {
+    /// The API key is refused (HTTP 401 or 403): a configuration error like a missing key, not
+    /// a failure of the job. The jobs wait without consuming an attempt (`jobs::guard`), the
+    /// alert is recorded in `provider_alerts` and shown on the admin dashboard.
+    pub fn is_auth(&self) -> bool {
+        matches!(self, Self::Http { status: 401 | 403 })
+    }
+
     /// Worth retrying later (job backoff): rate limit, server errors, network, invalid output.
     pub fn is_transient(&self) -> bool {
         match self {
@@ -499,6 +506,8 @@ impl MistralClient {
                     "Mistral call not recorded in ai_calls"
                 );
             }
+            self.track_auth(pool, ctx, attempt.result.as_ref().err())
+                .await;
             match attempt.result {
                 Ok(value) => {
                     return Ok(Completion {
@@ -523,6 +532,47 @@ impl MistralClient {
                 }
             }
         }
+    }
+
+    /// Keeps the `mistral_auth` alert (`provider_alerts`) up to date: a refused key opens or
+    /// extends it, logged as an ERROR once per period whatever the number of jobs; an answer
+    /// that got past authentication ends it. Never logs the key.
+    async fn track_auth(&self, pool: &PgPool, ctx: &CallContext, error: Option<&MistralError>) {
+        let result = match error {
+            Some(MistralError::Http {
+                status: status @ (401 | 403),
+            }) => provider_alerts::record_failure(pool, provider_alerts::MISTRAL_AUTH, *status)
+                .await
+                .map(|log| {
+                    if log {
+                        tracing::error!(
+                            purpose = ctx.purpose.as_str(),
+                            http_status = status,
+                            "Mistral refused the API key: check MISTRAL_API_KEY (AI jobs wait)"
+                        );
+                    }
+                }),
+            // An answer, or a refusal of the request itself: the key was accepted.
+            None | Some(MistralError::InvalidOutput(_)) => self.close_auth_alert(pool, ctx).await,
+            Some(MistralError::Http { status }) if (400..500).contains(status) => {
+                self.close_auth_alert(pool, ctx).await
+            }
+            // Timeouts, network and server errors say nothing about the key.
+            Some(_) => Ok(()),
+        };
+        if let Err(err) = result {
+            tracing::warn!(error = %err, "cannot update the Mistral key alert");
+        }
+    }
+
+    async fn close_auth_alert(&self, pool: &PgPool, ctx: &CallContext) -> sqlx::Result<()> {
+        if provider_alerts::clear(pool, provider_alerts::MISTRAL_AUTH).await? {
+            tracing::info!(
+                purpose = ctx.purpose.as_str(),
+                "Mistral accepts the API key again: alert closed"
+            );
+        }
+        Ok(())
     }
 
     /// POST with the API key: the JSON body and the HTTP status, or the failure (a non-2xx

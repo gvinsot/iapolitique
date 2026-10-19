@@ -1,5 +1,5 @@
 //! Ideas in the admin (AGENTS.md §8): list by status with search, masking and republication
-//! with a reason, re-analysis on demand (§5.7).
+//! with a reason, re-analysis on demand (§5.7), of one idea or of every failed analysis.
 
 use axum::Json;
 use axum::extract::State;
@@ -291,6 +291,78 @@ pub struct AdminReanalysis {
     /// `false` when an analysis of the idea was already queued (it will run anyway).
     pub queued: bool,
     pub status: IdeaStatus,
+}
+
+/// Most ideas put back in the queue by one [`reanalyze_failed`] request.
+pub const BULK_REANALYSIS_MAX: i64 = 500;
+
+/// Result of a bulk re-analysis.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct AdminBulkReanalysis {
+    /// Ideas moved from `analysis_failed` to `queued_analysis`.
+    pub requeued: i64,
+    /// Ideas still in `analysis_failed` (beyond the 500 of one request): call again.
+    pub remaining: i64,
+}
+
+/// Puts every idea whose analysis failed back in the queue (`analysis_failed →
+/// queued_analysis`, trigger `admin`), oldest first, 500 per request; one admin action
+/// `idea.reanalyze_failed` with their identifiers.
+#[utoipa::path(
+    post,
+    path = "/api/admin/ideas/reanalyze-failed",
+    tag = "admin",
+    operation_id = "reanalyzeFailedAdminIdeas",
+    security(("admin_token" = [])),
+    responses(
+        (status = 202, description = "Analyses mises en file.", body = AdminBulkReanalysis),
+        (status = 401, description = "Jeton absent ou invalide.", body = ErrorBody)
+    )
+)]
+pub async fn reanalyze_failed(
+    State(state): State<AppState>,
+) -> Result<(StatusCode, Json<AdminBulkReanalysis>), ApiError> {
+    let mut tx = state.pool.begin().await?;
+    let ids: Vec<Uuid> = sqlx::query_scalar(
+        "SELECT id FROM ideas WHERE status = 'analysis_failed'
+         ORDER BY status_changed_at, id LIMIT $1 FOR UPDATE SKIP LOCKED",
+    )
+    .bind(BULK_REANALYSIS_MAX)
+    .fetch_all(&mut *tx)
+    .await?;
+    let change = Change::by(Actor::Admin).reason("admin_reanalysis");
+    for id in &ids {
+        status::transition(&mut tx, *id, IdeaStatus::QueuedAnalysis, &change)
+            .await
+            .map_err(status_error)?;
+        queue::enqueue(
+            &mut *tx,
+            &pipeline::analyze_job(*id, AnalysisTrigger::Admin),
+        )
+        .await?;
+    }
+    let remaining: i64 =
+        sqlx::query_scalar("SELECT count(*) FROM ideas WHERE status = 'analysis_failed'")
+            .fetch_one(&mut *tx)
+            .await?;
+    let requeued = ids.len() as i64;
+    admin_actions::record(
+        &mut tx,
+        &NewAdminAction::new("idea.reanalyze_failed").details(json!({
+            "count": requeued,
+            "remaining": remaining,
+            "idea_ids": ids,
+        })),
+    )
+    .await?;
+    tx.commit().await?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(AdminBulkReanalysis {
+            requeued,
+            remaining,
+        }),
+    ))
 }
 
 /// Queues a new analysis (trigger `admin`, §5.7): of a published or hidden idea (it stays

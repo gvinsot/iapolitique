@@ -1,5 +1,6 @@
 //! `GET /api/admin/dashboard` (AGENTS.md §8): job queue by kind and status, screening rates,
-//! AI costs of the day and of the month by purpose, remaining daily budget, pending queues.
+//! AI costs of the day and of the month by purpose, remaining daily budget, pending queues and
+//! configuration alerts (Mistral API key refused).
 
 use axum::Json;
 use axum::extract::State;
@@ -9,7 +10,7 @@ use utoipa::ToSchema;
 
 use super::euros;
 use crate::ai::budget;
-use crate::db::dashboard;
+use crate::db::{dashboard, provider_alerts};
 use crate::http::AppState;
 use crate::http::error::{ApiError, ErrorBody};
 use crate::jobs::queue;
@@ -99,8 +100,52 @@ pub struct AdminQueues {
     pub jobs_dead: i64,
 }
 
+/// A configuration alert in progress: the jobs concerned wait (no attempt consumed) until it
+/// ends by itself at the first accepted call.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct AdminAlert {
+    /// `mistral_auth`: Mistral refuses the API key (HTTP 401 or 403).
+    pub code: String,
+    /// First refusal of the alert.
+    pub since: DateTime<Utc>,
+    /// Last refusal.
+    pub last_seen_at: DateTime<Utc>,
+    #[schema(required = true)]
+    pub http_status: Option<i32>,
+    /// Refused calls since the beginning of the alert.
+    pub failures: i64,
+    /// French message to display as is.
+    pub message: String,
+}
+
+impl From<provider_alerts::ProviderAlert> for AdminAlert {
+    fn from(alert: provider_alerts::ProviderAlert) -> Self {
+        let status = alert
+            .last_http_status
+            .map(|s| format!(" (HTTP {s})"))
+            .unwrap_or_default();
+        Self {
+            message: format!(
+                "Clé Mistral refusée depuis le {}{status} : les analyses, dédoublonnages, \
+                 seconds avis et revues de signalement attendent sans échouer. Vérifier \
+                 MISTRAL_API_KEY ; tout reprend au premier appel accepté.",
+                alert.since_paris
+            ),
+            code: alert.alert,
+            since: alert.since,
+            last_seen_at: alert.last_seen_at,
+            http_status: alert.last_http_status,
+            failures: alert.failures,
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, ToSchema)]
 pub struct AdminDashboard {
+    /// Configuration alerts in progress, oldest first (empty when all is well). Always sent;
+    /// declared optional so that clients built before it keep compiling.
+    #[schema(required = false)]
+    pub alerts: Vec<AdminAlert>,
     pub jobs: AdminJobSummary,
     pub screening_window_days: i32,
     pub screening: Vec<AdminScreeningRates>,
@@ -207,7 +252,14 @@ pub async fn dashboard(State(state): State<AppState>) -> Result<Json<AdminDashbo
         jobs_dead: q.jobs_dead,
     };
 
+    let alerts = provider_alerts::all(pool)
+        .await?
+        .into_iter()
+        .map(AdminAlert::from)
+        .collect();
+
     Ok(Json(AdminDashboard {
+        alerts,
         jobs,
         screening_window_days: SCREENING_WINDOW_DAYS,
         screening,

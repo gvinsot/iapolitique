@@ -12,7 +12,8 @@
 //!   are copied to the idea, a slug is chosen (suffix `-2`, `-3`… on collision) and the idea
 //!   is published. When the analysis cannot be obtained (invalid output after the client's
 //!   attempts, non transient Mistral error, last attempt of the job) the idea goes to
-//!   `analysis_failed` (admin).
+//!   `analysis_failed` (admin). A refused API key (401/403) is not such an error: the job waits
+//!   without consuming an attempt (`jobs::guard`).
 //! - **Re-analysis** of a published or hidden idea (§5.7: contribution, merge, report review
 //!   `update`, admin): the previous analysis, the accepted contributions not yet considered and
 //!   the pending corrections of report reviews are given to the prompts; the idea keeps its
@@ -85,11 +86,15 @@ enum Failure {
     Retry(String),
     /// Give up: `analysis_failed` for a first analysis.
     GiveUp(String),
+    /// Mistral refused the API key (401/403): a configuration error, the job waits without
+    /// consuming an attempt and the idea keeps its status (§6.4, `jobs::guard`).
+    KeyRefused,
 }
 
 fn classify(err: MistralError, job: &Job) -> Failure {
     let last_attempt = job.attempts >= job.max_attempts;
     match err {
+        err if err.is_auth() => Failure::KeyRefused,
         // The client already asked again (§6.1): an output still invalid is a failure.
         MistralError::InvalidOutput(_) => Failure::GiveUp(err.to_string()),
         err if err.is_transient() && !last_attempt => Failure::Retry(err.to_string()),
@@ -199,6 +204,7 @@ impl JobHandler for AnalyzeHandler {
                     Ok(JobOutcome::Done)
                 }
                 Err(Failure::Retry(message)) => Err(JobError::Transient(message)),
+                Err(Failure::KeyRefused) => guard::auth_postponed(ctx).await,
                 Err(Failure::GiveUp(message)) => {
                     if mode == Mode::First {
                         fail(pool, idea_id, &message).await?;

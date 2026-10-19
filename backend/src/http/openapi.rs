@@ -12,11 +12,12 @@ use utoipa::{Modify, OpenApi};
 
 use super::admin::actions::{self as admin_actions, AdminAction, AdminActionPage};
 use super::admin::dashboard::{
-    self as admin_dashboard, AdminAiCosts, AdminDashboard, AdminJobCount, AdminJobSummary,
-    AdminPurposeCost, AdminQueues, AdminScreeningRates,
+    self as admin_dashboard, AdminAiCosts, AdminAlert, AdminDashboard, AdminJobCount,
+    AdminJobSummary, AdminPurposeCost, AdminQueues, AdminScreeningRates,
 };
 use super::admin::ideas::{
-    self as admin_ideas, AdminIdea, AdminIdeaPage, AdminReanalysis, AdminReason,
+    self as admin_ideas, AdminBulkReanalysis, AdminIdea, AdminIdeaPage, AdminReanalysis,
+    AdminReason,
 };
 use super::admin::jobs::{self as admin_jobs, AdminJob, AdminJobPage};
 use super::admin::moderation::{
@@ -111,6 +112,7 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         admin_ideas::hide,
         admin_ideas::republish,
         admin_ideas::reanalyze,
+        admin_ideas::reanalyze_failed,
         admin_moderation::reports,
         admin_moderation::escalations,
         admin_moderation::handle_escalation,
@@ -198,6 +200,8 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         LegalPublisher,
         LegalPages,
         AdminDashboard,
+        AdminAlert,
+        AdminBulkReanalysis,
         AdminJobSummary,
         AdminJobCount,
         AdminScreeningRates,
@@ -434,6 +438,7 @@ mod tests {
             "/api/admin/ideas/{id}/hide",
             "/api/admin/ideas/{id}/republish",
             "/api/admin/ideas/{id}/reanalyze",
+            "/api/admin/ideas/reanalyze-failed",
             "/api/admin/reports",
             "/api/admin/escalations",
             "/api/admin/escalations/{id}/handle",

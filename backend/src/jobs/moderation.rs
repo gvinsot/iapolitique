@@ -68,7 +68,8 @@ impl JobHandler for ScreenHandler {
 }
 
 /// Mistral second opinion of a text in the gray zone ([`JobKind::SecondOpinion`]). Rescheduled
-/// without `MISTRAL_API_KEY` and while the daily budget is reached ([`guard::mistral_gate`]).
+/// without `MISTRAL_API_KEY`, while the key is refused and while the daily budget is reached
+/// ([`guard::mistral_gate`], [`guard::auth_postponed`]).
 #[derive(Debug, Default, Clone, Copy)]
 pub struct SecondOpinionHandler;
 
@@ -95,6 +96,9 @@ impl JobHandler for SecondOpinionHandler {
             .await
             {
                 Ok(_) => Ok(JobOutcome::Done),
+                Err(SecondOpinionError::Mistral(err)) if err.is_auth() => {
+                    guard::auth_postponed(ctx).await
+                }
                 Err(SecondOpinionError::Mistral(err)) if !err.is_transient() => {
                     Err(JobError::Permanent(err.to_string()))
                 }

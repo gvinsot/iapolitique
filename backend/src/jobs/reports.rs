@@ -26,7 +26,7 @@ use super::guard::{self, Gate};
 use super::pipeline::{self, IdeaPayload};
 use super::worker::{HandlerFuture, JobContext, JobHandler};
 use super::{Job, JobError, JobKind, JobOutcome, queue};
-use crate::ai::mistral::{CallContext, MistralError, ModelTier};
+use crate::ai::mistral::{CallContext, ModelTier};
 use crate::ai::outputs::ReportReviewOutput;
 use crate::ai::prompts::{PromptVars, Taxonomy};
 use crate::db::ideas;
@@ -178,7 +178,7 @@ impl JobHandler for ReviewReportsHandler {
                 job_id: Some(job.id),
                 ..CallContext::new(AiPurpose::ReportReview)
             };
-            let completion = client
+            let completion = match client
                 .structured::<ReportReviewOutput>(
                     pool,
                     &call,
@@ -188,13 +188,13 @@ impl JobHandler for ReviewReportsHandler {
                     ReportReviewOutput::check,
                 )
                 .await
-                .map_err(|err: MistralError| {
-                    if err.is_transient() {
-                        JobError::Transient(err.to_string())
-                    } else {
-                        JobError::Permanent(err.to_string())
-                    }
-                })?;
+            {
+                Ok(completion) => completion,
+                // Configuration error: the reports wait for a working key (§6.4).
+                Err(err) if err.is_auth() => return guard::auth_postponed(ctx).await,
+                Err(err) if err.is_transient() => return Err(JobError::Transient(err.to_string())),
+                Err(err) => return Err(JobError::Permanent(err.to_string())),
+            };
             let review = completion.value.normalized();
             let report_ids: Vec<Uuid> = reports.iter().map(|r| r.id).collect();
             let applied = apply(

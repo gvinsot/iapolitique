@@ -24,6 +24,7 @@ use crate::ai::mistral::{
 };
 use crate::ai::outputs::SecondOpinionOutput;
 use crate::ai::prompts::{PromptVars, Prompts, RenderError};
+use crate::db::provider_alerts;
 use crate::db::status::Change;
 use crate::domain::money::MicroEur;
 use crate::domain::types::{Actor, AiPurpose, CriterionVerdict};
@@ -191,8 +192,8 @@ pub async fn run(
     Ok(step)
 }
 
-/// Tries the second opinion from the api, when Mistral is configured and the daily budget
-/// allows it. Returns the step when it is settled within [`INLINE_WAIT`], `None` otherwise (the
+/// Tries the second opinion from the api, when Mistral is configured, its key is not known to be
+/// refused (`provider_alerts`) and the daily budget allows it. Returns the step when it is settled within [`INLINE_WAIT`], `None` otherwise (the
 /// call goes on in the background; the job takes over on failure).
 pub async fn run_inline(
     pool: &PgPool,
@@ -216,6 +217,16 @@ pub async fn run_inline(
         Ok(_) => return None,
         Err(err) => {
             tracing::warn!(error = %err, "cannot read the AI budget; second opinion left to the job");
+            return None;
+        }
+    }
+    // While Mistral refuses the key, the queued job waits for it (one probe per period): no
+    // inline call (§6.4).
+    match provider_alerts::get(pool, provider_alerts::MISTRAL_AUTH).await {
+        Ok(None) => {}
+        Ok(Some(_)) => return None,
+        Err(err) => {
+            tracing::warn!(error = %err, "cannot read the Mistral key alert; second opinion left to the job");
             return None;
         }
     }

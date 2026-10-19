@@ -228,6 +228,7 @@ Symptômes fréquents :
 | Déploiement annulé par rollback | Healthcheck en échec : `docker service ps` puis logs de la tâche refusée ; migration en erreur |
 | Idées bloquées en « en cours de vérification » | Modèle de décision injoignable (`llm-net`) ou budget Mistral du jour atteint |
 | Analyses en attente | `MISTRAL_API_KEY` vide, budget atteint, ou worker arrêté |
+| Alerte « Effort de raisonnement refusé par un modèle Mistral » | Le modèle configuré refuse `reasoning_effort` (HTTP 400) : les appels partent sans lui (WARN `rejects reasoning_effort` une fois par processus). Définir `MISTRAL_ANALYSIS_MODEL` (ou `MISTRAL_REVIEW_MODEL`) sur un modèle qui le prend en charge (`mistral-large-4-0`…) puis redéployer, ou vider la variable d'effort pour s'en passer (AGENTS.md §6.1) |
 | 403 sur `admin.` | Accès hors LAN : filtré par `dashboard-allowlist@file` |
 
 ## 4. Tests de CI en local

@@ -19,6 +19,7 @@ use crate::ai::prompts::{
     Criterion, CriterionKind, MethodologyFile, Prompts, Taxonomy, TaxonomyEntry,
 };
 use crate::config::MistralConfig;
+use crate::db::provider_alerts;
 use crate::domain::rules::{self, CGU_VERSION, RuleReference};
 use crate::domain::scoring::{
     AMORTIZATION_YEARS, DELAY_HALF_LIFE_MONTHS, FORMULA_FR, MAX_FEASIBILITY, SCORING_VERSION,
@@ -113,10 +114,26 @@ pub struct ScreeningMethod {
 pub struct MethodologyModel {
     #[schema(example = "mistral-large-latest")]
     pub model: String,
-    /// `reasoning_effort` sent with each call: `high` (full thinking before the answer) or
-    /// `none` (minimal thinking); `null` when the parameter is omitted (Mistral's default).
+    /// `reasoning_effort` really sent with each call: `high` (full thinking before the answer)
+    /// or `none` (minimal thinking); `null` when the parameter is omitted (Mistral's default),
+    /// by configuration or because the model refused it.
     #[schema(required = true)]
     pub reasoning_effort: Option<ReasoningEffort>,
+    /// `reasoning_effort` configured for this model; it differs from `reasoning_effort` when
+    /// the model refused the parameter (its calls then go without it). Always sent; declared
+    /// optional so that clients built before it keep compiling.
+    #[schema(required = false)]
+    pub configured_reasoning_effort: Option<ReasoningEffort>,
+}
+
+impl MethodologyModel {
+    fn new(model: &str, configured: Option<ReasoningEffort>, refused: &[String]) -> Self {
+        Self {
+            model: model.to_owned(),
+            reasoning_effort: configured.filter(|_| !refused.iter().any(|m| m == model)),
+            configured_reasoning_effort: configured,
+        }
+    }
 }
 
 /// The Mistral models configured in production (§6.1).
@@ -132,16 +149,20 @@ pub struct MethodologyModels {
 }
 
 impl MethodologyModels {
-    pub fn from_config(config: &MistralConfig) -> Self {
+    /// The configured models and efforts, `refused`: the models known to refuse
+    /// `reasoning_effort` (`mistral_reasoning_refusals`), sent without it.
+    pub fn from_config(config: &MistralConfig, refused: &[String]) -> Self {
         Self {
-            analysis: MethodologyModel {
-                model: config.analysis_model.clone(),
-                reasoning_effort: config.analysis_reasoning_effort,
-            },
-            review: MethodologyModel {
-                model: config.review_model.clone(),
-                reasoning_effort: config.review_reasoning_effort,
-            },
+            analysis: MethodologyModel::new(
+                &config.analysis_model,
+                config.analysis_reasoning_effort,
+                refused,
+            ),
+            review: MethodologyModel::new(
+                &config.review_model,
+                config.review_reasoning_effort,
+                refused,
+            ),
             embedding: config.embed_model.clone(),
         }
     }
@@ -263,6 +284,11 @@ fn scoring_method() -> ScoringMethod {
 pub async fn methodology(State(state): State<AppState>) -> Result<Response, ApiError> {
     let prompts = &state.prompts;
     let overrides = ThresholdOverrides::load(&state.pool).await?;
+    let refused: Vec<String> = provider_alerts::reasoning_refusals(&state.pool)
+        .await?
+        .into_iter()
+        .map(|refusal| refusal.model)
+        .collect();
     let methodology = &prompts.methodology;
     Ok(cache::json(
         MethodologyResponse {
@@ -277,7 +303,7 @@ pub async fn methodology(State(state): State<AppState>) -> Result<Response, ApiE
                 .unwrap_or_default(),
             export_schema_version: EXPORT_SCHEMA_VERSION.to_owned(),
             cgu_version: CGU_VERSION.to_owned(),
-            models: MethodologyModels::from_config(&state.config.mistral),
+            models: MethodologyModels::from_config(&state.config.mistral, &refused),
             scoring: scoring_method(),
             screening: screening_method(prompts, &overrides),
             files: methodology.files.clone(),
@@ -627,8 +653,10 @@ mod tests {
         assert_eq!(
             body["models"],
             json!({
-                "analysis": { "model": "mistral-large-latest", "reasoning_effort": "high" },
-                "review": { "model": "mistral-large-latest", "reasoning_effort": "none" },
+                "analysis": { "model": "mistral-large-latest", "reasoning_effort": "high",
+                              "configured_reasoning_effort": "high" },
+                "review": { "model": "mistral-large-latest", "reasoning_effort": "none",
+                            "configured_reasoning_effort": "none" },
                 "embedding": "mistral-embed"
             })
         );
@@ -636,12 +664,15 @@ mod tests {
 
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]
     async fn methodology_publishes_the_models_and_efforts_in_use(pool: PgPool) {
+        // The analysis model refused the parameter: its calls go without it (§6.1).
+        provider_alerts::record_reasoning_refusal(&pool, "mistral-large-latest", 400)
+            .await
+            .unwrap();
         let app = TestApp::new(
             pool,
             false,
             &[
                 ("MISTRAL_REVIEW_MODEL", "mistral-medium-3-5"),
-                ("MISTRAL_ANALYSIS_REASONING_EFFORT", ""),
                 ("MISTRAL_REVIEW_REASONING_EFFORT", "high"),
             ],
         )
@@ -650,11 +681,26 @@ mod tests {
         assert_eq!(status, StatusCode::OK);
         assert_eq!(
             body["models"]["analysis"],
-            json!({ "model": "mistral-large-latest", "reasoning_effort": null })
+            json!({ "model": "mistral-large-latest", "reasoning_effort": null,
+                    "configured_reasoning_effort": "high" })
         );
         assert_eq!(
             body["models"]["review"],
-            json!({ "model": "mistral-medium-3-5", "reasoning_effort": "high" })
+            json!({ "model": "mistral-medium-3-5", "reasoning_effort": "high",
+                    "configured_reasoning_effort": "high" })
+        );
+        // Omitted by configuration.
+        let app = TestApp::new(
+            app.pool.clone(),
+            false,
+            &[("MISTRAL_ANALYSIS_REASONING_EFFORT", "")],
+        )
+        .await;
+        let (_, _, body) = get_json(&app.router, "/api/methodology", &[]).await;
+        assert_eq!(
+            body["models"]["analysis"],
+            json!({ "model": "mistral-large-latest", "reasoning_effort": null,
+                    "configured_reasoning_effort": null })
         );
     }
 

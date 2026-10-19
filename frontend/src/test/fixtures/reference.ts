@@ -78,8 +78,16 @@ export const methodologyFixture: Methodology = {
   export_schema_version: "1.0",
   cgu_version: "1.0",
   models: {
-    analysis: { model: "mistral-large-latest", reasoning_effort: "high" },
-    review: { model: "mistral-medium-3-5", reasoning_effort: null },
+    analysis: {
+      model: "mistral-large-latest",
+      reasoning_effort: "high",
+      configured_reasoning_effort: "high",
+    },
+    review: {
+      model: "mistral-medium-3-5",
+      reasoning_effort: null,
+      configured_reasoning_effort: null,
+    },
     embedding: "mistral-embed",
   },
   scoring: {

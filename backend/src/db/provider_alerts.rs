@@ -1,15 +1,21 @@
 //! Configuration alerts of the AI providers (`provider_alerts`, AGENTS.md §6.4, §13.1).
 //!
-//! Today a single alert, [`MISTRAL_AUTH`]: Mistral refused the API key (HTTP 401 or 403). It is
-//! a configuration error, not a failure of the job: the jobs that need Mistral wait (no attempt
-//! consumed), one of them calls Mistral again per period to see whether the key was fixed, the
-//! first success deletes the alert, and the admin dashboard shows it meanwhile.
+//! - [`MISTRAL_AUTH`]: Mistral refused the API key (HTTP 401 or 403). It is a configuration
+//!   error, not a failure of the job: the jobs that need Mistral wait (no attempt consumed), one
+//!   of them calls Mistral again per period to see whether the key was fixed, the first success
+//!   deletes the alert, and the admin dashboard shows it meanwhile.
+//! - [`MISTRAL_REASONING_UNSUPPORTED`] (table `mistral_reasoning_refusals`, §6.1): a model
+//!   refused `reasoning_effort`; its calls go without it. Nothing waits: the dashboard advises to
+//!   pick a model that takes the parameter, and the methodology page publishes the effort really
+//!   sent.
 
 use chrono::{DateTime, Duration, Utc};
 use sqlx::PgPool;
 
 /// The Mistral API key is refused.
 pub const MISTRAL_AUTH: &str = "mistral_auth";
+/// A configured Mistral model refuses `reasoning_effort` (dashboard code, §6.1).
+pub const MISTRAL_REASONING_UNSUPPORTED: &str = "mistral_reasoning_unsupported";
 
 /// Shortest delay between two calls that check whether a refused key works again.
 pub const AUTH_RETRY_MIN: Duration = Duration::minutes(15);
@@ -141,6 +147,57 @@ pub async fn retry_at(pool: &PgPool, alert: &str) -> sqlx::Result<DateTime<Utc>>
     Ok(now + retry_delay(now - since.unwrap_or(now)))
 }
 
+/// A Mistral model that refused `reasoning_effort` (`mistral_reasoning_refusals`).
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct ReasoningRefusal {
+    pub model: String,
+    pub since: DateTime<Utc>,
+    pub last_seen_at: DateTime<Utc>,
+    pub last_http_status: i32,
+    pub refusals: i64,
+    /// `since` in Europe/Paris, `DD/MM/YYYY à HH24:MI`.
+    pub since_paris: String,
+}
+
+/// Records that `model` refused `reasoning_effort` (and accepted the same call without it).
+pub async fn record_reasoning_refusal(
+    pool: &PgPool,
+    model: &str,
+    http_status: u16,
+) -> sqlx::Result<()> {
+    sqlx::query(
+        "INSERT INTO mistral_reasoning_refusals AS r (model, last_http_status) VALUES ($1, $2)
+         ON CONFLICT (model) DO UPDATE SET
+             last_seen_at = now(), last_http_status = EXCLUDED.last_http_status,
+             refusals = r.refusals + 1",
+    )
+    .bind(model)
+    .bind(i32::from(http_status))
+    .execute(pool)
+    .await
+    .map(|_| ())
+}
+
+/// `model` accepted `reasoning_effort`: forgets a refusal. Returns whether there was one.
+pub async fn clear_reasoning_refusal(pool: &PgPool, model: &str) -> sqlx::Result<bool> {
+    let done = sqlx::query("DELETE FROM mistral_reasoning_refusals WHERE model = $1")
+        .bind(model)
+        .execute(pool)
+        .await?;
+    Ok(done.rows_affected() > 0)
+}
+
+/// Every model known to refuse `reasoning_effort`, oldest refusal first.
+pub async fn reasoning_refusals(pool: &PgPool) -> sqlx::Result<Vec<ReasoningRefusal>> {
+    sqlx::query_as(
+        "SELECT model, since, last_seen_at, last_http_status, refusals,
+                to_char(since AT TIME ZONE 'Europe/Paris', 'DD/MM/YYYY à HH24:MI') AS since_paris
+         FROM mistral_reasoning_refusals ORDER BY since, model",
+    )
+    .fetch_all(pool)
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -197,6 +254,38 @@ mod tests {
         assert_eq!(
             claim_probe(&pool, MISTRAL_AUTH).await.unwrap(),
             Probe::Clear
+        );
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn reasoning_refusals_are_counted_and_cleared(pool: PgPool) {
+        assert!(reasoning_refusals(&pool).await.unwrap().is_empty());
+        record_reasoning_refusal(&pool, "mistral-large-latest", 400)
+            .await
+            .unwrap();
+        record_reasoning_refusal(&pool, "mistral-large-latest", 422)
+            .await
+            .unwrap();
+        let refusals = reasoning_refusals(&pool).await.unwrap();
+        assert_eq!(refusals.len(), 1);
+        assert_eq!(
+            (
+                refusals[0].model.as_str(),
+                refusals[0].last_http_status,
+                refusals[0].refusals
+            ),
+            ("mistral-large-latest", 422, 2)
+        );
+        assert!(refusals[0].since_paris.contains(" à "));
+        assert!(
+            clear_reasoning_refusal(&pool, "mistral-large-latest")
+                .await
+                .unwrap()
+        );
+        assert!(
+            !clear_reasoning_refusal(&pool, "mistral-large-latest")
+                .await
+                .unwrap()
         );
     }
 }

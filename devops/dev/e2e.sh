@@ -10,7 +10,8 @@
 # system, tmpfs, capabilities, init). devops/check_frontend_headers.sh checks the nginx headers,
 # then devops/dev/e2e_scenario.py drives the pipeline, devops/dev/browser_check.sh browses every
 # route in Chromium and Firefox (CSP violations, ALTCHA, admin; E2E_BROWSER=0 skips it), the
-# `auth-*` phases make the mock refuse the API key (HTTP 401) then accept it again, a last phase
+# `auth-*` phases make the mock refuse the API key (HTTP 401) then accept it again, the
+# `reasoning-refused` phase makes it refuse `reasoning_effort` for the configured model, a last phase
 # restarts the api and the worker with a tiny daily budget, and the container logs are checked
 # for client IPs, tracking tokens and visitor texts (AGENTS.md §7.1).
 #
@@ -180,6 +181,9 @@ psql "$pg_url/$db" -c "UPDATE provider_alerts SET probed_at = probed_at - interv
     --admin "http://127.0.0.1:$admin_port" --admin-token "$token" --phase auth-restored \
     --state "$(native_dir "$work")/auth.json" --secrets-out "$secrets_file"
 
+echo "== scenario: the model refuses reasoning_effort"
+"$python" "$here/e2e_scenario.py" --public "http://127.0.0.1:$public_port"     --admin "http://127.0.0.1:$admin_port" --admin-token "$token" --phase reasoning-refused     --mock "http://127.0.0.1:$mock_port" --secrets-out "$secrets_file"
+
 echo "== scenario: budget exhausted"
 docker logs e2e-api >"$work/api-1.log" 2>&1
 docker logs e2e-worker >"$work/worker-1.log" 2>&1
@@ -209,6 +213,14 @@ if [[ "$key_errors" != 1 ]]; then
     exit 1
 fi
 echo "ok    refused key logged once"
+# A model that refuses reasoning_effort is logged as a WARN once per process and model (§6.1).
+reasoning_warns="$(cat "$work"/worker-1.log | grep '"level":"WARN"' |
+    grep -c 'rejects reasoning_effort, sending without it' || true)"
+if [[ "$reasoning_warns" != 1 ]]; then
+    echo "FAIL  $reasoning_warns reasoning_effort refusals logged by the worker, 1 expected" >&2
+    exit 1
+fi
+echo "ok    reasoning_effort refusal logged once"
 if grep -h '"level":"ERROR"' "$work"/api-*.log "$work"/worker-*.log | grep -v "$key_error"; then
     echo "FAIL  errors logged" >&2
     exit 1

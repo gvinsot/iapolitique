@@ -376,9 +376,23 @@ version de prompt (l'admin peut relancer manuellement).
   vide (variable définie mais vide : paramètre omis, défaut de Mistral, non documenté). Jamais
   pour les embeddings. Envoyé au premier niveau en chat completions, dans `completion_args` en
   Conversations. Mistral ne le documente que pour certains modèles (`mistral-large-4-0`,
-  `mistral-medium-3-5`, `mistral-small-latest` à la date de la décision) : un modèle qui le
-  refuse répond HTTP 400 (échec non transitoire, `analysis_failed`) ; changer alors de modèle
-  ou vider la variable. Le worker journalise au démarrage modèles et efforts envoyés. Délais
+  `mistral-medium-3-5`, `mistral-small-latest` à la date de la décision ; le modèle par défaut
+  `mistral-large-latest` peut le refuser). **Repli** (`ai::mistral`) : un appel qui l'a envoyé
+  et reçoit HTTP 400 (ou 422) dont l'erreur le nomme (champs `message`, `param`, `code`, `loc`,
+  `msg` du corps `{ object, message, type, param, code }` contenant `reasoning` ; jamais les
+  `input` qui recopient la requête ; corps jamais journalisé) est renvoyé aussitôt sans le
+  paramètre (hors des 3 tentatives) ; si ce second envoi reçoit une réponse (2xx), le modèle est
+  retenu en mémoire pour la vie du processus (ses appels suivants partent directement sans le
+  paramètre, un seul `WARN` par modèle et par processus : « model X rejects reasoning_effort,
+  sending without it ») et dans la table `mistral_reasoning_refusals` (alerte
+  `mistral_reasoning_unsupported` du tableau de bord, effort réellement envoyé publié par
+  `/api/methodology`) ; sinon rien n'est retenu (le paramètre n'était pas en cause) et l'erreur
+  suit son cours. Le premier appel accepté **avec** le paramètre efface la ligne (après un
+  redémarrage, chaque processus le retente une fois). `ai_calls.reasoning_effort` enregistre
+  l'effort réellement envoyé à chaque tentative (`NULL` après le repli). Les autres 400 gardent
+  leur comportement (échec non transitoire, `analysis_failed`). Pour appliquer l'effort voulu,
+  choisir un modèle qui le prend en charge ; pour s'en passer, vider la variable. Le worker
+  journalise au démarrage modèles et efforts configurés. Délais
   par requête (`ai::mistral::Timeouts`) : chat 180 s et Conversations 300 s, portés à 360 s et
   480 s avec l'effort `high` (la réflexion allonge la réponse) ; le verrou du job est
   entretenu pendant ce temps (heartbeat, `JOB_LOCK_TIMEOUT_SECS`).
@@ -480,7 +494,7 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
 
 - Chaque appel IA est enregistré (`ai_calls` : usage, modèle, tokens, nombre de recherches web,
   coût estimé, version de prompt, idée, latence, statut, effort de raisonnement envoyé —
-  `reasoning_effort`, `NULL` s'il est omis ou sans objet). Le tableau des coûts de l'admin
+  `reasoning_effort`, `NULL` s'il est omis, refusé par le modèle (§6.1) ou sans objet). Le tableau des coûts de l'admin
   ventile par usage, fournisseur et effort de raisonnement.
 - Plafond journalier `MISTRAL_DAILY_BUDGET_EUR` (prix unitaires en variables d'environnement
   car ils changent). Plafond atteint : les jobs restent en file jusqu'au lendemain (minuit
@@ -781,7 +795,7 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
   `iapolitique-admin-redirect`, priorité 50, `global@file`, `noop@internal`) : les pages admin ne
   s'exécutent pas sur l'origine publique.
 - Fonctions : tableau de bord (file de jobs, taux d'acceptation, coûts IA du jour/mois, alertes
-  de configuration comme une clé Mistral refusée), idées masquées et signalements,
+  de configuration comme une clé Mistral refusée ou un modèle qui refuse `reasoning_effort`), idées masquées et signalements,
   masquer/republier, relancer une analyse ou toutes les analyses échouées, consulter les copies
   scellées des escalades (`/admin/copies-scellees` ; la copie n'est demandée à l'API qu'après un
   clic explicite, jamais rechargée en arrière-plan, puisque chaque lecture est journalisée),
@@ -984,7 +998,7 @@ API publique (port 8080) :
 | GET | `/api/ideas/{slug}` | page d'une idée `published` : `{ slug, title, summary, admin_level, territory?, category, kind, original: { text (masqué), personal_data_masked, attribution, notice }, analysis (champs du §6.2 sans identifiants, `impacts` en liste ordonnée `{ public, label, effect, explanation }`), score: { label, scoring_version, net_annual_eur, feasibility_factor, confidence_factor, delay_factor, score }, contributions: [{ kind, summary, taken_into_account, response, integrated_on }] (résumés neutres, jamais le texte), rights_of_reply: [{ author_label, body, published_at, updated_at }], ai: { ai_generated, provider, model, generated_at (minuit Europe/Paris, comme `updated_at`), analysis_version, prompt_version, research_prompt_version, schema_version, scoring_version, web_search_count, human_reviewed, notice }, proposal_count, contribution_count, published_on, updated_at, canonical_url }` ; idée inconnue, masquée ou purgée : `404 idea_not_found` ; idée fusionnée : `301` vers `/api/ideas/{slug parent}` (corps `{ slug }`) |
 | POST | `/api/ideas/{slug}/contributions` | amélioration ou objection `{ kind: amelioration\|objection, text, accept_licence, accept_publication, altcha }` → `201` comme `/api/ideas` ; `404 idea_not_found` si l'idée n'est pas publiée |
 | POST | `/api/ideas/{slug}/reports` | signalement `{ reason, details? (alias precision), reporter_name?, reporter_email?, good_faith, altcha }` → `201` comme `/api/ideas` ; erreurs `good_faith_required`, `invalid_email`, `idea_not_found` |
-| GET | `/api/methodology` | méthodologie en vigueur (§6.5) : `{ screening_version, taxonomy_version, prompt_versions, analysis_schema_version, export_schema_version, cgu_version, models: { analysis: { model, reasoning_effort }, review: { model, reasoning_effort }, embedding } (configuration en vigueur, §6.1 ; reasoning_effort `high`, `none` ou `null` si omis), scoring: { version, formula (FORMULA_FR), amortization_years, max_feasibility, delay_half_life_months, confidence_factors }, screening: { version, sections: [{ kind, label, criteria: [{ key, question_type, instructions, answers?, levels, pass_when?, pass_from_level?, reject_below, accept_above (seuils appliqués, réglage §13.6 compris), thresholds_adjusted, reason_code, reason_message, rule? }] }] }, files: [{ file, kind, version?, content }] }` (texte intégral des fichiers de `prompts/`, à afficher en texte brut) |
+| GET | `/api/methodology` | méthodologie en vigueur (§6.5) : `{ screening_version, taxonomy_version, prompt_versions, analysis_schema_version, export_schema_version, cgu_version, models: { analysis: { model, reasoning_effort, configured_reasoning_effort }, review: { … }, embedding } (configuration en vigueur, §6.1 ; `reasoning_effort` : effort réellement envoyé, `high`, `none` ou `null` si omis par configuration ou refusé par le modèle ; `configured_reasoning_effort` : effort configuré, facultatif dans la spec), scoring: { version, formula (FORMULA_FR), amortization_years, max_feasibility, delay_half_life_months, confidence_factors }, screening: { version, sections: [{ kind, label, criteria: [{ key, question_type, instructions, answers?, levels, pass_when?, pass_from_level?, reject_below, accept_above (seuils appliqués, réglage §13.6 compris), thresholds_adjusted, reason_code, reason_message, rule? }] }] }, files: [{ file, kind, version?, content }] }` (texte intégral des fichiers de `prompts/`, à afficher en texte brut) |
 | GET | `/api/taxonomy` | `{ version, admin_levels, categories: [{ key, label, description?, group, admin_levels }], impact_publics, impact_effects, idea_kinds, confidence_levels, legal_vehicles, report_reasons, contribution_kinds, rejection_reasons: [{ code, message, rule? }] }` |
 | GET | `/api/stats` | compteurs publics agrégés : `{ ideas_received, ideas_published, ideas_in_progress, ideas_rejected, duplicates_merged, contributions_integrated, published_by_admin_level, published_by_kind, last_published_on, computed_on }` (aucun texte, identifiant ni horodatage fin ; une idée retirée par son auteur, ses contributions et les doublons qui y ont été fusionnés ne sont pas comptés) |
 | GET | `/api/exports/ideas.json`, `/api/exports/ideas.csv`, `/api/exports/LICENSE`, `/api/exports/metadata.json` | exports open data : dernière génération de chaque format de la table `exports` (`json`, `csv`, `license`, `metadata`, §7.4), `Content-Type` de `ExportFormat::content_type`, `Content-Disposition: attachment` avec un nom fixe daté du jour de génération (`iapolitique-ideas-AAAA-MM-JJ.json`, `….csv`, `iapolitique-LICENSE-AAAA-MM-JJ.txt`, `iapolitique-metadata-AAAA-MM-JJ.json`), `ETag` (SHA-256 du contenu, `If-None-Match` → `304`), `Last-Modified` ; avant la première génération : `503 exports_unavailable` avec `Retry-After: 300` |
@@ -1001,7 +1015,7 @@ total_pages }`) et refusent les paramètres inconnus (`400 invalid_query`).
 | Méthode | Route | Rôle |
 |---|---|---|
 | GET | `/api/admin/session` | vérifie le jeton (`200 { "authenticated": true }` ou `401` ; `429 admin_locked` pendant un verrouillage, §14.4) |
-| GET | `/api/admin/dashboard` | `{ alerts: [{ code (mistral_auth), since, last_seen_at, http_status, failures, message (français, « Clé Mistral refusée depuis le JJ/MM/AAAA à HH:MI (HTTP 401) : … ») }] (toujours présent, vide sans alerte ; facultatif dans la spec pour les anciens clients), jobs: { queued, running, succeeded, dead, by_kind: [{ kind, status, count }] }, screening_window_days (30), screening: [{ kind, total, accepted, rejected, gray_zone, errors, acceptance_rate, rejection_rate, gray_zone_rate, second_opinion_accept, second_opinion_reject, labeled }], ai_costs: { today_eur, month_eur, daily_budget_eur, remaining_today_eur, budget_reached, next_reset, by_purpose: [{ purpose, provider, calls_today, calls_month, today_eur, month_eur }] }, queues: { escalations_pending, review_requests_pending, ideas_analysis_failed, texts_second_opinion, texts_submitted_stale, ideas_hidden, reports_awaiting_review, jobs_dead } }` (jour et mois Europe/Paris) |
+| GET | `/api/admin/dashboard` | `{ alerts: [{ code (`mistral_auth` : clé refusée, « Clé Mistral refusée depuis le JJ/MM/AAAA à HH:MI (HTTP 401) : … » ; `mistral_reasoning_unsupported` : un modèle configuré avec un effort refuse `reasoning_effort`, §6.1, « Le modèle X refuse le paramètre reasoning_effort depuis le … : … définir MISTRAL_ANALYSIS_MODEL (ou MISTRAL_REVIEW_MODEL) sur un modèle qui le prend en charge, par exemple mistral-large-4-0 » ; un refus d'un modèle qui n'est plus configuré avec un effort n'est pas une alerte), since, last_seen_at, http_status, failures, message (français) }] (toujours présent, vide sans alerte ; facultatif dans la spec pour les anciens clients), jobs: { queued, running, succeeded, dead, by_kind: [{ kind, status, count }] }, screening_window_days (30), screening: [{ kind, total, accepted, rejected, gray_zone, errors, acceptance_rate, rejection_rate, gray_zone_rate, second_opinion_accept, second_opinion_reject, labeled }], ai_costs: { today_eur, month_eur, daily_budget_eur, remaining_today_eur, budget_reached, next_reset, by_purpose: [{ purpose, provider, calls_today, calls_month, today_eur, month_eur }] }, queues: { escalations_pending, review_requests_pending, ideas_analysis_failed, texts_second_opinion, texts_submitted_stale, ideas_hidden, reports_awaiting_review, jobs_dead } }` (jour et mois Europe/Paris) |
 | GET | `/api/admin/jobs` | jobs, filtres `status`, `kind` ; plus récents d'abord |
 | POST | `/api/admin/jobs/{id}/retry` | remet en file un job `dead` (tentatives remises à zéro) → `200` job ; `404 job_not_found`, `409 job_not_dead` / `job_already_queued` (même clé de dédoublonnage en file) ; action `job.retry` |
 | GET | `/api/admin/ideas` | idées de tout statut, filtre `status`, recherche `q` (identifiant, ou partie du slug, du titre, du résumé ou du texte, sans accents ni casse) ; plus récemment changées d'abord ; extrait du texte masqué, motifs, signalements en attente, réexamen et escalade en attente, `withdrawn_at` (idée retirée par son auteur, statut `withdrawn` ; facultatif dans la spec) |

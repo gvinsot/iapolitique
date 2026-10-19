@@ -1,4 +1,5 @@
 import {
+  BrainIcon,
   CoinsIcon,
   FilterIcon,
   KeyRoundIcon,
@@ -260,37 +261,55 @@ export function ScreeningRatesTable({ dashboard }: { dashboard: AdminDashboard }
 
 const ALERT_TITLES: Record<string, string> = {
   mistral_auth: "Clé Mistral refusée",
+  mistral_reasoning_unsupported: "Effort de raisonnement refusé par un modèle Mistral",
 };
 
+function plural(count: number, word: string): string {
+  return `${formatInteger(count)} ${word}${count > 1 ? "s" : ""}`;
+}
+
 /**
- * Configuration alerts in progress (AGENTS.md §6.4): a refused Mistral key makes every AI job
- * wait without failing until the key is fixed. The message comes from the API, in French.
+ * Configuration alerts in progress (AGENTS.md §6.1, §6.4): a refused Mistral key makes every AI
+ * job wait without failing until the key is fixed; a model that refuses `reasoning_effort` is
+ * called without it. The message comes from the API, in French.
  */
 export function DashboardAlerts({ alerts }: { alerts: readonly AdminAlert[] }) {
   if (alerts.length === 0) return null;
   return (
     <section aria-label="Alertes de configuration" className="space-y-3">
-      {alerts.map((alert) => (
-        <Alert key={`${alert.code}-${alert.since}`} variant="destructive">
-          <KeyRoundIcon aria-hidden="true" />
-          <AlertTitle>{labelFor(ALERT_TITLES, alert.code)}</AlertTitle>
-          <AlertDescription>
-            <p>{alert.message}</p>
-            <p>
-              {formatInteger(alert.failures)} appel{alert.failures > 1 ? "s" : ""} refusé
-              {alert.failures > 1 ? "s" : ""}, le dernier le {formatDateTime(alert.last_seen_at)}.
-              Les jobs IA attendent sans échouer et reprennent seuls au premier appel accepté.
-            </p>
-            {alert.code === "mistral_auth" ? (
-              <p>
-                Corrigez <code>MISTRAL_API_KEY</code> dans l’environnement PulsarCD puis redéployez
-                (procédure : <code>docs/ops.md</code>, rotation de la clé Mistral) ; relancez
-                ensuite les analyses passées en échec.
-              </p>
-            ) : null}
-          </AlertDescription>
-        </Alert>
-      ))}
+      {alerts.map((alert) => {
+        const auth = alert.code === "mistral_auth";
+        return (
+          <Alert key={`${alert.code}-${alert.since}`} variant={auth ? "destructive" : "warning"}>
+            {auth ? <KeyRoundIcon aria-hidden="true" /> : <BrainIcon aria-hidden="true" />}
+            <AlertTitle>{labelFor(ALERT_TITLES, alert.code)}</AlertTitle>
+            <AlertDescription>
+              <p>{alert.message}</p>
+              {auth ? (
+                <>
+                  <p>
+                    {plural(alert.failures, "appel")} refusé{alert.failures > 1 ? "s" : ""}, le
+                    dernier le {formatDateTime(alert.last_seen_at)}. Les jobs IA attendent sans
+                    échouer et reprennent seuls au premier appel accepté.
+                  </p>
+                  <p>
+                    Corrigez <code>MISTRAL_API_KEY</code> dans l’environnement PulsarCD puis
+                    redéployez (procédure : <code>docs/ops.md</code>, rotation de la clé Mistral) ;
+                    relancez ensuite les analyses passées en échec.
+                  </p>
+                </>
+              ) : (
+                <p>
+                  {plural(alert.failures, "refus")} constaté{alert.failures > 1 ? "s" : ""}, le
+                  dernier le {formatDateTime(alert.last_seen_at)}. Rien n’attend : les appels
+                  partent sans le paramètre. L’alerte disparaît quand le modèle change ou l’accepte
+                  de nouveau.
+                </p>
+              )}
+            </AlertDescription>
+          </Alert>
+        );
+      })}
     </section>
   );
 }

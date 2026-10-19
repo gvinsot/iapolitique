@@ -22,6 +22,10 @@ Phases (`--phase`, default `main`):
   auth-restored  once the retry delay has passed (e2e.sh moves the clock of the queue between
           the two phases), the waiting jobs run, the alert closes, the ideas are published and
           each job used a single attempt.
+  reasoning-refused  the mock refuses `reasoning_effort` for the configured model (HTTP 400,
+          `--mock`): a new idea is still published, each process sends the parameter once and
+          then goes without it, the dashboard advises another model and the methodology page
+          publishes the effort really sent (none). The refusal is lifted at the end.
   budget  with the worker restarted on a tiny MISTRAL_DAILY_BUDGET_EUR: a new accepted idea
           leaves its Mistral job queued until the next Paris midnight, attempts untouched.
 
@@ -138,6 +142,13 @@ AUTH_IDEAS = (
     "lycées d'une même académie dans un marché unique, pour obtenir des prix plus bas et "
     "réduire le temps passé par les établissements à gérer ces contrats.",
 )
+REASONING_IDEA = (
+    "Mutualiser entre les départements d'une même région l'achat des véhicules et engins "
+    "d'entretien des routes, aujourd'hui acquis séparément, afin de payer moins cher et de "
+    "partager les engins rarement utilisés comme les saleuses de grande capacité."
+)
+# Model of the e2e stack (MISTRAL_ANALYSIS_MODEL, default; the review uses it too).
+E2E_MODEL = "mistral-large-latest"
 # Kinds of the jobs that call Mistral (AGENTS.md §13.1).
 MISTRAL_KINDS = ("second_opinion", "dedup_idea", "analyze_idea", "review_reports")
 
@@ -509,9 +520,60 @@ def mock_auth(mock: str, auth_status: int | None) -> None:
         expect(resp.status == 200, f"mock Mistral answers {auth_status or 200} to the key")
 
 
-def mock_refused(mock: str) -> int:
+def mock_stats(mock: str) -> dict:
     with urllib.request.urlopen(mock.rstrip("/") + "/stats", timeout=10) as resp:
-        return json.loads(resp.read()).get("refused_auth", 0)
+        return json.loads(resp.read())
+
+
+def mock_refused(mock: str) -> int:
+    return mock_stats(mock).get("refused_auth", 0)
+
+
+def mock_reasoning(mock: str, models: list[str]) -> None:
+    req = urllib.request.Request(mock.rstrip("/") + "/control", method="POST",
+                                 data=json.dumps({"reject_reasoning_effort": models}).encode(),
+                                 headers={"Content-Type": "application/json"})
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        expect(resp.status == 200, f"mock Mistral refuses reasoning_effort for {models}")
+
+
+def reasoning_refused_phase(api: Api, mock: str) -> None:
+    status, dash = api.admin_call("GET", "/dashboard")
+    expect(status == 200 and dash["alerts"] == [], "no alert before the refusal")
+    mock_reasoning(mock, [E2E_MODEL])
+    try:
+        before = mock_stats(mock)
+        token, slug = submit_published(api, REASONING_IDEA)
+        after = mock_stats(mock)
+        refused = after.get("refused_reasoning_effort", 0) - before.get(
+            "refused_reasoning_effort", 0)
+        omitted = sum(after.get(f"{path} reasoning_effort=omitted", 0)
+                      - before.get(f"{path} reasoning_effort=omitted", 0)
+                      for path in ("/v1/chat/completions", "/v1/conversations"))
+        # Once per process at most (api: inline second opinion, worker), then never again.
+        expect(1 <= refused <= 2, f"the model refused reasoning_effort once per process ({refused})")
+        expect(omitted >= 2, f"research and structuring sent without the parameter ({omitted})")
+        status, detail = api.get(f"/api/ideas/{slug}")
+        expect(status == 200 and len(detail["analysis"]["sources"]) == 2,
+               "analysis complete without reasoning_effort")
+        status, dash = api.admin_call("GET", "/dashboard")
+        alert = next((a for a in dash.get("alerts", [])
+                      if a["code"] == "mistral_reasoning_unsupported"), None)
+        expect(status == 200 and alert is not None and alert["http_status"] == 400
+               and E2E_MODEL in alert["message"] and "MISTRAL_ANALYSIS_MODEL" in alert["message"]
+               and "mistral-large-4-0" in alert["message"],
+               "dashboard advises a model that takes reasoning_effort")
+        status, methodology = api.get("/api/methodology")
+        analysis = methodology["models"]["analysis"]
+        expect(status == 200 and analysis["reasoning_effort"] is None
+               and analysis["configured_reasoning_effort"] == "high",
+               "methodology publishes the effort really sent")
+        status, page = api.admin_call("GET", "/ideas?q=" + urllib.parse.quote(slug))
+        expect(status == 200 and page["items"][0]["status"] == "published",
+               "no analysis failed on the refused parameter")
+        SECRETS.append(token)
+    finally:
+        mock_reasoning(mock, [])
 
 
 def idea_id(api: Api, text: str) -> str:
@@ -632,22 +694,23 @@ def main() -> None:
     parser.add_argument("--public", default="http://127.0.0.1:18080")
     parser.add_argument("--admin", default="http://127.0.0.1:18081")
     parser.add_argument("--admin-token", required=True)
-    parser.add_argument("--phase", choices=("main", "auth-refused", "auth-restored", "budget"),
-                        default="main")
+    parser.add_argument("--phase", choices=("main", "auth-refused", "auth-restored",
+                                             "reasoning-refused", "budget"), default="main")
     parser.add_argument("--mock", default="http://127.0.0.1:18090",
-                        help="mock Mistral (phase auth-refused)")
+                        help="mock Mistral (phases auth-refused, reasoning-refused)")
     parser.add_argument("--state", help="state file shared by the auth-* phases")
     parser.add_argument("--secrets-out")
     args = parser.parse_args()
     if args.phase.startswith("auth-") and not args.state:
         parser.error("--state is required by the auth-* phases")
     api = Api(args.public, args.admin, args.admin_token)
-    api.ip_counter = {"main": 10, "auth-refused": 150, "auth-restored": 170, "budget": 200}[
-        args.phase]
+    api.ip_counter = {"main": 10, "auth-refused": 150, "auth-restored": 170,
+                      "reasoning-refused": 185, "budget": 200}[args.phase]
     phases = {
         "main": lambda: main_phase(api),
         "auth-refused": lambda: auth_refused_phase(api, args.mock, args.state),
         "auth-restored": lambda: auth_restored_phase(api, args.state),
+        "reasoning-refused": lambda: reasoning_refused_phase(api, args.mock),
         "budget": lambda: budget_phase(api),
     }
     try:

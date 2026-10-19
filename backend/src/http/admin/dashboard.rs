@@ -1,6 +1,6 @@
 //! `GET /api/admin/dashboard` (AGENTS.md §8): job queue by kind and status, screening rates,
 //! AI costs of the day and of the month by purpose, remaining daily budget, pending queues and
-//! configuration alerts (Mistral API key refused).
+//! configuration alerts (Mistral API key refused, a model that refuses `reasoning_effort`).
 
 use axum::Json;
 use axum::extract::State;
@@ -10,6 +10,7 @@ use utoipa::ToSchema;
 
 use super::euros;
 use crate::ai::budget;
+use crate::config::MistralConfig;
 use crate::db::{dashboard, provider_alerts};
 use crate::domain::types::ReasoningEffort;
 use crate::http::AppState;
@@ -105,11 +106,13 @@ pub struct AdminQueues {
     pub jobs_dead: i64,
 }
 
-/// A configuration alert in progress: the jobs concerned wait (no attempt consumed) until it
-/// ends by itself at the first accepted call.
+/// A configuration alert in progress.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct AdminAlert {
-    /// `mistral_auth`: Mistral refuses the API key (HTTP 401 or 403).
+    /// `mistral_auth`: Mistral refuses the API key (HTTP 401 or 403); the jobs concerned wait
+    /// (no attempt consumed) until the first accepted call ends it.
+    /// `mistral_reasoning_unsupported`: a configured model refuses `reasoning_effort` (§6.1);
+    /// its calls go without it, nothing waits; it ends when the model changes or takes it.
     pub code: String,
     /// First refusal of the alert.
     pub since: DateTime<Utc>,
@@ -121,6 +124,37 @@ pub struct AdminAlert {
     pub failures: i64,
     /// French message to display as is.
     pub message: String,
+}
+
+/// The alert of a model that refuses `reasoning_effort`, if a configured tier sends it an
+/// effort (otherwise the refusal is stale: the model is not used with the parameter any more).
+pub fn reasoning_alert(
+    refusal: provider_alerts::ReasoningRefusal,
+    config: &MistralConfig,
+) -> Option<AdminAlert> {
+    let effort =
+        |model: &str, effort: Option<ReasoningEffort>| effort.filter(|_| model == refusal.model);
+    let analysis = effort(&config.analysis_model, config.analysis_reasoning_effort);
+    let review = effort(&config.review_model, config.review_reasoning_effort);
+    let (variable, configured) = match (analysis, review) {
+        (Some(analysis), _) => ("MISTRAL_ANALYSIS_MODEL", analysis),
+        (None, Some(review)) => ("MISTRAL_REVIEW_MODEL", review),
+        (None, None) => return None,
+    };
+    Some(AdminAlert {
+        code: provider_alerts::MISTRAL_REASONING_UNSUPPORTED.to_owned(),
+        message: format!(
+            "Le modèle {model} refuse le paramètre reasoning_effort depuis le {since}              (HTTP {status}) : ses appels partent sans lui, avec l'effort de raisonnement par              défaut de Mistral au lieu de « {configured} ». Pour appliquer l'effort voulu,              définir {variable} sur un modèle qui le prend en charge, par exemple              mistral-large-4-0.",
+            model = refusal.model,
+            since = refusal.since_paris,
+            status = refusal.last_http_status,
+            configured = configured.as_str(),
+        ),
+        since: refusal.since,
+        last_seen_at: refusal.last_seen_at,
+        http_status: Some(refusal.last_http_status),
+        failures: refusal.refusals,
+    })
 }
 
 impl From<provider_alerts::ProviderAlert> for AdminAlert {
@@ -258,11 +292,17 @@ pub async fn dashboard(State(state): State<AppState>) -> Result<Json<AdminDashbo
         jobs_dead: q.jobs_dead,
     };
 
-    let alerts = provider_alerts::all(pool)
+    let mut alerts: Vec<AdminAlert> = provider_alerts::all(pool)
         .await?
         .into_iter()
         .map(AdminAlert::from)
         .collect();
+    alerts.extend(
+        provider_alerts::reasoning_refusals(pool)
+            .await?
+            .into_iter()
+            .filter_map(|refusal| reasoning_alert(refusal, &state.config.mistral)),
+    );
 
     Ok(Json(AdminDashboard {
         alerts,

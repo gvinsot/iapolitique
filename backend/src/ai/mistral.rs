@@ -18,7 +18,16 @@
 //! Privacy (§7.5): requests carry the rendered prompts only (masked texts, internal ids), never
 //! an IP, a fingerprint or a token; conversations are created with `store: false`. Provider
 //! error bodies are never logged (they may quote the request).
+//!
+//! `reasoning_effort` (§6.1) is documented for some models only. A call that sent it and gets
+//! HTTP 400 (or 422) whose error names the parameter is sent again at once without it; once a
+//! model has answered without it, it is remembered for the life of the process (one WARN per
+//! model) and in `mistral_reasoning_refusals` (admin alert, methodology page). Error shape
+//! checked on 2026-10-19 (<https://docs.mistral.ai/resources/error-glossary>): `{ object,
+//! message, type, param, code }`, `message` possibly holding field-level validation details.
 
+use std::collections::HashSet;
+use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 use serde::Serialize;
@@ -298,6 +307,63 @@ struct Attempt<T> {
     model: Option<String>,
     http_status: Option<u16>,
     retry_after: Option<Duration>,
+    /// HTTP 400/422 whose error names `reasoning_effort` ([`mentions_reasoning`]).
+    rejects_reasoning: bool,
+}
+
+impl<T> Attempt<T> {
+    /// An attempt that got an answer with this HTTP status (2xx), usable or not.
+    fn answered(
+        result: Result<T, MistralError>,
+        usage: Usage,
+        model: Option<String>,
+        http_status: u16,
+    ) -> Self {
+        Self {
+            result,
+            usage,
+            model,
+            http_status: Some(http_status),
+            retry_after: None,
+            rejects_reasoning: false,
+        }
+    }
+}
+
+/// What the client learnt about `reasoning_effort` per model (§6.1), shared by its clones for
+/// the life of the process.
+#[derive(Debug, Default)]
+struct ReasoningSupport {
+    /// Models that refused the parameter: their calls go without it.
+    refused: Mutex<HashSet<String>>,
+    /// Models that took it since the start (a refusal recorded earlier is forgotten).
+    accepted: Mutex<HashSet<String>>,
+}
+
+fn lock(set: &Mutex<HashSet<String>>) -> std::sync::MutexGuard<'_, HashSet<String>> {
+    set.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+}
+
+/// Largest error body read to look for the parameter it names.
+const MAX_ERROR_BODY_BYTES: usize = 16 << 10;
+
+/// Whether a Mistral error body (`{ object, message, type, param, code }`, `message` possibly an
+/// object or a list of field errors) names `reasoning_effort`: `param`, `code`, `loc`, `msg` or
+/// the message mention `reasoning`. The `input` fields of validation errors, which echo the
+/// request, are not read. The body itself is never logged.
+fn mentions_reasoning(body: &[u8]) -> bool {
+    fn walk(value: &Value) -> bool {
+        match value {
+            Value::String(text) => text.to_ascii_lowercase().contains("reasoning"),
+            Value::Array(items) => items.iter().any(walk),
+            Value::Object(fields) => fields
+                .iter()
+                .filter(|(key, _)| !matches!(key.as_str(), "input" | "ctx" | "url"))
+                .any(|(_, value)| walk(value)),
+            _ => false,
+        }
+    }
+    serde_json::from_slice::<Value>(body).is_ok_and(|value| walk(&value))
 }
 
 /// Client of the Mistral API.
@@ -314,6 +380,7 @@ pub struct MistralClient {
     prices: MistralPrices,
     retry: RetryPolicy,
     timeouts: Timeouts,
+    reasoning: Arc<ReasoningSupport>,
 }
 
 impl MistralClient {
@@ -334,6 +401,7 @@ impl MistralClient {
             prices: config.prices.clone(),
             retry: RetryPolicy::default(),
             timeouts,
+            reasoning: Arc::default(),
         })
     }
 
@@ -354,11 +422,54 @@ impl MistralClient {
         }
     }
 
-    /// `reasoning_effort` sent with the calls of `tier`; `None`: omitted (Mistral's default).
+    /// `reasoning_effort` configured for the calls of `tier`; `None`: omitted (Mistral's
+    /// default).
     pub fn reasoning_effort(&self, tier: ModelTier) -> Option<ReasoningEffort> {
         match tier {
             ModelTier::Analysis => self.analysis_effort,
             ModelTier::Review => self.review_effort,
+        }
+    }
+
+    /// `reasoning_effort` really sent with the calls of `tier`: the configured one, unless the
+    /// model refused it since the process started.
+    pub fn effective_reasoning_effort(&self, tier: ModelTier) -> Option<ReasoningEffort> {
+        self.reasoning_effort(tier)
+            .filter(|_| !lock(&self.reasoning.refused).contains(self.model(tier)))
+    }
+
+    /// `model` refused `reasoning_effort` and answered the same call without it: remembered for
+    /// the process (one WARN per model) and in `mistral_reasoning_refusals` (dashboard alert,
+    /// methodology).
+    async fn remember_reasoning_refusal(&self, pool: &PgPool, model: &str, http_status: u16) {
+        let first = lock(&self.reasoning.refused).insert(model.to_owned());
+        lock(&self.reasoning.accepted).remove(model);
+        if first {
+            tracing::warn!(
+                model,
+                http_status,
+                "model {model} rejects reasoning_effort, sending without it"
+            );
+        }
+        if let Err(err) = provider_alerts::record_reasoning_refusal(pool, model, http_status).await
+        {
+            tracing::warn!(error = %err, "cannot record the reasoning_effort refusal");
+        }
+    }
+
+    /// `model` answered a call that carried `reasoning_effort`: a refusal recorded earlier (by
+    /// a previous process) is forgotten, once per process.
+    async fn note_reasoning_accepted(&self, pool: &PgPool, model: &str) {
+        if !lock(&self.reasoning.accepted).insert(model.to_owned()) {
+            return;
+        }
+        match provider_alerts::clear_reasoning_refusal(pool, model).await {
+            Ok(true) => tracing::info!(model, "model {model} accepts reasoning_effort again"),
+            Ok(false) => {}
+            Err(err) => {
+                lock(&self.reasoning.accepted).remove(model);
+                tracing::warn!(error = %err, "cannot clear the reasoning_effort refusal");
+            }
         }
     }
 
@@ -393,8 +504,7 @@ impl MistralClient {
         schema: &OutputSchema,
         check: impl Fn(&T) -> Result<(), String>,
     ) -> Result<Completion<T>, MistralError> {
-        let effort = self.reasoning_effort(tier);
-        let mut body = json!({
+        let base = json!({
             "model": self.model(tier),
             "messages": [
                 { "role": "system", "content": prompt.system },
@@ -407,11 +517,13 @@ impl MistralClient {
             "temperature": STRUCTURED_TEMPERATURE,
             "stream": false,
         });
-        // A top-level field of chat completions.
-        if let Some(effort) = effort {
-            body["reasoning_effort"] = json!(effort.as_str());
-        }
-        self.run(pool, ctx, Some(tier), || async {
+        let (base, check) = (&base, &check);
+        self.run(pool, ctx, Some(tier), move |effort| async move {
+            let mut body = base.clone();
+            // A top-level field of chat completions.
+            if let Some(effort) = effort {
+                body["reasoning_effort"] = json!(effort.as_str());
+            }
             let (response, http_status) = match self
                 .post("/v1/chat/completions", &body, self.timeouts.chat(effort))
                 .await
@@ -432,13 +544,7 @@ impl MistralClient {
                 check(&typed).map_err(MistralError::InvalidOutput)?;
                 Ok(typed)
             });
-            Attempt {
-                result,
-                usage: parsed.usage,
-                model: parsed.model,
-                http_status: Some(http_status),
-                retry_after: None,
-            }
+            Attempt::answered(result, parsed.usage, parsed.model, http_status)
         })
         .await
     }
@@ -452,8 +558,7 @@ impl MistralClient {
         tier: ModelTier,
         prompt: &RenderedPrompt,
     ) -> Result<Completion<Research>, MistralError> {
-        let effort = self.reasoning_effort(tier);
-        let mut body = json!({
+        let base = json!({
             "model": self.model(tier),
             "instructions": prompt.system,
             "inputs": prompt.user,
@@ -462,11 +567,13 @@ impl MistralClient {
             "store": false,
             "stream": false,
         });
-        // Conversations take it among the completion arguments.
-        if let Some(effort) = effort {
-            body["completion_args"]["reasoning_effort"] = json!(effort.as_str());
-        }
-        self.run(pool, ctx, Some(tier), || async {
+        let base = &base;
+        self.run(pool, ctx, Some(tier), move |effort| async move {
+            let mut body = base.clone();
+            // Conversations take it among the completion arguments.
+            if let Some(effort) = effort {
+                body["completion_args"]["reasoning_effort"] = json!(effort.as_str());
+            }
             let (response, http_status) = match self
                 .post(
                     "/v1/conversations",
@@ -479,13 +586,7 @@ impl MistralClient {
                 Err(failure) => return failure.into(),
             };
             let parsed = parse_conversation(&response);
-            Attempt {
-                result: parsed.research,
-                usage: parsed.usage,
-                model: parsed.model,
-                http_status: Some(http_status),
-                retry_after: None,
-            }
+            Attempt::answered(parsed.research, parsed.usage, parsed.model, http_status)
         })
         .await
     }
@@ -499,27 +600,25 @@ impl MistralClient {
         texts: &[&str],
     ) -> Result<Completion<Vec<Vec<f32>>>, MistralError> {
         let body = json!({ "model": self.embed_model, "input": texts });
-        self.run(pool, ctx, None, || async {
+        let body = &body;
+        // No reasoning for embeddings: the effort given is always `None` (no tier).
+        self.run(pool, ctx, None, move |_| async move {
             let (response, http_status) = match self
-                .post("/v1/embeddings", &body, self.timeouts.embedding)
+                .post("/v1/embeddings", body, self.timeouts.embedding)
                 .await
             {
                 Ok(ok) => ok,
                 Err(failure) => return failure.into(),
             };
             let (result, usage) = parse_embeddings(&response, texts.len());
-            Attempt {
-                result,
-                usage,
-                model: Some(self.embed_model.clone()),
-                http_status: Some(http_status),
-                retry_after: None,
-            }
+            Attempt::answered(result, usage, Some(self.embed_model.clone()), http_status)
         })
         .await
     }
 
     /// Runs the attempts of a call, records each of them and sums usage and cost.
+    /// `attempt_fn` sends the request with the `reasoning_effort` it is given; a refusal of the
+    /// parameter is followed at once by the same request without it (not one of the retries).
     async fn run<T, F, Fut>(
         &self,
         pool: &PgPool,
@@ -528,20 +627,24 @@ impl MistralClient {
         attempt_fn: F,
     ) -> Result<Completion<T>, MistralError>
     where
-        F: Fn() -> Fut,
+        F: Fn(Option<ReasoningEffort>) -> Fut,
         Fut: std::future::Future<Output = Attempt<T>>,
     {
         let default_model = match tier {
             Some(tier) => self.model(tier).to_owned(),
             None => self.embed_model.clone(),
         };
+        let mut effort = tier.and_then(|tier| self.effective_reasoning_effort(tier));
+        let mut max_attempts = self.retry.max_attempts;
+        // HTTP status of a refusal of `reasoning_effort`, until the call without it is answered.
+        let mut refusal: Option<u16> = None;
         let mut total = Usage::default();
         let mut total_cost = MicroEur::ZERO;
         let mut attempt_number = 0;
         loop {
             attempt_number += 1;
             let started = Instant::now();
-            let attempt = attempt_fn().await;
+            let attempt = attempt_fn(effort).await;
             let latency = started.elapsed();
             let cost = self.cost(tier, attempt.usage);
             total.add(attempt.usage);
@@ -558,7 +661,8 @@ impl MistralClient {
                 input_tokens: attempt.usage.input_tokens,
                 output_tokens: attempt.usage.output_tokens,
                 web_search_count: attempt.usage.web_searches,
-                reasoning_effort: tier.and_then(|tier| self.reasoning_effort(tier)),
+                // The effort really sent: `None` once the model refused it.
+                reasoning_effort: effort,
                 cost,
                 latency,
                 status: attempt
@@ -581,8 +685,19 @@ impl MistralClient {
             }
             self.track_auth(pool, ctx, attempt.result.as_ref().err())
                 .await;
+            // Answered without the parameter: the model does not take it.
+            if let Some(status) = refusal
+                && attempt.http_status.is_some_and(|s| (200..300).contains(&s))
+            {
+                refusal = None;
+                self.remember_reasoning_refusal(pool, &default_model, status)
+                    .await;
+            }
             match attempt.result {
                 Ok(value) => {
+                    if effort.is_some() {
+                        self.note_reasoning_accepted(pool, &default_model).await;
+                    }
                     return Ok(Completion {
                         value,
                         model,
@@ -598,7 +713,14 @@ impl MistralClient {
                         error = %error.code(),
                         "Mistral call failed"
                     );
-                    if !error.retryable() || attempt_number >= self.retry.max_attempts {
+                    if effort.is_some() && attempt.rejects_reasoning {
+                        // Same call at once without the parameter (§6.1).
+                        refusal = attempt.http_status;
+                        effort = None;
+                        max_attempts += 1;
+                        continue;
+                    }
+                    if !error.retryable() || attempt_number >= max_attempts {
                         return Err(error);
                     }
                     tokio::time::sleep(self.retry.delay(attempt_number, attempt.retry_after)).await;
@@ -679,16 +801,23 @@ impl MistralClient {
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.trim().parse::<u64>().ok())
                 .map(Duration::from_secs);
+            // A refused request: does it refuse `reasoning_effort` (§6.1)? Read, never logged.
+            let rejects_reasoning = matches!(status, 400 | 422)
+                && super::read_capped(response, MAX_ERROR_BODY_BYTES)
+                    .await
+                    .is_ok_and(|body| mentions_reasoning(&body));
             return Err(Failure {
                 error: MistralError::Http { status },
                 http_status: Some(status),
                 retry_after,
+                rejects_reasoning,
             });
         }
         let failure = |error| Failure {
             error,
             http_status: Some(status),
             retry_after: None,
+            rejects_reasoning: false,
         };
         let bytes = match super::read_capped(response, super::MAX_MISTRAL_RESPONSE_BYTES).await {
             Ok(bytes) => bytes,
@@ -716,6 +845,7 @@ struct Failure {
     error: MistralError,
     http_status: Option<u16>,
     retry_after: Option<Duration>,
+    rejects_reasoning: bool,
 }
 
 impl Failure {
@@ -724,6 +854,7 @@ impl Failure {
             error,
             http_status: None,
             retry_after: None,
+            rejects_reasoning: false,
         }
     }
 }
@@ -736,6 +867,7 @@ impl<T> From<Failure> for Attempt<T> {
             model: None,
             http_status: failure.http_status,
             retry_after: failure.retry_after,
+            rejects_reasoning: failure.rejects_reasoning,
         }
     }
 }
@@ -1914,5 +2046,248 @@ mod tests {
         .unwrap();
         let client = MistralClient::new(&config.mistral).unwrap();
         assert!(!format!("{client:?}").contains("very-secret-key"));
+    }
+
+    /// Mistral's answer to a parameter the model does not take (`{ object, message, type,
+    /// param, code }`), quoting a marker that must never be logged.
+    fn reasoning_refusal() -> ResponseTemplate {
+        ResponseTemplate::new(400).set_body_json(json!({
+            "object": "error",
+            "message": "Extra inputs are not permitted: reasoning_effort (REQUETE-PRIVEE)",
+            "type": "invalid_request_error",
+            "param": "reasoning_effort",
+            "code": "3001"
+        }))
+    }
+
+    async fn refusal_rows(pool: &PgPool) -> Vec<(String, i32, i64)> {
+        sqlx::query_as(
+            "SELECT model, last_http_status, refusals FROM mistral_reasoning_refusals
+             ORDER BY model",
+        )
+        .fetch_all(pool)
+        .await
+        .unwrap()
+    }
+
+    #[test]
+    fn reasoning_is_found_in_the_error_fields_never_in_the_echoed_input() {
+        for body in [
+            json!({ "object": "error", "message": "bad", "param": "reasoning_effort" }),
+            json!({ "message": "Model does not support Reasoning", "type": "invalid_request_error" }),
+            json!({ "object": "error", "type": "invalid_request_message_error",
+                    "message": { "detail": [{ "type": "extra_forbidden",
+                        "loc": ["body", "reasoning_effort"], "msg": "Extra inputs are not permitted",
+                        "input": "high" }] } }),
+            json!({ "detail": [{ "loc": ["body", "completion_args", "reasoning_effort"],
+                                 "msg": "x", "type": "x" }] }),
+        ] {
+            assert!(mentions_reasoning(body.to_string().as_bytes()), "{body}");
+        }
+        for body in [
+            json!({ "object": "error", "message": "Invalid model: mistral-x", "param": "model" }),
+            // The request echoed back (a prompt about reasoning) is not the error.
+            json!({ "message": { "detail": [{ "loc": ["body", "messages", 1, "content"],
+                "msg": "too long", "input": "my reasoning is…" }] } }),
+        ] {
+            assert!(!mentions_reasoning(body.to_string().as_bytes()), "{body}");
+        }
+        assert!(!mentions_reasoning(b"reasoning_effort not JSON"));
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn a_refused_reasoning_effort_is_dropped_and_remembered(pool: PgPool) {
+        let server = MockServer::start().await;
+        // The model refuses any request carrying the parameter…
+        Mock::given(path("/v1/chat/completions"))
+            .and(body_partial_json(json!({ "reasoning_effort": "none" })))
+            .respond_with(reasoning_refusal())
+            .with_priority(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+        // …and answers the same request without it.
+        Mock::given(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(chat_response(json!(ACCEPT))))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let client = client(&server);
+        assert_eq!(
+            client.effective_reasoning_effort(ModelTier::Review),
+            Some(ReasoningEffort::Off)
+        );
+        let (completion, logs) =
+            crate::http::security_tests::capture_logs(structured_call(&client, &pool)).await;
+        let completion = completion.unwrap();
+        assert_eq!(completion.value.decision, Decision::Accept);
+        assert_eq!(completion.attempts, 2);
+        assert!(
+            logs.contains(
+                "model mistral-medium-latest rejects reasoning_effort, sending without it"
+            ),
+            "{logs}"
+        );
+        assert!(
+            !logs.contains("REQUETE-PRIVEE"),
+            "error bodies are never logged: {logs}"
+        );
+        // The effort really sent is recorded with each attempt.
+        let recorded: Vec<(Value, Value, Value)> = calls(&pool)
+            .await
+            .iter()
+            .map(|c| {
+                (
+                    c["reasoning_effort"].clone(),
+                    c["http_status"].clone(),
+                    c["status"].clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            recorded,
+            vec![
+                (json!("none"), json!(400), json!("error")),
+                (Value::Null, json!(200), json!("success")),
+            ]
+        );
+        assert_eq!(
+            refusal_rows(&pool).await,
+            vec![("mistral-medium-latest".to_owned(), 400, 1)]
+        );
+        // Remembered for the process, by every clone: the next call goes without it at once,
+        // and the WARN is not repeated.
+        let clone = client.clone();
+        assert_eq!(clone.effective_reasoning_effort(ModelTier::Review), None);
+        assert_eq!(
+            clone.reasoning_effort(ModelTier::Review),
+            Some(ReasoningEffort::Off)
+        );
+        let (completion, logs) =
+            crate::http::security_tests::capture_logs(structured_call(&clone, &pool)).await;
+        assert_eq!(completion.unwrap().attempts, 1);
+        assert!(!logs.contains("rejects reasoning_effort"), "{logs}");
+        assert_eq!(calls(&pool).await[2]["reasoning_effort"], Value::Null);
+        // The other tier keeps its own model and effort.
+        assert_eq!(
+            client.effective_reasoning_effort(ModelTier::Analysis),
+            Some(ReasoningEffort::High)
+        );
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn a_validation_error_on_reasoning_is_handled_for_research_too(pool: PgPool) {
+        let server = MockServer::start().await;
+        Mock::given(path("/v1/conversations"))
+            .and(body_partial_json(
+                json!({ "completion_args": { "reasoning_effort": "high" } }),
+            ))
+            .respond_with(ResponseTemplate::new(422).set_body_json(json!({
+                "object": "error",
+                "message": { "detail": [{ "type": "extra_forbidden",
+                    "loc": ["body", "completion_args", "reasoning_effort"],
+                    "msg": "Extra inputs are not permitted", "input": "high" }] },
+                "type": "invalid_request_message_error", "param": null, "code": null
+            })))
+            .with_priority(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(path("/v1/conversations"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(conversation_response()))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let prompt = test_prompts()
+            .analysis_research
+            .render(
+                &PromptVars::new()
+                    .set("today", "2026-10-19")
+                    .set("idea_text", "Idée"),
+            )
+            .unwrap();
+        let client = client(&server);
+        let research = client
+            .research(
+                &pool,
+                &CallContext::new(AiPurpose::AnalysisResearch),
+                ModelTier::Analysis,
+                &prompt,
+            )
+            .await
+            .unwrap();
+        assert_eq!(research.attempts, 2);
+        assert_eq!(
+            refusal_rows(&pool).await,
+            vec![("mistral-large-latest".to_owned(), 422, 1)]
+        );
+        assert_eq!(client.effective_reasoning_effort(ModelTier::Analysis), None);
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn other_client_errors_keep_their_behaviour(pool: PgPool) {
+        let server = MockServer::start().await;
+        Mock::given(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(400).set_body_json(json!({
+                "object": "error", "message": "Invalid model: mistral-medium-latest",
+                "type": "invalid_request_error", "param": "model", "code": "1500"
+            })))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = client(&server);
+        let err = structured_call(&client, &pool).await.unwrap_err();
+        assert_eq!(err, MistralError::Http { status: 400 });
+        assert!(!err.is_transient());
+        assert_eq!(calls(&pool).await.len(), 1);
+        assert!(refusal_rows(&pool).await.is_empty());
+        assert_eq!(
+            client.effective_reasoning_effort(ModelTier::Review),
+            Some(ReasoningEffort::Off)
+        );
+    }
+
+    /// The error named the parameter, but the request without it is refused as well: the
+    /// parameter was not the cause, nothing is remembered.
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn a_refusal_that_persists_without_the_parameter_is_not_remembered(pool: PgPool) {
+        let server = MockServer::start().await;
+        Mock::given(path("/v1/chat/completions"))
+            .respond_with(reasoning_refusal())
+            .expect(2)
+            .mount(&server)
+            .await;
+        let client = client(&server);
+        let err = structured_call(&client, &pool).await.unwrap_err();
+        assert_eq!(err, MistralError::Http { status: 400 });
+        let efforts: Vec<Value> = calls(&pool)
+            .await
+            .iter()
+            .map(|c| c["reasoning_effort"].clone())
+            .collect();
+        assert_eq!(efforts, vec![json!("none"), Value::Null]);
+        assert!(refusal_rows(&pool).await.is_empty());
+        assert_eq!(
+            client.effective_reasoning_effort(ModelTier::Review),
+            Some(ReasoningEffort::Off)
+        );
+    }
+
+    /// A refusal recorded by a previous process is forgotten as soon as the model takes the
+    /// parameter (Mistral added it, or the model changed behind its alias).
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn an_accepted_reasoning_effort_clears_an_old_refusal(pool: PgPool) {
+        provider_alerts::record_reasoning_refusal(&pool, "mistral-medium-latest", 400)
+            .await
+            .unwrap();
+        let server = MockServer::start().await;
+        Mock::given(path("/v1/chat/completions"))
+            .and(body_partial_json(json!({ "reasoning_effort": "none" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(chat_response(json!(ACCEPT))))
+            .expect(1)
+            .mount(&server)
+            .await;
+        structured_call(&client(&server), &pool).await.unwrap();
+        assert!(refusal_rows(&pool).await.is_empty());
     }
 }

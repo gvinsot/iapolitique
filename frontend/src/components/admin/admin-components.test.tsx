@@ -481,6 +481,33 @@ describe("Mistral key alert and bulk re-analysis", () => {
     expect(section).toHaveTextContent("MISTRAL_API_KEY dans l’environnement PulsarCD");
   });
 
+  it("shows a model that refuses reasoning_effort as a warning, nothing waiting", () => {
+    renderComponent(
+      <DashboardAlerts
+        alerts={[
+          {
+            code: "mistral_reasoning_unsupported",
+            since: "2026-10-19T06:00:00Z",
+            last_seen_at: "2026-10-19T06:00:00Z",
+            http_status: 400,
+            failures: 1,
+            message:
+              "Le modèle mistral-large-latest refuse le paramètre reasoning_effort : définir " +
+              "MISTRAL_ANALYSIS_MODEL sur un modèle qui le prend en charge.",
+          },
+        ]}
+      />,
+    );
+    const section = screen.getByRole("region", { name: "Alertes de configuration" });
+    expect(
+      within(section).getByText("Effort de raisonnement refusé par un modèle Mistral"),
+    ).toBeInTheDocument();
+    expect(section).toHaveTextContent("définir MISTRAL_ANALYSIS_MODEL");
+    expect(section).toHaveTextContent("1 refus constaté");
+    expect(section).toHaveTextContent("Rien n’attend");
+    expect(section).not.toHaveTextContent("MISTRAL_API_KEY");
+  });
+
   it("shows nothing when all is well", () => {
     renderComponent(<DashboardAlerts alerts={[]} />);
     expect(screen.queryByRole("region", { name: "Alertes de configuration" })).toBeNull();

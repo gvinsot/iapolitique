@@ -360,3 +360,64 @@ async fn the_dashboard_shows_the_alert_and_failed_analyses_are_queued_again(pool
     assert_eq!(status, StatusCode::ACCEPTED);
     assert_eq!(body, json!({ "requeued": 0, "remaining": 0 }));
 }
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn the_dashboard_shows_a_model_that_refuses_reasoning_effort(pool: PgPool) {
+    // A stale refusal (model no longer configured) is not an alert.
+    provider_alerts::record_reasoning_refusal(&pool, "mistral-small-2402", 400)
+        .await
+        .unwrap();
+    let app = TestApp::new(pool.clone(), true, &[]).await;
+    let (_, dashboard) = admin_get(&app, "/api/admin/dashboard").await;
+    assert_eq!(dashboard["alerts"], json!([]));
+
+    provider_alerts::record_reasoning_refusal(&pool, "mistral-large-latest", 400)
+        .await
+        .unwrap();
+    let (status, dashboard) = admin_get(&app, "/api/admin/dashboard").await;
+    assert_eq!(status, StatusCode::OK);
+    let alerts = dashboard["alerts"].as_array().unwrap();
+    assert_eq!(alerts.len(), 1, "{alerts:?}");
+    assert_eq!(alerts[0]["code"], "mistral_reasoning_unsupported");
+    assert_eq!(alerts[0]["http_status"], 400);
+    assert_eq!(alerts[0]["failures"], 1);
+    let message = alerts[0]["message"].as_str().unwrap();
+    assert!(
+        message.starts_with(
+            "Le modèle mistral-large-latest refuse le paramètre reasoning_effort depuis le "
+        ) && message.contains("au lieu de « high »")
+            && message.contains("définir MISTRAL_ANALYSIS_MODEL")
+            && message.contains("mistral-large-4-0"),
+        "{message}"
+    );
+
+    // Only the review model sends an effort: the advice names its variable.
+    let app = TestApp::new(
+        pool.clone(),
+        true,
+        &[
+            ("MISTRAL_ANALYSIS_MODEL", "mistral-large-4-0"),
+            ("MISTRAL_REVIEW_MODEL", "mistral-large-latest"),
+        ],
+    )
+    .await;
+    let (_, dashboard) = admin_get(&app, "/api/admin/dashboard").await;
+    let message = dashboard["alerts"][0]["message"].as_str().unwrap();
+    assert!(
+        message.contains("« none »") && message.contains("définir MISTRAL_REVIEW_MODEL"),
+        "{message}"
+    );
+
+    // No effort configured for the model any more: nothing to advise.
+    let app = TestApp::new(
+        pool,
+        true,
+        &[
+            ("MISTRAL_ANALYSIS_REASONING_EFFORT", ""),
+            ("MISTRAL_REVIEW_REASONING_EFFORT", ""),
+        ],
+    )
+    .await;
+    let (_, dashboard) = admin_get(&app, "/api/admin/dashboard").await;
+    assert_eq!(dashboard["alerts"], json!([]));
+}

@@ -44,6 +44,13 @@ key switch below are counted under `refused_auth`.
 Key switch (devops/dev/e2e_scenario.py, phases `auth-*`): POST /control {"auth_status": 401}
 (or 403) makes every /v1 call answer that status, as Mistral does with a revoked or wrong key;
 {"auth_status": null} accepts the key again. Development only, like the whole mock.
+
+Reasoning switch (phase `reasoning-refused`, AGENTS.md §6.1): POST /control
+{"reject_reasoning_effort": ["mistral-large-latest"]} (or `--reject-reasoning-effort MODEL`,
+repeatable) makes a chat or conversation request for one of these models that carries
+`reasoning_effort` answer HTTP 400 with Mistral's error shape (`param: "reasoning_effort"`), as
+a model that does not document the parameter; the same request without it is answered. `[]`
+lifts it. Refusals are counted under `refused_reasoning_effort` in GET /stats.
 """
 
 from __future__ import annotations
@@ -71,6 +78,8 @@ STOP_WORDS = frozenset(
 STATS: dict[str, int] = {}
 # Status answered to every /v1 call while the key is "refused" (POST /control), None otherwise.
 AUTH_REFUSAL: dict[str, int | None] = {"status": None}
+# Models that refuse `reasoning_effort` (POST /control, --reject-reasoning-effort).
+REASONING_REFUSED: set[str] = set()
 
 # Text of the mock's thinking chunks: checked absent from the API, the exports and the logs.
 THINKING_MARKER = "PENSEE-PRIVEE-MOCK"
@@ -454,13 +463,26 @@ class Handler(BaseHTTPRequestHandler):
             body = json.loads(self.rfile.read(length) or b"{}")
         except (ValueError, json.JSONDecodeError):
             body = None
-        status = body.get("auth_status") if isinstance(body, dict) else 0
-        if status not in (None, 401, 403):
-            self.send_json(400, {"object": "error", "message": "auth_status: 401, 403 or null"})
+        if not isinstance(body, dict) or not body.keys() & {"auth_status",
+                                                            "reject_reasoning_effort"}:
+            self.send_json(400, {"object": "error",
+                                 "message": "auth_status or reject_reasoning_effort expected"})
+            return
+        status = body.get("auth_status")
+        models = body.get("reject_reasoning_effort", [])
+        if status not in (None, 401, 403) or not isinstance(models, list) or                 not all(isinstance(m, str) for m in models):
+            self.send_json(400, {"object": "error", "message":
+                                 "auth_status: 401, 403 or null; reject_reasoning_effort: models"})
             return
         with STATS_LOCK:
-            AUTH_REFUSAL["status"] = status
-        self.send_json(200, {"auth_status": status})
+            if "auth_status" in body:
+                AUTH_REFUSAL["status"] = status
+            if "reject_reasoning_effort" in body:
+                REASONING_REFUSED.clear()
+                REASONING_REFUSED.update(models)
+            answer = {"auth_status": AUTH_REFUSAL["status"],
+                      "reject_reasoning_effort": sorted(REASONING_REFUSED)}
+        self.send_json(200, answer)
 
     def do_POST(self) -> None:  # noqa: N802 - stdlib naming
         if self.path == "/control":
@@ -494,6 +516,22 @@ class Handler(BaseHTTPRequestHandler):
         if effort is not None and effort not in REASONING_EFFORTS:
             self.send_json(400, {"object": "error", "message": "invalid reasoning_effort"})
             return
+        with STATS_LOCK:
+            refuse = effort is not None and body.get("model") in REASONING_REFUSED
+            if refuse:
+                STATS["refused_reasoning_effort"] = STATS.get("refused_reasoning_effort", 0) + 1
+        if refuse:
+            # Mistral's error shape (docs.mistral.ai, error glossary) for a parameter the model
+            # does not take.
+            self.send_json(400, {
+                "object": "error",
+                "message": f"Extra inputs are not permitted: reasoning_effort is not supported "
+                           f"by model {body.get('model')}",
+                "type": "invalid_request_error",
+                "param": "reasoning_effort",
+                "code": None,
+            })
+            return
         status, payload = route(body)
         # Calls per endpoint, and per endpoint and reasoning effort sent (`omitted` without).
         key = f"{self.path} reasoning_effort={effort or 'omitted'}"
@@ -507,7 +545,10 @@ def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--host", default="0.0.0.0")
     parser.add_argument("--port", type=int, default=8090)
+    parser.add_argument("--reject-reasoning-effort", action="append", default=[],
+                        metavar="MODEL", help="model that refuses reasoning_effort (repeatable)")
     args = parser.parse_args()
+    REASONING_REFUSED.update(args.reject_reasoning_effort)
     server = ThreadingHTTPServer((args.host, args.port), Handler)
     print(f"mock Mistral listening on http://{args.host}:{args.port}", file=sys.stderr)
     server.serve_forever()

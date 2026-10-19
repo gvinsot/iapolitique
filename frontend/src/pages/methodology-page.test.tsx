@@ -43,6 +43,36 @@ describe("MethodologyPage", () => {
     expect(container.querySelector("script:not([type])")).toBeNull();
   });
 
+  it("says when a model refused the configured reasoning effort", async () => {
+    stubFetch(
+      apiRoutes({
+        "GET /api/methodology": {
+          ...methodologyFixture,
+          models: {
+            ...methodologyFixture.models,
+            analysis: {
+              model: "mistral-large-latest",
+              reasoning_effort: null,
+              configured_reasoning_effort: "high",
+            },
+          },
+        },
+      }),
+    );
+    renderRoute("/methodologie");
+    const models = await screen.findByRole("region", {
+      name: "Modèles d’IA en vigueur (Mistral AI)",
+    });
+    expect(models).toHaveTextContent(
+      "mistral-large-latest · effort de raisonnement : réglage par défaut de Mistral (effort " +
+        "configuré « high », refusé par ce modèle : le paramètre n’est pas envoyé)",
+    );
+    // An effort omitted by configuration is not a refusal.
+    expect(models).toHaveTextContent(
+      /mistral-medium-3-5 · effort de raisonnement : réglage par défaut de Mistral(?! \()/,
+    );
+  });
+
   it("explains in French when the texts cannot be loaded", async () => {
     stubFetch(
       apiRoutes({

@@ -156,6 +156,14 @@ export function MethodologyInForce({ methodology }: { methodology: Methodology }
                   <>
                     <code className="break-all">{model.model}</code> · effort de raisonnement :{" "}
                     {reasoningLabel(model.reasoning_effort)}
+                    {model.configured_reasoning_effort &&
+                    model.configured_reasoning_effort !== model.reasoning_effort ? (
+                      <>
+                        {" "}
+                        (effort configuré « {model.configured_reasoning_effort} », refusé par ce
+                        modèle : le paramètre n’est pas envoyé)
+                      </>
+                    ) : null}
                   </>
                 )}
               </dd>

@@ -866,12 +866,14 @@ export interface components {
             next_reset: string;
             by_purpose: components["schemas"]["AdminPurposeCost"][];
         };
-        /**
-         * @description A configuration alert in progress: the jobs concerned wait (no attempt consumed) until it
-         *     ends by itself at the first accepted call.
-         */
+        /** @description A configuration alert in progress. */
         AdminAlert: {
-            /** @description `mistral_auth`: Mistral refuses the API key (HTTP 401 or 403). */
+            /**
+             * @description `mistral_auth`: Mistral refuses the API key (HTTP 401 or 403); the jobs concerned wait
+             *     (no attempt consumed) until the first accepted call ends it.
+             *     `mistral_reasoning_unsupported`: a configured model refuses `reasoning_effort` (§6.1);
+             *     its calls go without it, nothing waits; it ends when the model changes or takes it.
+             */
             code: string;
             /**
              * Format: date-time
@@ -1981,6 +1983,7 @@ export interface components {
             /** @example mistral-large-latest */
             model: string;
             reasoning_effort: components["schemas"]["ReasoningEffort"] | null;
+            configured_reasoning_effort?: components["schemas"]["ReasoningEffort"] | null;
         };
         /** @description The Mistral models configured in production (§6.1). */
         MethodologyModels: {

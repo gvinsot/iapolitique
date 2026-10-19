@@ -3041,7 +3041,7 @@
       },
       "AdminAlert": {
         "type": "object",
-        "description": "A configuration alert in progress: the jobs concerned wait (no attempt consumed) until it\nends by itself at the first accepted call.",
+        "description": "A configuration alert in progress.",
         "required": [
           "code",
           "since",
@@ -3053,7 +3053,7 @@
         "properties": {
           "code": {
             "type": "string",
-            "description": "`mistral_auth`: Mistral refuses the API key (HTTP 401 or 403)."
+            "description": "`mistral_auth`: Mistral refuses the API key (HTTP 401 or 403); the jobs concerned wait\n(no attempt consumed) until the first accepted call ends it.\n`mistral_reasoning_unsupported`: a configured model refuses `reasoning_effort` (§6.1);\nits calls go without it, nothing waits; it ends when the model changes or takes it."
           },
           "since": {
             "type": "string",
@@ -6079,7 +6079,18 @@
             "oneOf": [
               {
                 "$ref": "#/components/schemas/ReasoningEffort",
-                "description": "`reasoning_effort` sent with each call: `high` (full thinking before the answer) or\n`none` (minimal thinking); `null` when the parameter is omitted (Mistral's default)."
+                "description": "`reasoning_effort` really sent with each call: `high` (full thinking before the answer)\nor `none` (minimal thinking); `null` when the parameter is omitted (Mistral's default),\nby configuration or because the model refused it."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "configured_reasoning_effort": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/ReasoningEffort",
+                "description": "`reasoning_effort` configured for this model; it differs from `reasoning_effort` when\nthe model refused the parameter (its calls then go without it). Always sent; declared\noptional so that clients built before it keep compiling."
               },
               {
                 "type": "null"

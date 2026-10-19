@@ -425,17 +425,30 @@ version de prompt (l'admin peut relancer manuellement).
   `arguments`, `info` libre —, `FunctionCallEntry`, `AgentHandoffEntry` ; `ToolReferenceChunk` =
   `tool`, `title`, `url`?, `favicon`?, `description`?, plus `source` dans le guide web search ;
   `ThinkChunk.thinking` = `TextChunk`, `ToolReferenceChunk`, `ReferenceChunk` à
-  `reference_ids` seuls) : une page n'est citable que par un fragment `tool_reference`, dans ou
-  hors d'un `thinking`, dédoublonnée par la clé de comparaison d'INJ-3. Le `type` d'une entrée ou
+  `reference_ids` seuls) : une page est citable par un fragment `tool_reference`, dans ou hors
+  d'un `thinking`, puis par les **résultats des recherches** : dans l'`info` (non documenté) des
+  entrées `tool.execution` dont le `name` commence par `web_search`, tout objet portant une
+  adresse http(s) dans `url` (à défaut `link`, `href`, `uri`, `source_url`) est une page, titrée
+  par `title` (à défaut `name`) ; un JSON écrit en chaîne est lu aussi (`ai::mistral::
+  collect_search_pages`, 100 pages au plus, profondeur et nombre de valeurs bornés). Relevé en
+  production le 2026-10-19 : `mistral-large-4` avec l'effort `high` ne renvoie **aucun**
+  `tool_reference`, ses pages sont dans `info.result` (12 à 15 recherches, toutes analyses en
+  échec « consulted no page » auparavant). Pages dédoublonnées par la clé de comparaison
+  d'INJ-3, celles des `tool_reference` d'abord. Le `type` d'une entrée ou
   d'un fragment a une valeur par défaut dans la spec sans être obligatoire : absent, il se déduit
   des champs requis (`content` ; `name` + `arguments` ; `thinking` ; `text` ; `tool` + `title` ;
-  `reference_ids`). Le texte, la réflexion, les `reference` et `info` ne donnent jamais de page.
-  Après chaque réponse de recherche, **une** ligne `INFO` « web research answer structure »
+  `reference_ids`). Le texte, la réflexion, les `reference` et les autres champs d'un résultat
+  (extrait, snippet…) ne donnent jamais de page : l'outil de recherche écrit ces pages, pas le
+  modèle. Après chaque réponse de recherche, **une** ligne `INFO` « web research answer structure »
   décrit la structure seule (modèle, effort envoyé, nombres d'entrées par type, de fragments
   `text`/`thinking`/`tool_reference` — dont dans la réflexion —/`reference`/autres, de contenus
-  en chaîne, de recherches, de pages distinctes citables, noms des clés de `info` assainis),
-  jamais un texte, un titre ou une URL ; `ai_calls.consulted_pages` garde le nombre de pages
-  (0 sans recherche web comptée : le modèle n'a pas cherché ; 0 avec recherches : forme non lue).
+  en chaîne, de recherches, de pages distinctes citables — `consulted_pages` — dont tirées des
+  résultats — `search_result_pages` —, noms des clés de `info` assainis, et
+  `execution_info_shape` : types, longueurs de listes et noms de champs de l'`info` de la
+  première recherche, une clé qui n'est pas un identifiant simple devenant `?`), jamais un
+  texte, un titre ou une URL ; `ai_calls.consulted_pages` garde le nombre de pages
+  (0 sans recherche web comptée : le modèle n'a pas cherché ; 0 avec recherches : forme non lue,
+  à lire dans `execution_info_shape`).
 - 429 / 5xx : retry avec backoff ; ne jamais boucler sans limite.
 - Mise en œuvre (job `analyze_idea`, `jobs/analysis.rs`, stockage `db/analyses.rs`) :
   - première analyse : `queued_analysis → analyzing → published` (slug tiré du titre, suffixe
@@ -480,7 +493,7 @@ version de prompt (l'admin peut relancer manuellement).
 | `assumptions` | Hypothèses de calcul, explicites |
 | `pros`, `cons`, `risks` | Listes courtes et factuelles |
 | `impacts` | Pour **chaque** public de `taxonomy.yaml` (ménages modestes, classes moyennes, ménages aisés, entreprises, agents publics, usagers des services publics, territoires ruraux, territoires urbains, environnement) : `positive` / `neutral` / `negative` / `uncertain` + explication |
-| `sources` | Publiées `{ id, title, publisher, url, used_for }` ; au moins une source pour tout chiffre clé, citée `[S1]`, `[S2]`… dans les textes. **Citation par identifiant (INJ-3)** : les pages renvoyées par la recherche web de l'analyse (`tool_reference`), puis les sources de l'analyse remplacée, sont numérotées `R1`, `R2`… dans `{{pages}}` d'`analysis.md` (« Rn — titre — site — adresse », une page par clé de comparaison : sans schéma, port par défaut, fragment, `/` final ni paramètres `utm_*` ; écartées : identifiants, port explicite, adresse IP, plus de 2 048 caractères, caractère de contrôle) ; la réponse du modèle ne porte que `{ id, ref, used_for }` (`ref` = `Rn`, restreint par un `enum` ajouté au schéma envoyé pour l'appel, `OutputSchema::constrained`) et le backend remplit `title` (titre de la page nettoyé, 500 caractères au plus, à défaut le site), `publisher` (site : nom d'hôte sans `www.`) et `url` depuis cette liste (`ai::outputs::ConsultedPages`, `AnalysisDraft::resolve`) : le modèle n'écrit jamais d'URL. Un `ref` inconnu ou un `[Sx]` cité sans source est refusé et la tentative suivante reçoit après le prompt un bloc `<retour_validation>` qui liste les identifiants valides (construit à partir d'identifiants validés seulement, jamais de texte du modèle). Les analyses publiées avant gardent leur format (mêmes champs), lu tel quel. Une recherche qui ne renvoie aucune page (le modèle décide lui-même de chercher) est redemandée une fois dans la même exécution ; toujours aucune page et rien à citer de l'analyse remplacée : le job est relancé par la file (erreur transitoire, tentative comptée, backoff), puis la dernière tentative échoue (`analysis_failed`, motif « the web research consulted no page… ») ; jamais d'appel de structuration ni de publication sans page à citer |
+| `sources` | Publiées `{ id, title, publisher, url, used_for }` ; au moins une source pour tout chiffre clé, citée `[S1]`, `[S2]`… dans les textes. **Citation par identifiant (INJ-3)** : les pages renvoyées par la recherche web de l'analyse (`tool_reference`, puis résultats des exécutions `web_search`, §6.1), puis les sources de l'analyse remplacée, sont numérotées `R1`, `R2`… dans `{{pages}}` d'`analysis.md` (« Rn — titre — site — adresse », une page par clé de comparaison : sans schéma, port par défaut, fragment, `/` final ni paramètres `utm_*` ; écartées : identifiants, port explicite, adresse IP, plus de 2 048 caractères, caractère de contrôle) ; la réponse du modèle ne porte que `{ id, ref, used_for }` (`ref` = `Rn`, restreint par un `enum` ajouté au schéma envoyé pour l'appel, `OutputSchema::constrained`) et le backend remplit `title` (titre de la page nettoyé, 500 caractères au plus, à défaut le site), `publisher` (site : nom d'hôte sans `www.`) et `url` depuis cette liste (`ai::outputs::ConsultedPages`, `AnalysisDraft::resolve`) : le modèle n'écrit jamais d'URL. Un `ref` inconnu ou un `[Sx]` cité sans source est refusé et la tentative suivante reçoit après le prompt un bloc `<retour_validation>` qui liste les identifiants valides (construit à partir d'identifiants validés seulement, jamais de texte du modèle). Les analyses publiées avant gardent leur format (mêmes champs), lu tel quel. Une recherche qui ne renvoie aucune page (le modèle décide lui-même de chercher) est redemandée une fois dans la même exécution ; toujours aucune page et rien à citer de l'analyse remplacée : le job est relancé par la file (erreur transitoire, tentative comptée, backoff), puis la dernière tentative échoue (`analysis_failed`, motif « the web research consulted no page… ») ; jamais d'appel de structuration ni de publication sans page à citer |
 | `existing_situation` | Droit et pratique actuels, mesures proches déjà en vigueur (le gain chiffré est le gain **supplémentaire**) |
 | `confidence_explanation` | Justification du niveau de confiance |
 | `contributions_considered` | Pour chaque contribution intégrée : `{ contribution_id, summary, taken_into_account, response }` (résumé neutre affiché sur le portail, §5.5) |
@@ -1207,7 +1220,8 @@ dispensent d'aucune des mesures ci-dessous.
   sortie de Mistral est validée par schéma strict puis par des contrôles sémantiques, et elle
   n'est **jamais** exécutée ni interprétée comme instruction : seul l'outil `web_search` est
   autorisé, aucun autre outil ni appel de fonction. Les sources d'une analyse ne sont que des
-  pages réellement consultées par sa recherche web (fragments `tool_reference`) ou les sources
+  pages réellement consultées par sa recherche web (fragments `tool_reference` et résultats
+  des exécutions `web_search`, écrits par l'outil de Mistral, §6.1) ou les sources
   de l'analyse remplacée, citées par identifiant `Rn` : titre, site et URL publiés viennent de
   cette liste, jamais du texte du modèle, d'une idée, d'une contribution, du mémo ni du
   contenu d'une page (INJ-3, §6.2). Un texte qui tente de modifier les règles

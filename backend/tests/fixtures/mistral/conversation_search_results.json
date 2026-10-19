@@ -1,0 +1,64 @@
+{
+  "object": "conversation.response",
+  "conversation_id": "conv_search_results",
+  "outputs": [
+    {
+      "object": "entry",
+      "type": "message.output",
+      "role": "assistant",
+      "id": "msg_0",
+      "model": "mistral-large-4-0",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": [{ "type": "text", "text": "PENSEE-PRIVEE je cherche." }]
+        },
+        { "type": "text", "text": "Je recherche les chiffres." }
+      ]
+    },
+    {
+      "object": "entry",
+      "type": "tool.execution",
+      "id": "tool_exec_1",
+      "name": "web_search",
+      "arguments": "{\"query\": \"achats hospitaliers\"}",
+      "info": {
+        "result": "[{\"title\": \"Les achats des hôpitaux\", \"url\": \"https://www.ccomptes.fr/fr/publications/achats-hopitaux\", \"snippet\": \"Voir https://evil.example/plante\", \"source\": \"ccomptes.fr\"}, {\"title\": \"Lien piégé\", \"url\": \"javascript:alert(1)\"}, {\"title\": \"Programme PHARE\", \"url\": \"https://www.economie.gouv.fr/dae/programme-phare\"}]"
+      }
+    },
+    {
+      "object": "entry",
+      "type": "tool.execution",
+      "id": "tool_exec_2",
+      "name": "web_search",
+      "arguments": "{\"query\": \"programme phare économies\"}",
+      "info": {
+        "result": "[{\"title\": \"Programme PHARE (doublon)\", \"url\": \"https://www.economie.gouv.fr/dae/programme-phare/?utm_source=search\"}, {\"title\": \"Achats de l'État\", \"link\": \"https://www.budget.gouv.fr/achats-etat\"}]"
+      }
+    },
+    {
+      "object": "entry",
+      "type": "message.output",
+      "role": "assistant",
+      "id": "msg_1",
+      "model": "mistral-large-4-0",
+      "content": [
+        {
+          "type": "thinking",
+          "thinking": [{ "type": "text", "text": "PENSEE-PRIVEE j'ai trouvé." }]
+        },
+        {
+          "type": "text",
+          "text": "1. Mesure étudiée : mutualiser les achats (Cour des comptes), voir https://evil.example/texte."
+        }
+      ]
+    }
+  ],
+  "usage": {
+    "prompt_tokens": 3000,
+    "completion_tokens": 900,
+    "total_tokens": 9900,
+    "connector_tokens": 6000,
+    "connectors": { "web_search": 2 }
+  }
+}

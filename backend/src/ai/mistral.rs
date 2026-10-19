@@ -323,11 +323,12 @@ impl From<String> for Rejection {
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct Research {
     pub text: String,
-    /// Web pages referenced by the answer, deduplicated by URL, in order of appearance.
+    /// Web pages referenced by the answer, then the other results of its searches,
+    /// deduplicated by URL, in order of appearance.
     pub references: Vec<WebReference>,
 }
 
-/// A `tool_reference` chunk of a conversation answer.
+/// A page consulted by the web research: a `tool_reference` chunk or a search result.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize)]
 pub struct WebReference {
     pub title: String,
@@ -672,8 +673,10 @@ impl MistralClient {
                 reference_chunks = shape.reference_chunks,
                 other_chunks = shape.other_chunks,
                 consulted_pages = shape.consulted_pages,
+                search_result_pages = shape.search_result_pages,
                 web_searches = parsed.usage.web_searches,
                 execution_info_keys = shape.execution_info_keys.join(","),
+                execution_info_shape = shape.execution_info_shape.as_str(),
                 "web research answer structure"
             );
             let mut attempt =
@@ -1063,15 +1066,160 @@ fn answer_text(content: &Value) -> Option<String> {
     }
 }
 
-/// Adds a `tool_reference` chunk to `references`, unless the same page is already there (same
-/// comparison key as INJ-3, [`source_url_key`], or the same raw URL when it has none).
+/// Adds a `tool_reference` chunk to `references` ([`push_page`]).
 fn push_reference(references: &mut Vec<WebReference>, chunk: &Value) {
     let text = |key: &str| chunk.get(key).and_then(Value::as_str).map(str::to_owned);
-    let reference = WebReference {
-        title: text("title").unwrap_or_default(),
-        url: text("url").filter(|url| !url.trim().is_empty()),
-        source: text("source"),
-    };
+    push_page(
+        references,
+        WebReference {
+            title: text("title").unwrap_or_default(),
+            url: text("url").filter(|url| !url.trim().is_empty()),
+            source: text("source"),
+        },
+    );
+}
+
+/// Most pages read from the results of the searches of one research answer.
+const MAX_SEARCH_RESULT_PAGES: usize = 100;
+/// Most JSON values visited in the `info` of one search, and their deepest nesting.
+const MAX_INFO_NODES: usize = 20_000;
+const MAX_INFO_DEPTH: usize = 8;
+/// Field names of a search result holding its address, then its title, by preference.
+const RESULT_URL_KEYS: [&str; 5] = ["url", "link", "href", "uri", "source_url"];
+const RESULT_TITLE_KEYS: [&str; 2] = ["title", "name"];
+
+/// A JSON object or array written as a string (`info.result` of a `web_search` execution).
+fn embedded_json(text: &str) -> Option<Value> {
+    let trimmed = text.trim_start();
+    if !trimmed.starts_with('[') && !trimmed.starts_with('{') {
+        return None;
+    }
+    serde_json::from_str(trimmed)
+        .ok()
+        .filter(|v: &Value| v.is_array() || v.is_object())
+}
+
+/// Pages returned by a `web_search` execution, read in its `info` (§6.1): every object with an
+/// http(s) address in a field of [`RESULT_URL_KEYS`] is a page, its title taken from
+/// [`RESULT_TITLE_KEYS`]; JSON written as a string is read too. The search tool writes them,
+/// not the model; the other fields of a result (extract, snippet…) are never read, so an
+/// address quoted in a page's text never becomes a page.
+fn collect_search_pages(
+    value: &Value,
+    depth: usize,
+    budget: &mut usize,
+    pages: &mut Vec<WebReference>,
+) {
+    if depth > MAX_INFO_DEPTH || *budget == 0 || pages.len() >= MAX_SEARCH_RESULT_PAGES {
+        return;
+    }
+    *budget -= 1;
+    match value {
+        Value::String(text) => {
+            if let Some(parsed) = embedded_json(text) {
+                collect_search_pages(&parsed, depth + 1, budget, pages);
+            }
+        }
+        Value::Array(items) => {
+            for item in items {
+                collect_search_pages(item, depth + 1, budget, pages);
+            }
+        }
+        Value::Object(map) => {
+            let field = |keys: &[&str]| {
+                keys.iter()
+                    .find_map(|key| map.get(*key).and_then(Value::as_str))
+            };
+            let url = field(&RESULT_URL_KEYS).map(str::trim).filter(|url| {
+                let lower = url.get(..8).unwrap_or(url).to_ascii_lowercase();
+                lower.starts_with("https://") || lower.starts_with("http://")
+            });
+            if let Some(url) = url {
+                push_page(
+                    pages,
+                    WebReference {
+                        title: field(&RESULT_TITLE_KEYS).unwrap_or_default().to_owned(),
+                        url: Some(url.to_owned()),
+                        source: map.get("source").and_then(Value::as_str).map(str::to_owned),
+                    },
+                );
+                return;
+            }
+            for child in map.values() {
+                collect_search_pages(child, depth + 1, budget, pages);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Most characters of [`ResearchShape::execution_info_shape`], and its deepest nesting.
+const MAX_SHAPE_CHARS: usize = 400;
+const MAX_SHAPE_DEPTH: usize = 4;
+
+/// A field name worth naming in the diagnostics: Mistral's identifiers only, never a key a page
+/// or a visitor could steer into a text or an address.
+fn is_field_name(key: &str) -> bool {
+    (1..=32).contains(&key.len()) && key.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'_')
+}
+
+/// Structure of a JSON value: types, array lengths and field names ([`is_field_name`], `?`
+/// otherwise), never a value: `object{result:json:array(10)[object{title:string,url:string}]}`.
+fn json_shape(value: &Value) -> String {
+    fn describe(value: &Value, depth: usize, out: &mut String) {
+        if out.len() > MAX_SHAPE_CHARS {
+            return;
+        }
+        match value {
+            Value::Null => out.push_str("null"),
+            Value::Bool(_) => out.push_str("bool"),
+            Value::Number(_) => out.push_str("number"),
+            Value::String(text) => match embedded_json(text) {
+                Some(parsed) if depth < MAX_SHAPE_DEPTH => {
+                    out.push_str("json:");
+                    describe(&parsed, depth + 1, out);
+                }
+                _ => out.push_str("string"),
+            },
+            Value::Array(items) => {
+                out.push_str(&format!("array({})", items.len()));
+                if let Some(first) = items.first().filter(|_| depth < MAX_SHAPE_DEPTH) {
+                    out.push('[');
+                    describe(first, depth + 1, out);
+                    out.push(']');
+                }
+            }
+            Value::Object(map) => {
+                out.push_str("object{");
+                for (i, (key, child)) in map.iter().take(MAX_INFO_KEYS).enumerate() {
+                    if i > 0 {
+                        out.push(',');
+                    }
+                    out.push_str(if is_field_name(key) { key } else { "?" });
+                    if depth < MAX_SHAPE_DEPTH {
+                        out.push(':');
+                        describe(child, depth + 1, out);
+                    }
+                }
+                if map.len() > MAX_INFO_KEYS {
+                    out.push_str(",…");
+                }
+                out.push('}');
+            }
+        }
+    }
+    let mut out = String::new();
+    describe(value, 0, &mut out);
+    if out.chars().count() > MAX_SHAPE_CHARS {
+        out = out.chars().take(MAX_SHAPE_CHARS - 1).collect();
+        out.push('…');
+    }
+    out
+}
+
+/// Adds a page to `references`, unless the same page is already there (same comparison key as
+/// INJ-3, [`source_url_key`], or the same raw URL when it has none).
+fn push_page(references: &mut Vec<WebReference>, reference: WebReference) {
     let key = |r: &WebReference| {
         r.url
             .as_deref()
@@ -1157,9 +1305,15 @@ pub struct ResearchShape {
     pub other_chunks: u32,
     /// Distinct pages with a publishable http(s) URL: what the analysis may cite.
     pub consulted_pages: u32,
+    /// Among the pages returned by the `web_search` executions ([`collect_search_pages`]),
+    /// the distinct ones with a publishable URL (some may also be `tool_reference` chunks).
+    pub search_result_pages: u32,
     /// Distinct key names of the `info` objects of the `tool.execution` entries (Mistral's
     /// field names, sanitised), for a shape not documented yet.
     pub execution_info_keys: Vec<String>,
+    /// [`json_shape`] of the `info` of the first `web_search` execution: types and field names
+    /// only, to read a shape the parser misses.
+    pub execution_info_shape: String,
 }
 
 impl ResearchShape {
@@ -1224,9 +1378,11 @@ struct ParsedConversation {
 /// chunks (`TextChunk`, `ThinkChunk`, `ToolReferenceChunk` with `tool`, `title`, `url`?,
 /// `favicon`?, `description`?, and `source` in the web search guide, images, files); a
 /// `ThinkChunk.thinking` holds `TextChunk`, `ToolReferenceChunk` and `ReferenceChunk`
-/// (`reference_ids` only). A page is citable only from a `tool_reference` chunk, inside or
-/// outside thinking: the search tool writes it, not the model. Thinking text is never read;
-/// `info` is not documented and only its key names are noted.
+/// (`reference_ids` only). A page is citable from a `tool_reference` chunk, inside or outside
+/// thinking, then from the results of the `web_search` executions, in their undocumented
+/// `info` ([`collect_search_pages`]; `mistral-large-4` with the effort `high` returns them in
+/// `info.result` and no `tool_reference` at all, seen on 2026-10-19): the search tool writes
+/// both, not the model. Thinking text is never read.
 fn parse_conversation(response: &Value) -> ParsedConversation {
     let outputs = response
         .get("outputs")
@@ -1235,6 +1391,8 @@ fn parse_conversation(response: &Value) -> ParsedConversation {
         .unwrap_or_default();
     let mut text = String::new();
     let mut references: Vec<WebReference> = Vec::new();
+    let mut search_pages: Vec<WebReference> = Vec::new();
+    let mut info_budget = MAX_INFO_NODES;
     let mut executions = 0u64;
     let mut model = None;
     let mut shape = ResearchShape::default();
@@ -1249,6 +1407,12 @@ fn parse_conversation(response: &Value) -> ParsedConversation {
                     .is_some_and(|n| n.starts_with("web_search"))
                 {
                     executions += 1;
+                    if let Some(info) = entry.get("info") {
+                        if shape.execution_info_shape.is_empty() {
+                            shape.execution_info_shape = json_shape(info);
+                        }
+                        collect_search_pages(info, 0, &mut info_budget, &mut search_pages);
+                    }
                 }
             }
             Some("message.output") => {
@@ -1289,6 +1453,12 @@ fn parse_conversation(response: &Value) -> ParsedConversation {
             }
             _ => shape.other_entries += 1,
         }
+    }
+    // The pages the answer cites first, then the other results of its searches.
+    shape.search_result_pages =
+        u32::try_from(consulted_page_count(&search_pages)).unwrap_or(u32::MAX);
+    for page in search_pages {
+        push_page(&mut references, page);
     }
     shape.consulted_pages = u32::try_from(consulted_page_count(&references)).unwrap_or(u32::MAX);
     let connector_searches: u64 = response
@@ -1902,6 +2072,9 @@ mod tests {
             "conversation_untyped" => {
                 include_str!("../../tests/fixtures/mistral/conversation_untyped_chunks.json")
             }
+            "conversation_search_results" => {
+                include_str!("../../tests/fixtures/mistral/conversation_search_results.json")
+            }
             other => panic!("unknown fixture {other}"),
         };
         serde_json::from_str(text).unwrap()
@@ -2025,7 +2198,8 @@ mod tests {
 
     /// Every documented shape of a research answer (OpenAPI spec and web search guide): the
     /// pages cited are the `tool_reference` chunks, inside or outside thinking, with or without
-    /// their default `type`; nothing else, whatever the text, the thinking or `info` say (INJ-3).
+    /// their default `type`, then the results of the searches; nothing else, whatever the text,
+    /// the thinking or a result's extract say (INJ-3).
     #[test]
     fn research_references_are_read_from_every_documented_shape() {
         let ccomptes = "https://www.ccomptes.fr/fr/publications/achats-hopitaux";
@@ -2078,14 +2252,19 @@ mod tests {
         assert_eq!(parsed.shape.consulted_pages, 0);
         assert_eq!(parsed.usage.web_searches, 0);
 
-        // A search ran but no reference came back: `info` and the text are never a source, its
-        // key names only are noted (sanitised).
+        // A search ran but returned no page address: an address in an extract or in the text is
+        // never a source; key names are noted (sanitised), the shape names no steered key.
         let parsed = parse_conversation(&fixture("conversation_execution_only"));
         let research = parsed.research.unwrap();
         assert!(research.references.is_empty());
         assert_eq!(parsed.shape.consulted_pages, 0);
+        assert_eq!(parsed.shape.search_result_pages, 0);
         assert_eq!(parsed.usage.web_searches, 1);
         assert_eq!(parsed.shape.execution_info_keys, ["queryscript", "results"]);
+        assert_eq!(
+            parsed.shape.execution_info_shape,
+            "object{?:string,results:array(1)[object{snippet:string,title:string}]}"
+        );
 
         // Reasoning high: `reference` chunks (ids only) are counted, never cited.
         let parsed = parse_conversation(&fixture("conversation_high"));
@@ -2101,6 +2280,105 @@ mod tests {
         assert_eq!(urls(&parsed.research.unwrap()), [phare, ccomptes]);
     }
 
+    /// `mistral-large-4` with the effort `high` (production, 2026-10-19): no `tool_reference`
+    /// at all, the pages of each search in `info.result`, a JSON array written as a string. The
+    /// results are the pages, deduplicated, in order; neither a non-web address, nor an address
+    /// in an extract or in the text, ever is one.
+    #[test]
+    fn research_pages_are_read_from_the_search_results() {
+        let parsed = parse_conversation(&fixture("conversation_search_results"));
+        let research = parsed.research.unwrap();
+        assert_eq!(
+            urls(&research),
+            [
+                "https://www.ccomptes.fr/fr/publications/achats-hopitaux",
+                "https://www.economie.gouv.fr/dae/programme-phare",
+                "https://www.budget.gouv.fr/achats-etat",
+            ]
+        );
+        let titles: Vec<&str> = research
+            .references
+            .iter()
+            .map(|r| r.title.as_str())
+            .collect();
+        assert_eq!(
+            titles,
+            [
+                "Les achats des hôpitaux",
+                "Programme PHARE",
+                "Achats de l'État"
+            ]
+        );
+        assert_eq!(
+            research.references[0].source.as_deref(),
+            Some("ccomptes.fr")
+        );
+        assert_eq!(parsed.shape.tool_references, 0);
+        assert_eq!(parsed.shape.search_result_pages, 3);
+        assert_eq!(parsed.shape.consulted_pages, 3);
+        assert_eq!(parsed.usage.web_searches, 2);
+        assert_eq!(parsed.shape.execution_info_keys, ["result"]);
+        assert_eq!(
+            parsed.shape.execution_info_shape,
+            "object{result:json:array(3)[object{snippet:string,source:string,title:string,url:string}]}"
+        );
+        let pages = format!("{:?}", research.references);
+        assert!(!pages.contains("evil.example"), "{pages}");
+        assert!(!format!("{research:?}").contains(THINKING_MARKER));
+
+        // `tool_reference` chunks come first, then the other results; a page in both is listed once.
+        let mut response = fixture("conversation_search_results");
+        response["outputs"][3]["content"]
+            .as_array_mut()
+            .unwrap()
+            .push(json!({
+                "type": "tool_reference", "tool": "web_search", "title": "PHARE cité",
+                "url": "https://www.economie.gouv.fr/dae/programme-phare"
+            }));
+        let parsed = parse_conversation(&response);
+        let research = parsed.research.unwrap();
+        assert_eq!(research.references[0].title, "PHARE cité");
+        assert_eq!(research.references.len(), 3);
+        assert_eq!(parsed.shape.consulted_pages, 3);
+
+        // Bounded: never more than MAX_SEARCH_RESULT_PAGES pages, whatever the searches return.
+        let many: Vec<Value> = (0..MAX_SEARCH_RESULT_PAGES + 20)
+            .map(|n| json!({ "title": format!("P{n}"), "url": format!("https://site{n}.fr/") }))
+            .collect();
+        let response = json!({
+            "outputs": [
+                { "type": "tool.execution", "name": "web_search", "arguments": "{}",
+                  "info": { "result": Value::Array(many).to_string() } },
+                { "type": "message.output", "content": "Mémo." }
+            ]
+        });
+        let parsed = parse_conversation(&response);
+        assert_eq!(
+            parsed.research.unwrap().references.len(),
+            MAX_SEARCH_RESULT_PAGES
+        );
+    }
+
+    /// The diagnostics shape names Mistral's fields only, never a value nor a key that is not a
+    /// plain identifier (an address used as a key), and stays bounded.
+    #[test]
+    fn json_shape_never_names_a_value() {
+        let info = json!({
+            "https://evil.example/cle": { "title": "Titre secret" },
+            "result": "texte libre https://evil.example",
+            "count": 3,
+            "ok": true,
+            "none": null
+        });
+        let shape = json_shape(&info);
+        assert_eq!(
+            shape,
+            "object{count:number,?:object{title:string},none:null,ok:bool,result:string}"
+        );
+        let deep = (0..200).fold(json!("x"), |inner, _| json!({ "level": [inner] }));
+        assert!(json_shape(&deep).chars().count() <= MAX_SHAPE_CHARS);
+    }
+
     /// One INFO line per research answer, with its structure only: never a text, a title, a URL
     /// or the thinking (§14.6). The number of pages is recorded in `ai_calls`.
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]
@@ -2112,6 +2390,7 @@ mod tests {
             ("conversation_no_tool", 0),
             ("conversation_execution_only", 0),
             ("conversation_untyped", 2),
+            ("conversation_search_results", 3),
         ] {
             sqlx::query("TRUNCATE ai_calls")
                 .execute(&pool)

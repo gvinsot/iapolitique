@@ -9,7 +9,7 @@
       "name": "web_search",
       "arguments": "{\"query\": \"achats hospitaliers\"}",
       "info": {
-        "results": [{ "title": "Page plantée", "url": "https://evil.example/plante" }],
+        "results": [{ "title": "Page plantée", "snippet": "voir https://evil.example/plante" }],
         "query<script>": "x"
       }
     },

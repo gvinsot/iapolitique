@@ -4,7 +4,8 @@
 //! violation (§6.1).
 //!
 //! Sources (INJ-3): the analysis model never writes a URL. The pages that the web research
-//! really consulted (its `tool_reference` chunks) and the sources of the analysis being replaced
+//! really consulted (its `tool_reference` chunks and the results of its `web_search`
+//! executions, both written by Mistral's tool) and the sources of the analysis being replaced
 //! are numbered `R1`, `R2`… ([`ConsultedPages`]) in the structuring prompt; the answer
 //! ([`AnalysisDraft`]) cites them by that identifier (`ref`), and the backend fills the title,
 //! the publisher and the URL of each published source from that list ([`AnalysisDraft::resolve`]).
@@ -149,7 +150,8 @@ fn clean_title(title: &str) -> String {
 }
 
 /// The pages an analysis may cite (INJ-3), numbered `R1`, `R2`… in this order: the pages
-/// consulted by its web research (`tool_reference` chunks), then the sources of the analysis it
+/// consulted by its web research (`tool_reference` chunks, then search results), then the
+/// sources of the analysis it
 /// replaces. One entry per page ([`source_url_key`]); a URL that cannot be published (not
 /// http(s), credentials, explicit port, IP address, too long, control character) is left out.
 #[derive(Debug, Clone, Default, PartialEq, Eq)]

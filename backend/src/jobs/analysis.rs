@@ -12,8 +12,8 @@
 //! ([`crate::domain::scoring`]) and the analysis stored as a new version with its provenance
 //! (prompt versions, schema fingerprint, scoring version, model, web searches).
 //!
-//! A research that consulted no page (no citable `tool_reference`: the model may answer without
-//! searching) is asked once more in the same run. Still none, and nothing citable from the
+//! A research that consulted no page (no citable `tool_reference` nor search result: the model
+//! may answer without searching) is asked once more in the same run. Still none, and nothing citable from the
 //! analysis being replaced: the job is retried later by the queue (transient, the attempt
 //! counts, with its backoff), and the last attempt gives up (`analysis_failed`). An analysis is
 //! never structured nor published without a page to cite.

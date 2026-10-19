@@ -1,0 +1,360 @@
+#!/usr/bin/env python3
+"""Local stand-in for the Mistral API, for end-to-end runs of the stack (never in production).
+
+Python standard library only. Implements the three endpoints the backend calls
+(backend/src/ai/mistral.rs), with the response shapes of the Mistral API reference:
+
+  POST /v1/chat/completions  structured outputs (`response_format` json_schema, strict), answered
+                             according to the schema name: `analysis` (a VALID analysis per
+                             prompts/analysis.schema.json and the backend's extra checks),
+                             `second_opinion`, `report_review`;
+  POST /v1/conversations     web research with `web_search`: a memo citing [S1], [S2], with
+                             `tool.execution` entries and `tool_reference` chunks;
+  POST /v1/embeddings        deterministic 1024-dimension vectors (normalised bag of words), so
+                             that two near-identical texts get a cosine similarity close to 1.
+
+Answers are deterministic and driven by the prompt text:
+  - second opinion: `reject` (reason `disrespectful`) when the text contains an insult marker,
+    `accept` otherwise;
+  - report review: `hide` + `escalate` when a report has the reason « Contenu problématique »,
+    `update` (with corrections) for « Erreur de chiffrage » or « Source erronée », `maintain`
+    otherwise;
+  - analysis: considers every contribution id listed in <contributions>.
+
+Usage:
+  python devops/dev/mock_mistral.py [--host 0.0.0.0] [--port 8090]
+Then point the api and the worker to it:
+  MISTRAL_API_BASE_URL=http://<host>:8090  MISTRAL_API_KEY=<any non-empty value>
+
+Logs show the method, path and status only: never a prompt (prompts carry visitor texts).
+GET /stats returns the number of calls per endpoint (for test scripts).
+"""
+
+from __future__ import annotations
+
+import argparse
+import hashlib
+import json
+import math
+import re
+import sys
+import threading
+import unicodedata
+from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+
+EMBEDDING_DIMENSIONS = 1024
+UUID_RE = re.compile(r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}")
+WORD_RE = re.compile(r"[a-z0-9]+")
+INSULT_MARKERS = ("connard", "connards", "abruti", "abrutis", "imbecile", "imbeciles", "crétin",
+                  "cretin", "cretins", "debile", "debiles", "pourri", "pourris", "ordure")
+STOP_WORDS = frozenset(
+    "le la les un une des du de d l et ou a au aux en dans par pour sur que qui ne pas plus est "
+    "sont ce cet cette ces il elle ils elles on nous vous leur leurs son sa ses se y".split()
+)
+
+STATS: dict[str, int] = {}
+STATS_LOCK = threading.Lock()
+
+SOURCES = [
+    {
+        "id": "S1",
+        "title": "La politique d'achat de l'État",
+        "publisher": "Cour des comptes",
+        "url": "https://www.ccomptes.fr/fr/publications/la-politique-dachat-de-letat",
+        "used_for": "Montant des achats publics et gains constatés des mutualisations.",
+    },
+    {
+        "id": "S2",
+        "title": "Projet de loi de finances : documents budgétaires",
+        "publisher": "Direction du budget",
+        "url": "https://www.budget.gouv.fr/documentation/documents-budgetaires",
+        "used_for": "Crédits de la mission concernée.",
+    },
+]
+
+
+def normalise(text: str) -> str:
+    """Lower case without accents."""
+    decomposed = unicodedata.normalize("NFKD", text.lower())
+    return "".join(c for c in decomposed if not unicodedata.combining(c))
+
+
+def words(text: str) -> list[str]:
+    return [w for w in WORD_RE.findall(normalise(text)) if w not in STOP_WORDS]
+
+
+def tokens(text: str) -> int:
+    """Rough token count (4 characters per token)."""
+    return max(1, len(text) // 4)
+
+
+def between(text: str, tag: str) -> str:
+    match = re.search(rf"<{tag}>\s*(.*?)\s*</{tag}>", text, re.S)
+    return match.group(1) if match else ""
+
+
+def embedding(text: str) -> list[float]:
+    vector = [0.0] * EMBEDDING_DIMENSIONS
+    for word in words(text):
+        digest = hashlib.sha256(word.encode()).digest()
+        index = int.from_bytes(digest[:4], "big") % EMBEDDING_DIMENSIONS
+        sign = 1.0 if digest[4] & 1 else -1.0
+        vector[index] += sign
+    norm = math.sqrt(sum(x * x for x in vector))
+    if norm == 0:
+        vector[0] = 1.0
+        return vector
+    return [x / norm for x in vector]
+
+
+def title_from(idea: str) -> str:
+    first = re.split(r"(?<=[.!?])\s", idea.strip(), maxsplit=1)[0].rstrip(".!? ")
+    first = " ".join(first.split())
+    if len(first) > 90:
+        first = first[:87].rsplit(" ", 1)[0]
+    return first[:1].upper() + first[1:] if first else "Mesure proposée"
+
+
+def analysis(schema: dict, user: str) -> dict:
+    idea = between(user, "idee_originale") or "Mesure proposée"
+    contributions = between(user, "contributions")
+    contribution_ids = UUID_RE.findall(contributions)
+    report = between(user, "signalement")
+    previous = between(user, "analyse_precedente")
+    publics = list(schema["properties"]["impacts"]["properties"].keys())
+    title = title_from(idea)
+    seed = int(hashlib.sha256(normalise(idea).encode()).hexdigest()[:6], 16)
+    median = 20_000_000 + (seed % 80) * 1_000_000
+    changes = ""
+    if previous.strip() and previous.strip() not in ("(aucune)", ""):
+        parts = []
+        if contribution_ids:
+            parts.append(f"{len(contribution_ids)} contribution(s) intégrée(s)")
+        if report.strip() and report.strip() != "(aucun)":
+            parts.append("corrections issues d'un signalement appliquées")
+        changes = ("Nouvelle analyse : " + ", ".join(parts) + ".") if parts else "Analyse relancée."
+    return {
+        "title": title,
+        "summary": f"La mesure propose : {title.lower()}. Elle vise à réduire la dépense publique "
+                   "en rationalisant les achats concernés [S1].",
+        "improved_proposal": "Mutualiser les marchés concernés au niveau national, avec un "
+                             "calendrier sur deux ans et un suivi des économies réalisées [S1].",
+        "existing_situation": "Des centrales d'achat publiques existent déjà et couvrent une "
+                              "partie des besoins [S1].",
+        "admin_level": "multi",
+        "territory": {"name": "", "insee_code": ""},
+        "category": "achats_publics",
+        "kind": "savings",
+        "annual_gain_eur": {
+            "low": median // 2,
+            "median": median,
+            "high": median * 2,
+            "calculation": "Assiette des achats concernés × taux d'économie de 2 à 8 % [S1] [S2].",
+        },
+        "implementation_cost_eur": {
+            "low": 1_000_000,
+            "median": 3_000_000,
+            "high": 6_000_000,
+            "calculation": "Coût de passation et d'outillage des marchés mutualisés [S1].",
+        },
+        "time_to_effect_months": 12 + seed % 24,
+        "legal_vehicle": "organisation_interne",
+        "feasibility": {"score": 3 + seed % 3, "obstacles": ["Durée des marchés en cours."]},
+        "confidence": ["low", "medium", "high"][seed % 3],
+        "confidence_explanation": "Données agrégées disponibles, ventilation fine absente [S2].",
+        "assumptions": ["Taux d'économie observé sur les mutualisations passées [S1]."],
+        "pros": ["Effet de volume sur les prix.", "Réduction des coûts de passation.",
+                 "Meilleure connaissance des achats."],
+        "cons": ["Moindre accès des petites entreprises.", "Délais de mise en place.",
+                 "Rigidité des marchés nationaux."],
+        "risks": ["Dépendance à un fournisseur unique.", "Économies surestimées."],
+        "impacts": {
+            key: {"effect": "neutral" if i % 2 else "uncertain",
+                  "explanation": "Effet limité et indirect pour ce public."}
+            for i, key in enumerate(publics)
+        },
+        "sources": SOURCES,
+        "contributions_considered": [
+            {
+                "contribution_id": cid,
+                "summary": "La contribution propose de préciser le périmètre de la mesure.",
+                "taken_into_account": True,
+                "response": "Le périmètre a été précisé dans la proposition améliorée.",
+            }
+            for cid in contribution_ids
+        ],
+        "changes_since_previous": changes,
+    }
+
+
+def second_opinion(user: str) -> dict:
+    text = normalise(between(user, "texte"))
+    if any(marker in WORD_RE.findall(text) for marker in map(normalise, INSULT_MARKERS)):
+        return {"decision": "reject", "reason_code": "disrespectful",
+                "explanation": "Le texte contient des propos irrespectueux."}
+    return {"decision": "accept", "reason_code": "none",
+            "explanation": "Le texte respecte les critères de la grille."}
+
+
+def report_review(user: str) -> dict:
+    reports = normalise(between(user, "signalements"))
+    if "contenu problematique" in reports:
+        return {"outcome": "hide", "escalate": True,
+                "explanation": "Le signalement relève un contenu grave : l'idée est masquée et "
+                               "transmise pour examen humain.",
+                "corrections": ""}
+    if "erreur de chiffrage" in reports or "source erronee" in reports:
+        return {"outcome": "update", "escalate": False,
+                "explanation": "Le signalement met en doute le chiffrage : l'analyse est refaite.",
+                "corrections": "Revoir l'hypothèse de taux d'économie à la lumière du signalement."}
+    return {"outcome": "maintain", "escalate": False,
+            "explanation": "L'analyse reste valable au vu des signalements reçus.",
+            "corrections": ""}
+
+
+def chat_completion(body: dict) -> tuple[int, dict]:
+    messages = body.get("messages") or []
+    system = next((m.get("content", "") for m in messages if m.get("role") == "system"), "")
+    user = next((m.get("content", "") for m in messages if m.get("role") == "user"), "")
+    response_format = body.get("response_format") or {}
+    spec = response_format.get("json_schema") or {}
+    name = spec.get("name")
+    if response_format.get("type") != "json_schema" or spec.get("strict") is not True:
+        return 400, {"object": "error", "message": "strict json_schema expected"}
+    if name == "analysis":
+        content = analysis(spec["schema"], user)
+    elif name == "second_opinion":
+        content = second_opinion(user)
+    elif name == "report_review":
+        content = report_review(user)
+    else:
+        return 400, {"object": "error", "message": f"unknown schema {name!r}"}
+    text = json.dumps(content, ensure_ascii=False)
+    prompt_tokens = tokens(system) + tokens(user)
+    return 200, {
+        "id": "cmpl-mock",
+        "object": "chat.completion",
+        "model": body.get("model", "mock"),
+        "created": 0,
+        "choices": [{"index": 0, "finish_reason": "stop",
+                     "message": {"role": "assistant", "content": text, "tool_calls": None}}],
+        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": tokens(text),
+                  "total_tokens": prompt_tokens + tokens(text)},
+    }
+
+
+def conversation(body: dict) -> tuple[int, dict]:
+    tools = body.get("tools") or []
+    if not any(t.get("type") == "web_search" for t in tools):
+        return 400, {"object": "error", "message": "web_search tool expected"}
+    if body.get("store") is not False:
+        return 400, {"object": "error", "message": "store must be false"}
+    inputs = body.get("inputs") or ""
+    memo_chunks: list[dict] = [
+        {"type": "text", "text": "1. Mesure étudiée : mutualisation des achats publics [S1]."},
+        {"type": "tool_reference", "tool": "web_search", "title": SOURCES[0]["title"],
+         "url": SOURCES[0]["url"], "source": "mock"},
+        {"type": "text", "text": "\n2. Montants : crédits de la mission concernée [S2]."},
+        {"type": "tool_reference", "tool": "web_search", "title": SOURCES[1]["title"],
+         "url": SOURCES[1]["url"], "source": "mock"},
+        {"type": "text", "text": "\n3. Sources :\n[S1] " + SOURCES[0]["title"] + " — "
+                                 + SOURCES[0]["publisher"] + " — " + SOURCES[0]["url"]
+                                 + "\n[S2] " + SOURCES[1]["title"] + " — "
+                                 + SOURCES[1]["publisher"] + " — " + SOURCES[1]["url"]},
+    ]
+    prompt_tokens = tokens(body.get("instructions") or "") + tokens(inputs)
+    return 200, {
+        "object": "conversation.response",
+        "conversation_id": "conv_mock",
+        "outputs": [
+            {"object": "entry", "type": "tool.execution", "name": "web_search", "id": "t1",
+             "arguments": "{\"query\": \"achats publics\"}"},
+            {"object": "entry", "type": "tool.execution", "name": "web_search", "id": "t2",
+             "arguments": "{\"query\": \"crédits mission\"}"},
+            {"object": "entry", "type": "message.output", "role": "assistant", "id": "m1",
+             "model": body.get("model", "mock"), "content": memo_chunks},
+        ],
+        "usage": {"prompt_tokens": prompt_tokens, "completion_tokens": 300,
+                  "total_tokens": prompt_tokens + 300 + 2_000, "connector_tokens": 2_000,
+                  "connectors": {"web_search": 2}},
+    }
+
+
+def embeddings(body: dict) -> tuple[int, dict]:
+    inputs = body.get("input")
+    if isinstance(inputs, str):
+        inputs = [inputs]
+    if not isinstance(inputs, list) or not inputs:
+        return 400, {"object": "error", "message": "input expected"}
+    return 200, {
+        "id": "emb-mock",
+        "object": "list",
+        "model": body.get("model", "mistral-embed"),
+        "data": [{"object": "embedding", "index": i, "embedding": embedding(str(text))}
+                 for i, text in enumerate(inputs)],
+        "usage": {"prompt_tokens": sum(tokens(str(t)) for t in inputs), "total_tokens": 0},
+    }
+
+
+ROUTES = {
+    "/v1/chat/completions": chat_completion,
+    "/v1/conversations": conversation,
+    "/v1/embeddings": embeddings,
+}
+
+
+class Handler(BaseHTTPRequestHandler):
+    server_version = "mock-mistral"
+    sys_version = ""
+
+    def log_message(self, format: str, *args: object) -> None:  # noqa: A002 - stdlib signature
+        # Method, path and status only: the default would also be fine, but keep it explicit.
+        sys.stderr.write("%s\n" % (format % args))
+
+    def send_json(self, status: int, payload: dict) -> None:
+        data = json.dumps(payload, ensure_ascii=False).encode()
+        self.send_response(status)
+        self.send_header("Content-Type", "application/json")
+        self.send_header("Content-Length", str(len(data)))
+        self.end_headers()
+        self.wfile.write(data)
+
+    def do_GET(self) -> None:  # noqa: N802 - stdlib naming
+        if self.path == "/stats":
+            with STATS_LOCK:
+                self.send_json(200, dict(STATS))
+        else:
+            self.send_json(404, {"object": "error", "message": "not found"})
+
+    def do_POST(self) -> None:  # noqa: N802 - stdlib naming
+        route = ROUTES.get(self.path)
+        if route is None:
+            self.send_json(404, {"object": "error", "message": "not found"})
+            return
+        if not self.headers.get("Authorization", "").startswith("Bearer "):
+            self.send_json(401, {"object": "error", "message": "missing bearer key"})
+            return
+        try:
+            length = int(self.headers.get("Content-Length", "0"))
+            body = json.loads(self.rfile.read(length) or b"{}")
+        except (ValueError, json.JSONDecodeError):
+            self.send_json(400, {"object": "error", "message": "invalid JSON"})
+            return
+        status, payload = route(body)
+        with STATS_LOCK:
+            STATS[self.path] = STATS.get(self.path, 0) + 1
+        self.send_json(status, payload)
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
+    parser.add_argument("--host", default="0.0.0.0")
+    parser.add_argument("--port", type=int, default=8090)
+    args = parser.parse_args()
+    server = ThreadingHTTPServer((args.host, args.port), Handler)
+    print(f"mock Mistral listening on http://{args.host}:{args.port}", file=sys.stderr)
+    server.serve_forever()
+
+
+if __name__ == "__main__":
+    main()

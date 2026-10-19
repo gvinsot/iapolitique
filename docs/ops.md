@@ -180,3 +180,7 @@ docker compose -f docker-compose.swarm.yml down
 
 `test-db` est un service global contraint sur une étiquette qu'aucun nœud ne porte : le swarm
 ne le démarre jamais, alors que `docker compose run` le lance comme dépendance de `test`.
+
+Avant une mise en QA d'un changement du pipeline, le parcours de bout en bout des images
+runtime (api, worker, frontend, base neuve, modèle de décision réel, faux Mistral) se lance avec
+`devops/dev/e2e.sh` : voir [`devops/dev/README.md`](../devops/dev/README.md).

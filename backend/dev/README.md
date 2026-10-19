@@ -31,7 +31,11 @@ inventés pour tester l'affichage).
    ```
 
    Sans `MISTRAL_API_KEY`, le worker laisse en file les jobs IA (second avis, doublons,
-   analyse, revue des signalements) : une idée acceptée reste `accepted`.
+   analyse, revue des signalements) : une idée acceptée reste `accepted`. Pour faire tourner
+   tout le pipeline sans appel payant, lancer le faux Mistral
+   (`python ../devops/dev/mock_mistral.py --port 8090`) et ajouter
+   `MISTRAL_API_BASE_URL=http://127.0.0.1:8090 MISTRAL_API_KEY=dev-mock` à l'environnement
+   (voir `devops/dev/README.md`).
 
 3. Données de démonstration (six idées publiées avec analyse complète, deux contributions
    intégrées, un droit de réponse, une idée masquée qui doit répondre 404), puis génération des

@@ -150,6 +150,7 @@ iapolitique/
     ├── docker-compose.swarm.yml
     ├── Dockerfile.test     # image CI (§13.5)
     ├── run-tests.sh        # point d'entrée de l'image CI
+    ├── dev/                # bout en bout local des images runtime, faux Mistral (dev/README.md)
     └── .env.example
 ```
 

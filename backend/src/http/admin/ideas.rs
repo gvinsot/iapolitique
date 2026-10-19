@@ -64,6 +64,11 @@ pub struct AdminIdea {
     pub reports_pending: i64,
     pub review_request_pending: bool,
     pub escalation_pending: bool,
+    /// When its author withdrew it (status `withdrawn`, « retirée par son auteur »; kept after
+    /// the purge). Always sent; declared optional so that clients built before it keep
+    /// compiling.
+    #[schema(required = false)]
+    pub withdrawn_at: Option<DateTime<Utc>>,
 }
 
 impl TryFrom<AdminIdeaRow> for AdminIdea {
@@ -89,6 +94,7 @@ impl TryFrom<AdminIdeaRow> for AdminIdea {
             reports_pending: row.reports_pending,
             review_request_pending: row.review_request_pending,
             escalation_pending: row.escalation_pending,
+            withdrawn_at: row.withdrawn_at,
         })
     }
 }
@@ -241,7 +247,8 @@ pub async fn hide(
         (status = 200, description = "Idée republiée.", body = AdminIdea),
         (status = 401, description = "Jeton absent ou invalide.", body = ErrorBody),
         (status = 404, description = "Idée inconnue (`idea_not_found`).", body = ErrorBody),
-        (status = 409, description = "Idée non masquée (`idea_not_hidden`).", body = ErrorBody),
+        (status = 409, description = "Idée non masquée (`idea_not_hidden`), ou retirée par son \
+            auteur (`idea_withdrawn` : jamais republiée).", body = ErrorBody),
         (status = 422, description = "Motif absent ou trop long (`invalid_field`).", body = ErrorBody)
     )
 )]
@@ -253,6 +260,17 @@ pub async fn republish(
     let reason = admin_text(Some(&body.reason), REASON_MAX_CHARS, true, "Le motif")?;
     let mut tx = state.pool.begin().await?;
     exists(&mut tx, id).await?;
+    if status::lock::<IdeaStatus>(&mut tx, id)
+        .await
+        .map_err(status_error)?
+        == Some(IdeaStatus::Withdrawn)
+    {
+        // The author's choice is respected (owner decision D2): never republished.
+        return Err(conflict(
+            "idea_withdrawn",
+            "Cette idée a été retirée par son auteur : elle ne peut pas être republiée.",
+        ));
+    }
     let change = Change::by(Actor::Admin).reason("admin_republish");
     if !ideas::republish(&mut tx, id, &change)
         .await

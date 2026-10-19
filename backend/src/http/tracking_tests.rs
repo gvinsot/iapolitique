@@ -77,6 +77,7 @@ async fn tracking_an_accepted_idea(pool: PgPool) {
             "decision": null,
             "report_outcome": null,
             "review_request": null,
+            "idea_withdrawn": false,
         })
     );
     // No internal identifier leaks.
@@ -346,88 +347,8 @@ async fn deleting_a_pending_idea_erases_it_and_leaves_a_tombstone(pool: PgPool) 
     assert!((29.9..=30.0).contains(&days), "{days}");
 }
 
-#[sqlx::test(migrator = "crate::db::MIGRATOR")]
-async fn deleting_a_published_idea_unpublishes_everything_attached(pool: PgPool) {
-    let app = TestApp::new(pool.clone(), false, &[]).await;
-    let idea = published_idea(&pool, "mutualiser-achats").await;
-    let author = token_for(&pool, TargetKind::Idea, idea).await;
-    let contribution: Uuid = sqlx::query_scalar(
-        "INSERT INTO contributions (idea_id, kind, text) VALUES ($1, 'objection', 'Texte')
-         RETURNING id",
-    )
-    .bind(idea)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let contributor = token_for(&pool, TargetKind::Contribution, contribution).await;
-    let report: Uuid = sqlx::query_scalar(
-        "INSERT INTO reports (idea_id, reason, details, reporter_email)
-         VALUES ($1, 'autre', 'Précision', 'r@exemple.fr') RETURNING id",
-    )
-    .bind(idea)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    let reporter = token_for(&pool, TargetKind::Report, report).await;
-    let duplicate: Uuid = sqlx::query_scalar(
-        "INSERT INTO ideas (original_text, status, parent_idea_id)
-         VALUES ('Même idée, autrement dite.', 'merged', $1) RETURNING id",
-    )
-    .bind(idea)
-    .fetch_one(&pool)
-    .await
-    .unwrap();
-    sqlx::query(
-        "INSERT INTO contributions (idea_id, kind, source_idea_id) VALUES ($1, 'doublon', $2)",
-    )
-    .bind(idea)
-    .bind(duplicate)
-    .execute(&pool)
-    .await
-    .unwrap();
-    let duplicate_author = token_for(&pool, TargetKind::Idea, duplicate).await;
-    sqlx::query(
-        "INSERT INTO jobs (kind, payload, dedupe_key) VALUES
-             ('analyze_idea', jsonb_build_object('idea_id', $1::text), 'a'),
-             ('screen_report', jsonb_build_object('target_kind', 'report', 'target_id', $2::text), 'b')",
-    )
-    .bind(idea)
-    .bind(report)
-    .execute(&pool)
-    .await
-    .unwrap();
-
-    // The duplicate's author sees the idea it was merged into.
-    let (_, body) = track(&app, &duplicate_author).await;
-    assert_eq!(body["status"], "merged");
-    assert_eq!(body["idea"]["slug"], "mutualiser-achats");
-
-    let (status, _) = app
-        .post("/api/track/delete", &json!({ "token": author }))
-        .await;
-    assert_eq!(status, StatusCode::OK);
-    for (table, left) in [
-        ("SELECT count(*) FROM ideas", 0),
-        ("SELECT count(*) FROM analyses", 0),
-        ("SELECT count(*) FROM contributions", 0),
-        ("SELECT count(*) FROM reports", 0),
-        ("SELECT count(*) FROM tracking_tokens", 1),
-        (
-            "SELECT count(*) FROM jobs WHERE kind <> 'generate_exports'",
-            0,
-        ),
-        (
-            "SELECT count(*) FROM jobs WHERE kind = 'generate_exports'",
-            1,
-        ),
-    ] {
-        assert_eq!(count(&pool, table).await, left, "{table}");
-    }
-    assert_eq!(track(&app, &author).await.1["status"], "deleted");
-    for other in [contributor, reporter, duplicate_author] {
-        assert_eq!(track(&app, &other).await.0, StatusCode::NOT_FOUND);
-    }
-}
+// A published or hidden idea deleted by its author is withdrawn, not erased: see
+// `http::withdrawal_tests`.
 
 #[sqlx::test(migrator = "crate::db::MIGRATOR")]
 async fn deleting_a_merged_duplicate_or_a_contribution(pool: PgPool) {
@@ -526,21 +447,19 @@ async fn deleting_a_merged_duplicate_or_a_contribution(pool: PgPool) {
     assert_eq!(track(&app, &token).await.1["status"], "deleted");
 }
 
-/// AUTHZ-1 (phase 1): an author who deletes an idea escalated for serious content leaves a
-/// trace in the admin journal (identifiers only), so that the PHAROS queue is not silently
-/// emptied.
+/// AUTHZ-1 (phase 1): an author who erases an idea with a pending escalation leaves a trace in
+/// the admin journal (identifiers only), so that the PHAROS queue is not silently emptied.
+/// Escalated ideas are hidden, hence withdrawn rather than erased (`http::withdrawal_tests`):
+/// this guard only covers an escalated idea sent back to the pipeline.
 #[sqlx::test(migrator = "crate::db::MIGRATOR")]
 async fn deleting_an_escalated_idea_leaves_a_trace_for_the_admin(pool: PgPool) {
     let app = TestApp::new(pool.clone(), false, &[]).await;
     let idea = published_idea(&pool, "mutualiser-achats").await;
-    sqlx::query(
-        "UPDATE ideas SET status = 'hidden', hidden_at = now(), hidden_reason = 'escalation'
-         WHERE id = $1",
-    )
-    .bind(idea)
-    .execute(&pool)
-    .await
-    .unwrap();
+    sqlx::query("UPDATE ideas SET status = 'analysis_failed' WHERE id = $1")
+        .bind(idea)
+        .execute(&pool)
+        .await
+        .unwrap();
     let escalation: Uuid =
         sqlx::query_scalar("INSERT INTO escalations (idea_id) VALUES ($1) RETURNING id")
             .bind(idea)

@@ -787,7 +787,7 @@
             }
           },
           "409": {
-            "description": "Idée non masquée (`idea_not_hidden`).",
+            "description": "Idée non masquée (`idea_not_hidden`), ou retirée par son auteur (`idea_withdrawn` : jamais republiée).",
             "content": {
               "application/json": {
                 "schema": {
@@ -2656,7 +2656,7 @@
         "tags": [
           "tracking"
         ],
-        "summary": "Deletes the text at once at its author's request (with what refers to it; see\n`db::tracked`). Idempotent: a second call confirms the deletion.",
+        "summary": "Deletes the text at its author's request (see `db::tracked`): a published or hidden idea is\nwithdrawn (gone from the public site, the API and the exports, kept for the admin, purged 12\nmonths later), any other text is erased at once with what refers to it. Idempotent: a\nsecond call confirms the deletion.",
         "operationId": "deleteTracked",
         "requestBody": {
           "content": {
@@ -3393,6 +3393,14 @@
           },
           "escalation_pending": {
             "type": "boolean"
+          },
+          "withdrawn_at": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "format": "date-time",
+            "description": "When its author withdrew it (status `withdrawn`, « retirée par son auteur »; kept after\nthe purge). Always sent; declared optional so that clients built before it keep\ncompiling."
           }
         }
       },
@@ -5481,7 +5489,7 @@
       },
       "IdeaStatus": {
         "type": "string",
-        "description": "Lifecycle of an idea.\n\n```text\nsubmitted ─▶ screening ─┬─▶ rejected ─▶ purged (or accepted: overturned by the admin)\n                        ├─▶ second_opinion ─▶ rejected | accepted\n                        ├─▶ accepted ─▶ dedup ─┬─▶ merged\n                        │                      └─▶ queued_analysis ─▶ analyzing ─┬─▶ published ⇄ hidden ─▶ purged\n                        │                                                        └─▶ analysis_failed ─▶ queued_analysis\n                        └─▶ submitted (decision service unavailable, retried by a job)\n```\n\nRe-analyses of a published (or hidden) idea do not change its status: the idea stays\nvisible with its current analysis until the new one replaces it.",
+        "description": "Lifecycle of an idea.\n\n```text\nsubmitted ─▶ screening ─┬─▶ rejected ─▶ purged (or accepted: overturned by the admin)\n                        ├─▶ second_opinion ─▶ rejected | accepted\n                        ├─▶ accepted ─▶ dedup ─┬─▶ merged\n                        │                      └─▶ queued_analysis ─▶ analyzing ─┬─▶ published ⇄ hidden ─▶ purged\n                        │                                                        └─▶ analysis_failed ─▶ queued_analysis\n                        └─▶ submitted (decision service unavailable, retried by a job)\npublished | hidden ─▶ withdrawn (deleted by its author) ─▶ purged (12 months later)\n```\n\nRe-analyses of a published (or hidden) idea do not change its status: the idea stays\nvisible with its current analysis until the new one replaces it.",
         "enum": [
           "submitted",
           "screening",
@@ -5495,7 +5503,8 @@
           "analyzing",
           "analysis_failed",
           "published",
-          "hidden"
+          "hidden",
+          "withdrawn"
         ]
       },
       "IdeaSubmission": {
@@ -5889,7 +5898,7 @@
           "ideas_received": {
             "type": "integer",
             "format": "int64",
-            "description": "Ideas received and still known (texts deleted by their authors are not counted)."
+            "description": "Ideas received and still known (texts deleted or withdrawn by their authors, and the\nduplicates merged into a withdrawn idea, are not counted)."
           },
           "ideas_published": {
             "type": "integer",
@@ -6724,6 +6733,10 @@
                 "type": "null"
               }
             ]
+          },
+          "idea_withdrawn": {
+            "type": "boolean",
+            "description": "The idea concerned by this contribution, report or merged duplicate was withdrawn by its\nauthor (§7.1): show « Idée retirée par son auteur » (`idea` is then `null`). Always sent;\ndeclared optional so that clients built before it keep compiling."
           }
         }
       },

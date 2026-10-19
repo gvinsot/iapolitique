@@ -130,6 +130,7 @@ pub struct AdminIdeaRow {
     pub reports_pending: i64,
     pub review_request_pending: bool,
     pub escalation_pending: bool,
+    pub withdrawn_at: Option<DateTime<Utc>>,
 }
 
 macro_rules! admin_idea_select {
@@ -143,7 +144,8 @@ macro_rules! admin_idea_select {
                 EXISTS (SELECT 1 FROM review_requests q WHERE q.target_kind = 'idea'
                         AND q.target_id = i.id AND q.status = 'pending') AS review_request_pending,
                 EXISTS (SELECT 1 FROM escalations e WHERE e.idea_id = i.id
-                        AND e.status = 'pending') AS escalation_pending
+                        AND e.status = 'pending') AS escalation_pending,
+                i.withdrawn_at
          FROM ideas i "
     };
 }

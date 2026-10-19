@@ -68,6 +68,7 @@ text_enum! {
     ///                         │                      └─▶ queued_analysis ─▶ analyzing ─┬─▶ published ⇄ hidden ─▶ purged
     ///                         │                                                        └─▶ analysis_failed ─▶ queued_analysis
     ///                         └─▶ submitted (decision service unavailable, retried by a job)
+    /// published | hidden ─▶ withdrawn (deleted by its author) ─▶ purged (12 months later)
     /// ```
     ///
     /// Re-analyses of a published (or hidden) idea do not change its status: the idea stays
@@ -101,6 +102,10 @@ text_enum! {
         Published => "published",
         /// Hidden after a report review or an admin action.
         Hidden => "hidden",
+        /// Published (or hidden) idea deleted by its author (§7.1): gone from the public site,
+        /// the API and the exports with everything attached to it, kept for the admin only, and
+        /// purged 12 months later (§7.3). Never republished.
+        Withdrawn => "withdrawn",
     }
 }
 
@@ -124,9 +129,12 @@ impl StateMachine for IdeaStatus {
             QueuedAnalysis => &[Analyzing],
             Analyzing => &[Published, AnalysisFailed, QueuedAnalysis],
             AnalysisFailed => &[QueuedAnalysis],
-            Published => &[Hidden],
+            // Deleted by its author: withdrawn, not erased (§7.1).
+            Published => &[Hidden, Withdrawn],
             // Hidden 12 months: the text is purged (§7.3).
-            Hidden => &[Published, Purged],
+            Hidden => &[Published, Purged, Withdrawn],
+            // Not reversible, by the author or by the admin: purged 12 months later.
+            Withdrawn => &[Purged],
         }
     }
 
@@ -322,8 +330,11 @@ mod tests {
                 (AnalysisFailed, QueuedAnalysis),
                 (Merged, Purged),
                 (Published, Hidden),
+                (Published, Withdrawn),
                 (Hidden, Published),
                 (Hidden, Purged),
+                (Hidden, Withdrawn),
+                (Withdrawn, Purged),
             ],
         );
         assert_all_reachable(IdeaStatus::ALL);
@@ -431,7 +442,8 @@ mod tests {
         assert_eq!(IdeaStatus::QueuedAnalysis.as_str(), "queued_analysis");
         assert_eq!(IdeaStatus::AnalysisFailed.as_str(), "analysis_failed");
         assert_eq!(IdeaStatus::SecondOpinion.as_str(), "second_opinion");
-        assert_eq!(IdeaStatus::ALL.len(), 13);
+        assert_eq!(IdeaStatus::Withdrawn.as_str(), "withdrawn");
+        assert_eq!(IdeaStatus::ALL.len(), 14);
         assert_eq!(ContributionStatus::ALL.len(), 7);
         assert_eq!(ReportStatus::ALL.len(), 7);
     }

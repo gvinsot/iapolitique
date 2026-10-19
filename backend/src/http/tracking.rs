@@ -87,6 +87,11 @@ pub struct TrackedItem {
     pub report_outcome: Option<ReviewOutcome>,
     #[schema(required = true)]
     pub review_request: Option<TrackedReviewRequest>,
+    /// The idea concerned by this contribution, report or merged duplicate was withdrawn by its
+    /// author (§7.1): show « Idée retirée par son auteur » (`idea` is then `null`). Always sent;
+    /// declared optional so that clients built before it keep compiling.
+    #[schema(required = false)]
+    pub idea_withdrawn: bool,
 }
 
 /// Confirmation of a deletion.
@@ -132,6 +137,7 @@ async fn tracked_item(state: &AppState, token: TokenTarget) -> Result<TrackedIte
             decision: None,
             report_outcome: None,
             review_request: None,
+            idea_withdrawn: false,
         });
     }
     let target = Target::new(token.kind, token.id);
@@ -158,6 +164,7 @@ async fn tracked_item(state: &AppState, token: TokenTarget) -> Result<TrackedIte
         submitted_on: view.submitted_on,
         decision,
         review_request,
+        idea_withdrawn: view.idea_withdrawn,
     })
 }
 
@@ -185,8 +192,10 @@ pub async fn track(
     Ok(no_store(StatusCode::OK, tracked_item(&state, token).await?))
 }
 
-/// Deletes the text at once at its author's request (with what refers to it; see
-/// `db::tracked`). Idempotent: a second call confirms the deletion.
+/// Deletes the text at its author's request (see `db::tracked`): a published or hidden idea is
+/// withdrawn (gone from the public site, the API and the exports, kept for the admin, purged 12
+/// months later), any other text is erased at once with what refers to it. Idempotent: a
+/// second call confirms the deletion.
 #[utoipa::path(
     post,
     path = "/api/track/delete",
@@ -258,6 +267,13 @@ pub async fn request_review(
         return Err(not_available());
     }
     let target = Target::new(token.kind, token.id);
+    // Nothing left to review once the idea concerned was withdrawn by its author.
+    if tracked::view(&state.pool, target)
+        .await?
+        .is_none_or(|view| view.idea_withdrawn)
+    {
+        return Err(not_available());
+    }
     if statement::load(&state.pool, &state.prompts, target)
         .await?
         .is_none()

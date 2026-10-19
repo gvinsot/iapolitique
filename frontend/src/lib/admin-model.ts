@@ -46,6 +46,7 @@ export const ideaStatusLabels: Record<IdeaStatus, string> = {
   analysis_failed: "Analyse en échec",
   published: "Publiée",
   hidden: "Masquée",
+  withdrawn: "Retirée par son auteur",
 };
 
 export const reportStatusLabels: Record<ReportStatus, string> = {

@@ -228,8 +228,19 @@ submitted
                                                   └─▶ analysis_failed (retries puis admin)
 published ─▶ hidden (après revue d'un signalement ou action admin) ─▶ published
                                                                 └─▶ purged (12 mois après le masquage)
-merged ─▶ purged (avec l'idée masquée dans laquelle il a été fusionné)
+published | hidden ─▶ withdrawn (supprimée par son auteur) ─▶ purged (12 mois après le retrait)
+merged ─▶ purged (avec l'idée masquée ou retirée dans laquelle il a été fusionné)
 ```
+
+- **Retrait par l'auteur** (décision du propriétaire D2, 2026-10-19) : une idée `published` ou
+  `hidden` que son auteur supprime passe `withdrawn` (`ideas.withdrawn_at`, `withdrawn_from`,
+  événement `author_withdrawal` de l'acteur `author`) au lieu d'être effacée : elle quitte le
+  site, l'API publique et les exports avec son analyse, ses contributions, signalements et
+  droits de réponse, reste visible de l'admin (« retirée par son auteur ») et est purgée 12 mois
+  après le retrait (§7.3). Irréversible : ni l'auteur ni l'admin ne peuvent la republier
+  (`409 idea_withdrawn`), ni la masquer, la ré-analyser ou y publier un droit de réponse ; les
+  jobs qui la concernent ne font plus rien. Un texte non publié (refusé, en attente, en
+  analyse, fusionné…) supprimé par son auteur reste effacé aussitôt (§7.1).
 
 - Les transitions sont définies **uniquement** dans `backend/src/domain/` et testées. Toute
   transition est horodatée dans une table d'historique (`idea_events`, `contribution_events`,
@@ -485,21 +496,30 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
   - Le jeton est placé dans le **fragment** de l'URL (`/suivi#<jeton>`) et envoyé à l'API dans
     le **corps** d'un `POST` : il n'apparaît jamais dans une URL de requête, donc jamais dans les
     journaux de Traefik ou de nginx. La page de suivi envoie `Referrer-Policy: no-referrer`.
-  - La page de suivi propose « Supprimer ma contribution » (effacement immédiat, retrait des
-    exports suivants) et « Demander un réexamen humain » (file admin).
+  - La page de suivi propose « Supprimer ma contribution » (effacement immédiat, ou retrait
+    pour une idée publiée ou masquée ; retrait des exports suivants) et « Demander un réexamen
+    humain » (file admin).
   - Un refus affiche l'exposé des motifs (DSA art. 17) : mesure prise, règle en cause (article
     de `/regles`), « décision prise automatiquement par une IA », date de purge, voies de recours
     (réexamen humain, contact, juge).
   - Jeton : format vérifié (43 caractères base64url) avant hachage, recherche par son SHA-256
     (clé primaire) ; jeton inconnu, expiré ou mal formé : même `404 tracking_not_found`. Les
     réponses ne contiennent aucun identifiant interne et portent `Cache-Control: no-store`.
-  - **Suppression** (`db::tracked`), immédiate et dans une transaction : idée → la ligne et tout
-    ce qui s'y rattache (historique, analyses, embedding, contributions et signalements
+  - **Retrait** d'une idée `published` ou `hidden` (`db::tracked`, décision D2), dans une
+    transaction : `→ withdrawn` (§5.2) ; rien n'est effacé ; la demande de réexamen de l'idée,
+    les jobs en file de l'idée et de ses contributions et signalements sont supprimés, les
+    exports régénérés ; une escalade en attente reste dans la file admin (§7.5). Le jeton de
+    l'auteur devient une pierre tombale (`status: deleted`, 30 jours) ; ceux des autres
+    visiteurs (contributions, signalements, doublons fusionnés) répondent avec leur statut,
+    `idea: null` et `idea_withdrawn: true` (« idée retirée par son auteur »), et un réexamen
+    humain n'y est plus possible (`409 review_not_available`).
+  - **Suppression** (`db::tracked`) de tout autre texte, immédiate et dans une transaction :
+    idée non publiée → la ligne et tout ce qui s'y rattache (historique, analyses, embedding, contributions et signalements
     d'autres visiteurs, doublons fusionnés ; leurs jetons deviennent inconnus), un doublon
     fusionné quitte aussi l'idée parente (compteur de propositions décrémenté, résumé de son
-    texte retiré de `contributions_considered` de toutes ses analyses), une idée
-    publiée ou masquée quitte le site et les exports sont régénérés (job `generate_exports`),
-    une escalade en attente part avec l'idée mais laisse dans le journal admin l'action
+    texte retiré de `contributions_considered` de toutes ses analyses, exports régénérés), une
+    escalade en attente (cas défensif : une idée escaladée est masquée, donc retirée et non
+    effacée) part avec l'idée mais laisse dans le journal admin l'action
     `escalation.deleted_by_author` (identifiants de l'idée et de l'escalade, date, aucun texte) ;
     contribution → la ligne, et son résumé est retiré de `contributions_considered` des
     analyses (exports régénérés si elle était intégrée) ; signalement → la ligne et les
@@ -560,11 +580,15 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
   coordonnées et jetons de ses signalements quel que soit leur statut ; ses contributions sont supprimées
   et les doublons qui y ont été fusionnés purgés (`merged → purged`). L'exposé des motifs du
   masquage donne la date de purge.
+- Idées retirées par leur auteur (`withdrawn`, §5.2) : même purge que les contenus masqués,
+  **12 mois** après le retrait (`withdrawn → purged`) ; `withdrawn_at` reste (une idée retirée
+  n'est jamais recomptée dans les statistiques publiques).
 - Signalements : nom et e-mail facultatifs du signalant effacés 6 mois après le signalement ;
   précision et jeton d'un signalement traité (`reviewed`) effacés 6 mois après la revue ; ceux d'un
   signalement resté sans décision (`submitted`, `screening`, `second_opinion`, `accepted` : job
   mort) effacés 6 mois après le signalement, son statut restant inchangé.
-- Contribution supprimée par son auteur : effacement immédiat (§7.1).
+- Contribution supprimée par son auteur : effacement immédiat (§7.1) ; idée publiée ou masquée
+  supprimée par son auteur : retrait (ci-dessus).
 - Demandes de réexamen humain : supprimées avec leur texte, et un an après leur traitement.
 - Job de purge quotidien dans le worker, testé.
 - Sauvegardes de la base : **30 jours** au plus (mémo juridique) ; aucune n'est automatisée à ce
@@ -587,7 +611,8 @@ Pas d'API publique documentée au MVP.
   iapolitique.fr"`), champs générés marqués (`ai_generated=true`, `ai_model`, `ai_provider`,
   `generated_at`, `analysis_version`, `human_reviewed=false`), `date_derniere_mise_a_jour` et
   URL canonique. Sources : titre, éditeur, URL, date, sans extrait long.
-- **Exclus** : idées refusées, masquées ou en attente, jetons et hash, journaux de filtrage,
+- **Exclus** : idées refusées, masquées, retirées par leur auteur ou en attente, jetons et hash,
+  journaux de filtrage,
   signalements, coordonnées, horodatages fins (dates au jour près).
 - Régénéré chaque nuit et après tout masquage ou suppression ; fichiers datés et versionnés.
 - Mise en œuvre (`jobs/exports.rs`, `db/exports.rs`) : job `generate_exports` chaque nuit à
@@ -662,13 +687,12 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
   (diffamation, menace, haine, terrorisme, pédocriminalité) : masquage immédiat et file admin
   « escalade » (transmission manuelle à PHAROS, cible 24 h) ; l'admin la clôt avec `outcome`
   (`transmitted` ou `dismissed`) et une note facultative ; l'idée reste masquée (republication
-  séparée). Si l'auteur supprime l'idée avant la clôture, l'entrée disparaît mais le journal
-  admin garde `escalation.deleted_by_author` (§7.1) ; refuser cette suppression ou garder une
-  copie scellée du texte reste à décider (mémo juridique, section 5).
+  séparée). Si l'auteur supprime l'idée avant la clôture, elle est retirée (§5.2) et l'entrée
+  reste dans la file admin jusqu'à sa clôture.
 - **Droit de réponse** (LCEN art. 1-1 III) : l'admin peut publier une réponse attachée à une
   idée (insertion sous 3 jours) : table `rights_of_reply` (`author_label`, `body` en texte
-  brut, `requested_on`), affichée par `GET /api/ideas/{slug}`, effacée avec l'idée (suppression
-  ou purge 12 mois après un masquage).
+  brut, `requested_on`), affichée par `GET /api/ideas/{slug}`, retirée du site avec l'idée
+  (retrait par l'auteur) et effacée avec elle (purge 12 mois après un masquage ou un retrait).
 - **Mistral AI** : sous-traitant (art. 28 RGPD). Option « Anonymous improvement data »
   **désactivée** sur le compte (fait le 2026-10-18). Ne jamais utiliser de modèle « Labs » ou
   « Preview ». Ne jamais transmettre IP, empreinte ou jeton. Le point d'accès UE
@@ -880,8 +904,8 @@ API publique (port 8080) :
 | GET | `/api/health`, `/api/ready` | vivacité, base joignable |
 | GET | `/api/altcha/challenge` | défi proof-of-work |
 | POST | `/api/ideas` | dépôt d'une idée `{ text, admin_level?, territory?, accept_licence, accept_publication, altcha }` → `201 { status, tracking_token, reason_code, reason_message, statement }` (`statement` : exposé des motifs d'un refus `{ measure, reason_code, reason_message, rule: { article, title, url }, automated, second_opinion, decided_on, purge_on }`) ; erreurs `consent_required`, `altcha_*` (400), `text_*`, `field_too_long`, `invalid_territory`, `invalid_body` (422), `rate_limited` (429) |
-| POST | `/api/track` | suivi d'une idée, contribution ou signalement (corps `{ "token" }`, jamais dans l'URL) → `200 { kind, status, submitted_on, idea: { slug, title }?, decision: exposé des motifs?, report_outcome?, review_request: { requested_on, status }? }` (`status` : statut du §5.2 ou `deleted`) |
-| POST | `/api/track/delete` | suppression par l'auteur (corps `{ "token" }`) → `200 { status: "deleted" }`, idempotent |
+| POST | `/api/track` | suivi d'une idée, contribution ou signalement (corps `{ "token" }`, jamais dans l'URL) → `200 { kind, status, submitted_on, idea: { slug, title }?, decision: exposé des motifs?, report_outcome?, review_request: { requested_on, status }?, idea_withdrawn }` (`status` : statut du §5.2 ou `deleted` ; `idea_withdrawn` : l'idée de la contribution, du signalement ou du doublon fusionné a été retirée par son auteur, `idea` vaut alors `null` ; toujours présent, facultatif dans la spec pour les anciens clients) |
+| POST | `/api/track/delete` | suppression par l'auteur (corps `{ "token" }`) → `200 { status: "deleted" }`, idempotent ; une idée publiée ou masquée est retirée (`withdrawn`, §5.2), tout autre texte effacé (§7.1) |
 | POST | `/api/track/review-request` | demande de réexamen humain (corps `{ "token", "message"? }`) → `201 { requested_on, status: "pending" }` ; `409 review_not_available` / `review_already_requested` |
 | GET | `/api/legal` | `{ publisher: { name, address, phone }, contact_email, privacy_email, cgu_version, pages: { mentions_legales, confidentialite, regles, licence } }` : coordonnées de l'éditeur (`LEGAL_*`, `null` si non configurées), version des CGU (`domain::rules::CGU_VERSION`) et date de mise à jour de chaque page légale (`domain::rules::LEGAL_PAGES_UPDATED_ON`, à modifier avec le texte de la page) |
 | GET | `/api/ideas` | classement des idées `published` uniquement : `sort` (`score` par défaut, `gain`, `feasibility`, `delay`, `recent`), filtres `admin_level`, `category` (clé de la taxonomie), `kind`, `territory` (nom, partie du nom sans accents ni casse, ou code INSEE exact), `q` (200 caractères : recherche plein texte française sans accents `websearch_to_tsquery('french_unaccent')` sur titre et résumé, puis, si rien ne correspond, similarité trigramme `word_similarity ≥ 0,3`), `page` (1 à 10 000) / `per_page` (1 à 50, 20 par défaut) → `200 { items: [{ slug, title, summary, admin_level, territory: { name, insee_code }?, category: { key, label }, kind, annual_gain_eur: { low, median, high }, feasibility, time_to_effect_months, confidence, score, proposal_count, contribution_count, updated_at (minuit Europe/Paris du jour de l'analyse courante : aucune heure fine n'est publique, elle daterait le dépôt) }], page, per_page, total, total_pages, search: exact\|approximate\|null }` ; paramètre invalide ou inconnu : `400 invalid_query` |
@@ -890,7 +914,7 @@ API publique (port 8080) :
 | POST | `/api/ideas/{slug}/reports` | signalement `{ reason, details? (alias precision), reporter_name?, reporter_email?, good_faith, altcha }` → `201` comme `/api/ideas` ; erreurs `good_faith_required`, `invalid_email`, `idea_not_found` |
 | GET | `/api/methodology` | méthodologie en vigueur (§6.5) : `{ screening_version, taxonomy_version, prompt_versions, analysis_schema_version, export_schema_version, cgu_version, scoring: { version, formula (FORMULA_FR), amortization_years, max_feasibility, delay_half_life_months, confidence_factors }, screening: { version, sections: [{ kind, label, criteria: [{ key, question_type, instructions, answers?, levels, pass_when?, pass_from_level?, reject_below, accept_above (seuils appliqués, réglage §13.6 compris), thresholds_adjusted, reason_code, reason_message, rule? }] }] }, files: [{ file, kind, version?, content }] }` (texte intégral des fichiers de `prompts/`, à afficher en texte brut) |
 | GET | `/api/taxonomy` | `{ version, admin_levels, categories: [{ key, label, description?, group, admin_levels }], impact_publics, impact_effects, idea_kinds, confidence_levels, legal_vehicles, report_reasons, contribution_kinds, rejection_reasons: [{ code, message, rule? }] }` |
-| GET | `/api/stats` | compteurs publics agrégés : `{ ideas_received, ideas_published, ideas_in_progress, ideas_rejected, duplicates_merged, contributions_integrated, published_by_admin_level, published_by_kind, last_published_on, computed_on }` (aucun texte, identifiant ni horodatage fin) |
+| GET | `/api/stats` | compteurs publics agrégés : `{ ideas_received, ideas_published, ideas_in_progress, ideas_rejected, duplicates_merged, contributions_integrated, published_by_admin_level, published_by_kind, last_published_on, computed_on }` (aucun texte, identifiant ni horodatage fin ; une idée retirée par son auteur, ses contributions et les doublons qui y ont été fusionnés ne sont pas comptés) |
 | GET | `/api/exports/ideas.json`, `/api/exports/ideas.csv`, `/api/exports/LICENSE`, `/api/exports/metadata.json` | exports open data : dernière génération de chaque format de la table `exports` (`json`, `csv`, `license`, `metadata`, §7.4), `Content-Type` de `ExportFormat::content_type`, `Content-Disposition: attachment` avec un nom fixe daté du jour de génération (`iapolitique-ideas-AAAA-MM-JJ.json`, `….csv`, `iapolitique-LICENSE-AAAA-MM-JJ.txt`, `iapolitique-metadata-AAAA-MM-JJ.json`), `ETag` (SHA-256 du contenu, `If-None-Match` → `304`), `Last-Modified` ; avant la première génération : `503 exports_unavailable` avec `Retry-After: 300` |
 | GET | `/api/openapi.json` | spec OpenAPI |
 
@@ -907,9 +931,9 @@ total_pages }`) et refusent les paramètres inconnus (`400 invalid_query`).
 | GET | `/api/admin/dashboard` | `{ alerts: [{ code (mistral_auth), since, last_seen_at, http_status, failures, message (français, « Clé Mistral refusée depuis le JJ/MM/AAAA à HH:MI (HTTP 401) : … ») }] (toujours présent, vide sans alerte ; facultatif dans la spec pour les anciens clients), jobs: { queued, running, succeeded, dead, by_kind: [{ kind, status, count }] }, screening_window_days (30), screening: [{ kind, total, accepted, rejected, gray_zone, errors, acceptance_rate, rejection_rate, gray_zone_rate, second_opinion_accept, second_opinion_reject, labeled }], ai_costs: { today_eur, month_eur, daily_budget_eur, remaining_today_eur, budget_reached, next_reset, by_purpose: [{ purpose, provider, calls_today, calls_month, today_eur, month_eur }] }, queues: { escalations_pending, review_requests_pending, ideas_analysis_failed, texts_second_opinion, texts_submitted_stale, ideas_hidden, reports_awaiting_review, jobs_dead } }` (jour et mois Europe/Paris) |
 | GET | `/api/admin/jobs` | jobs, filtres `status`, `kind` ; plus récents d'abord |
 | POST | `/api/admin/jobs/{id}/retry` | remet en file un job `dead` (tentatives remises à zéro) → `200` job ; `404 job_not_found`, `409 job_not_dead` / `job_already_queued` (même clé de dédoublonnage en file) ; action `job.retry` |
-| GET | `/api/admin/ideas` | idées de tout statut, filtre `status`, recherche `q` (identifiant, ou partie du slug, du titre, du résumé ou du texte, sans accents ni casse) ; plus récemment changées d'abord ; extrait du texte masqué, motifs, signalements en attente, réexamen et escalade en attente |
+| GET | `/api/admin/ideas` | idées de tout statut, filtre `status`, recherche `q` (identifiant, ou partie du slug, du titre, du résumé ou du texte, sans accents ni casse) ; plus récemment changées d'abord ; extrait du texte masqué, motifs, signalements en attente, réexamen et escalade en attente, `withdrawn_at` (idée retirée par son auteur, statut `withdrawn` ; facultatif dans la spec) |
 | POST | `/api/admin/ideas/{id}/hide` | `{ reason }` (1 000 caractères) : `published → hidden` (`hidden_reason = admin`), exports régénérés → `200` idée ; `409 idea_not_published` ; action `idea.hide` |
-| POST | `/api/admin/ideas/{id}/republish` | `{ reason }` : `hidden → published` (champs de masquage effacés), exports régénérés ; `409 idea_not_hidden` ; action `idea.republish` |
+| POST | `/api/admin/ideas/{id}/republish` | `{ reason }` : `hidden → published` (champs de masquage effacés), exports régénérés ; `409 idea_not_hidden`, ou `409 idea_withdrawn` pour une idée retirée par son auteur (jamais republiée) ; action `idea.republish` |
 | POST | `/api/admin/ideas/{id}/reanalyze` | analyse déclencheur `admin` d'une idée `published`/`hidden`, ou `analysis_failed → queued_analysis` → `202 { queued, status }` (`queued: false` si une analyse était déjà en file) ; `409 reanalysis_not_available` ; action `idea.reanalyze` |
 | POST | `/api/admin/ideas/reanalyze-failed` | sans corps : toutes les idées `analysis_failed` (500 au plus par appel, plus anciennes d'abord) passent `queued_analysis` avec un job d'analyse (déclencheur `admin`) → `202 { requeued, remaining }` (`remaining` > 0 : rappeler) ; action `idea.reanalyze_failed` (`count`, `remaining`, `idea_ids`), journalisée même à vide |
 | GET | `/api/admin/reports` | signalements (filtres `status`, `reason`, `idea_id`) avec idée, précision masquée, coordonnées facultatives du signalant et revue (`outcome`, `escalate`, `explanation`, `corrections`) |

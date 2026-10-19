@@ -747,8 +747,10 @@ export interface paths {
         get?: never;
         put?: never;
         /**
-         * Deletes the text at once at its author's request (with what refers to it; see
-         *     `db::tracked`). Idempotent: a second call confirms the deletion.
+         * Deletes the text at its author's request (see `db::tracked`): a published or hidden idea is
+         *     withdrawn (gone from the public site, the API and the exports, kept for the admin, purged 12
+         *     months later), any other text is erased at once with what refers to it. Idempotent: a
+         *     second call confirms the deletion.
          */
         post: operations["deleteTracked"];
         delete?: never;
@@ -1014,6 +1016,13 @@ export interface components {
             reports_pending: number;
             review_request_pending: boolean;
             escalation_pending: boolean;
+            /**
+             * Format: date-time
+             * @description When its author withdrew it (status `withdrawn`, « retirée par son auteur »; kept after
+             *     the purge). Always sent; declared optional so that clients built before it keep
+             *     compiling.
+             */
+            withdrawn_at?: string | null;
         };
         /** @description A page of ideas, most recently changed first. */
         AdminIdeaPage: {
@@ -1754,13 +1763,14 @@ export interface components {
          *                             │                      └─▶ queued_analysis ─▶ analyzing ─┬─▶ published ⇄ hidden ─▶ purged
          *                             │                                                        └─▶ analysis_failed ─▶ queued_analysis
          *                             └─▶ submitted (decision service unavailable, retried by a job)
+         *     published | hidden ─▶ withdrawn (deleted by its author) ─▶ purged (12 months later)
          *     ```
          *
          *     Re-analyses of a published (or hidden) idea do not change its status: the idea stays
          *     visible with its current analysis until the new one replaces it.
          * @enum {string}
          */
-        IdeaStatus: "submitted" | "screening" | "second_opinion" | "rejected" | "purged" | "accepted" | "dedup" | "merged" | "queued_analysis" | "analyzing" | "analysis_failed" | "published" | "hidden";
+        IdeaStatus: "submitted" | "screening" | "second_opinion" | "rejected" | "purged" | "accepted" | "dedup" | "merged" | "queued_analysis" | "analyzing" | "analysis_failed" | "published" | "hidden" | "withdrawn";
         /** @description A new idea (§5.1). */
         IdeaSubmission: {
             /**
@@ -1905,7 +1915,8 @@ export interface components {
         PublicStats: {
             /**
              * Format: int64
-             * @description Ideas received and still known (texts deleted by their authors are not counted).
+             * @description Ideas received and still known (texts deleted or withdrawn by their authors, and the
+             *     duplicates merged into a withdrawn idea, are not counted).
              */
             ideas_received: number;
             /** Format: int64 */
@@ -2246,6 +2257,12 @@ export interface components {
             decision: components["schemas"]["StatementOfReasons"] | null;
             report_outcome: components["schemas"]["ReviewOutcome"] | null;
             review_request: components["schemas"]["TrackedReviewRequest"] | null;
+            /**
+             * @description The idea concerned by this contribution, report or merged duplicate was withdrawn by its
+             *     author (§7.1): show « Idée retirée par son auteur » (`idea` is then `null`). Always sent;
+             *     declared optional so that clients built before it keep compiling.
+             */
+            idea_withdrawn?: boolean;
         };
         /** @description Human review requested by the author. */
         TrackedReviewRequest: {
@@ -2912,7 +2929,7 @@ export interface operations {
                     "application/json": components["schemas"]["ErrorBody"];
                 };
             };
-            /** @description Idée non masquée (`idea_not_hidden`). */
+            /** @description Idée non masquée (`idea_not_hidden`), ou retirée par son auteur (`idea_withdrawn` : jamais republiée). */
             409: {
                 headers: {
                     [name: string]: unknown;

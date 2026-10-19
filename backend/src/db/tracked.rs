@@ -3,9 +3,19 @@
 //!
 //! # Deletion
 //!
-//! The deletion erases at once, in one transaction:
+//! A **published or hidden idea** is withdrawn, not erased (owner decision D2, §7.1):
+//! `published | hidden → withdrawn` in one transaction. The idea, its analysis, its
+//! contributions, reports and rights of reply leave the public site, the API and the exports
+//! (regenerated) but stay visible to the admin; the author's token becomes a tombstone, the
+//! tokens of the other visitors (contributions, reports, duplicates merged into it) answer
+//! « idée retirée par son auteur » (`TrackedView::idea_withdrawn`); the pending review request
+//! of the idea and the queued jobs about it and its attached texts go; a pending escalation
+//! stays in the admin queue. The withdrawal is not reversible; the purge erases it 12 months
+//! later (§7.3).
 //!
-//! - **idea**: the idea row with everything attached to it (history, analyses, embedding,
+//! Every other text is erased at once, in one transaction:
+//!
+//! - **unpublished idea**: the idea row with everything attached to it (history, analyses, embedding,
 //!   contributions and reports of other visitors, duplicates merged into it, with their
 //!   tracking tokens, which then answer like unknown tokens); a merged duplicate also leaves the
 //!   idea it was merged into (whose proposal counter goes down). A published or masked idea
@@ -28,8 +38,10 @@ use sqlx::{PgConnection, PgPool};
 use uuid::Uuid;
 
 use super::admin_actions::{self, NewAdminAction};
+use super::status::{self, Change};
 use super::tracking::{self, TokenHash};
-use crate::domain::types::{ReviewOutcome, ReviewRequestStatus, TargetKind};
+use crate::domain::status::IdeaStatus;
+use crate::domain::types::{Actor, ReviewOutcome, ReviewRequestStatus, TargetKind};
 use crate::jobs::pipeline::exports_job;
 use crate::jobs::queue;
 use crate::moderation::Target;
@@ -46,6 +58,9 @@ pub struct TrackedView {
     pub idea_title: Option<String>,
     /// Outcome of the review of a report.
     pub report_outcome: Option<String>,
+    /// The idea concerned (of a contribution, a report or a merged duplicate) was withdrawn by
+    /// its author: « idée retirée par son auteur ».
+    pub idea_withdrawn: bool,
 }
 
 impl TrackedView {
@@ -56,18 +71,22 @@ impl TrackedView {
 
 const IDEA_VIEW_SQL: &str = "SELECT i.status,
         (i.created_at AT TIME ZONE 'Europe/Paris')::date AS submitted_on,
-        coalesce(CASE WHEN i.status = 'published' THEN i.slug END, p.slug) AS idea_slug,
-        coalesce(CASE WHEN i.status = 'published' THEN i.title END, p.title) AS idea_title,
-        NULL::text AS report_outcome
+        coalesce(CASE WHEN i.status = 'published' THEN i.slug END,
+                 CASE WHEN p.status = 'published' THEN p.slug END) AS idea_slug,
+        coalesce(CASE WHEN i.status = 'published' THEN i.title END,
+                 CASE WHEN p.status = 'published' THEN p.title END) AS idea_title,
+        NULL::text AS report_outcome,
+        coalesce(p.status = 'withdrawn', false) AS idea_withdrawn
     FROM ideas i
-    LEFT JOIN ideas p ON p.id = i.parent_idea_id AND p.status = 'published'
+    LEFT JOIN ideas p ON p.id = i.parent_idea_id
     WHERE i.id = $1";
 
 const CONTRIBUTION_VIEW_SQL: &str = "SELECT c.status,
         (c.created_at AT TIME ZONE 'Europe/Paris')::date AS submitted_on,
         CASE WHEN i.status = 'published' THEN i.slug END AS idea_slug,
         CASE WHEN i.status = 'published' THEN i.title END AS idea_title,
-        NULL::text AS report_outcome
+        NULL::text AS report_outcome,
+        i.status = 'withdrawn' AS idea_withdrawn
     FROM contributions c JOIN ideas i ON i.id = c.idea_id
     WHERE c.id = $1";
 
@@ -75,7 +94,8 @@ const REPORT_VIEW_SQL: &str = "SELECT r.status,
         (r.created_at AT TIME ZONE 'Europe/Paris')::date AS submitted_on,
         CASE WHEN i.status = 'published' THEN i.slug END AS idea_slug,
         CASE WHEN i.status = 'published' THEN i.title END AS idea_title,
-        rr.outcome AS report_outcome
+        rr.outcome AS report_outcome,
+        i.status = 'withdrawn' AS idea_withdrawn
     FROM reports r
     JOIN ideas i ON i.id = r.idea_id
     LEFT JOIN report_reviews rr ON rr.id = r.review_id
@@ -278,6 +298,85 @@ async fn delete_idea(conn: &mut PgConnection, id: Uuid) -> sqlx::Result<()> {
     Ok(())
 }
 
+/// Withdraws a published or hidden idea (see the module documentation). Returns `false`, without
+/// any change, when the idea is not (or no longer) published or hidden: the caller then erases
+/// it like any unpublished text.
+async fn withdraw_idea(conn: &mut PgConnection, id: Uuid) -> sqlx::Result<bool> {
+    let current = match status::lock::<IdeaStatus>(conn, id).await {
+        Ok(current) => current,
+        Err(status::StatusError::Database(err)) => return Err(err),
+        Err(err) => return Err(sqlx::Error::Protocol(err.to_string())),
+    };
+    let Some(from) = current.filter(|s| s.has_publication()) else {
+        return Ok(false);
+    };
+    let change = Change::by(Actor::Author)
+        .reason("author_withdrawal")
+        .details(json!({ "withdrawn_from": from.as_str() }));
+    // Dated first: a withdrawn idea always has its withdrawal date (`ideas_withdrawn_dated`).
+    sqlx::query("UPDATE ideas SET withdrawn_at = now(), withdrawn_from = $2 WHERE id = $1")
+        .bind(id)
+        .bind(from.as_str())
+        .execute(&mut *conn)
+        .await?;
+    match status::transition(conn, id, IdeaStatus::Withdrawn, &change).await {
+        Ok(_) => {}
+        Err(status::StatusError::Database(err)) => return Err(err),
+        Err(err) => return Err(sqlx::Error::Protocol(err.to_string())),
+    }
+    // The author's pending review request (against a masking) has no object any more.
+    erase_review_request(conn, TargetKind::Idea, id).await?;
+    // No more work about the idea nor the texts attached to it: no analysis, no report review,
+    // no screening of a contribution or a report that can no longer be published.
+    let contributions = ids(conn, "SELECT id FROM contributions WHERE idea_id = $1", id).await?;
+    let reports = ids(conn, "SELECT id FROM reports WHERE idea_id = $1", id).await?;
+    sqlx::query("DELETE FROM jobs WHERE status = 'queued' AND payload->>'idea_id' = $1")
+        .bind(id.to_string())
+        .execute(&mut *conn)
+        .await?;
+    for (kind, ids) in [
+        (TargetKind::Contribution, &contributions),
+        (TargetKind::Report, &reports),
+    ] {
+        let texts: Vec<String> = ids.iter().map(Uuid::to_string).collect();
+        sqlx::query(
+            "DELETE FROM jobs WHERE status = 'queued' AND payload->>'target_kind' = $1
+               AND payload->>'target_id' = ANY($2)",
+        )
+        .bind(kind.as_str())
+        .bind(&texts)
+        .execute(&mut *conn)
+        .await?;
+    }
+    let escalated: bool = sqlx::query_scalar(
+        "SELECT EXISTS (SELECT 1 FROM escalations WHERE idea_id = $1 AND status = 'pending')",
+    )
+    .bind(id)
+    .fetch_one(&mut *conn)
+    .await?;
+    if escalated {
+        tracing::warn!(
+            idea_id = %id,
+            "escalated idea withdrawn by its author: it stays in the escalation queue"
+        );
+    }
+    queue::enqueue(&mut *conn, &exports_job()).await?;
+    Ok(true)
+}
+
+async fn erase_review_request(
+    conn: &mut PgConnection,
+    kind: TargetKind,
+    id: Uuid,
+) -> sqlx::Result<()> {
+    sqlx::query("DELETE FROM review_requests WHERE target_kind = $1 AND target_id = $2")
+        .bind(kind.as_str())
+        .bind(id)
+        .execute(&mut *conn)
+        .await
+        .map(|_| ())
+}
+
 /// Removes the neutral summary of contribution `contribution` from `contributions_considered` in
 /// every analysis of `idea_id`.
 async fn remove_considered(
@@ -334,7 +433,11 @@ async fn delete_report(conn: &mut PgConnection, id: Uuid) -> sqlx::Result<()> {
 pub async fn delete(pool: &PgPool, target: Target, hash: &TokenHash) -> sqlx::Result<()> {
     let mut tx = pool.begin().await?;
     match target.kind {
-        TargetKind::Idea => delete_idea(&mut tx, target.id).await?,
+        TargetKind::Idea => {
+            if !withdraw_idea(&mut tx, target.id).await? {
+                delete_idea(&mut tx, target.id).await?;
+            }
+        }
         TargetKind::Contribution => delete_contribution(&mut tx, target.id).await?,
         TargetKind::Report => delete_report(&mut tx, target.id).await?,
     }

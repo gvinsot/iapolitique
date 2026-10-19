@@ -11,6 +11,8 @@
 //!   (amounts, category and scores stay for statistics), the explanations of their report
 //!   reviews, their embedding, the rights of reply published under them; their contributions
 //!   are deleted (with their tracking tokens) and the duplicates merged into them are purged too.
+//! - Withdrawn ideas (deleted by their author after publication, §7.1): the same purge, 12 months
+//!   after the withdrawal (`withdrawn → purged`).
 //! - Handled review requests are deleted one year after their handling.
 //! - Reports: the optional name and e-mail of the reporter are erased 6 months after the report;
 //!   reviewed reports lose their details and their tracking token 6 months after the review;
@@ -36,6 +38,8 @@ pub const REJECTED_TEXT_RETENTION_DAYS: i32 = 30;
 pub const REPORT_RETENTION_MONTHS: i32 = 6;
 /// Months a hidden idea keeps its text (§7.3).
 pub const HIDDEN_TEXT_RETENTION_MONTHS: i32 = 12;
+/// Months a withdrawn idea is kept for the admin before its purge (§7.3, owner decision D2).
+pub const WITHDRAWN_RETENTION_MONTHS: i32 = 12;
 /// Months a handled review request is kept (requests about rights: one year).
 pub const REVIEW_REQUEST_RETENTION_MONTHS: i32 = 12;
 /// Days a succeeded job is kept (debugging).
@@ -55,6 +59,8 @@ pub struct PurgeReport {
     pub reports: i64,
     /// Hidden ideas purged after 12 months.
     pub hidden_ideas: i64,
+    /// Withdrawn ideas purged 12 months after their withdrawal.
+    pub withdrawn_ideas: i64,
     /// Duplicates purged with the hidden idea they were merged into.
     pub merged_duplicates: i64,
     /// Contributions deleted with their hidden idea.
@@ -100,6 +106,10 @@ pub async fn run(pool: &PgPool) -> Result<PurgeReport, sqlx::Error> {
         (
             IdeaStatus::Merged.can_transition_to(IdeaStatus::Purged),
             "merged idea",
+        ),
+        (
+            IdeaStatus::Withdrawn.can_transition_to(IdeaStatus::Purged),
+            "withdrawn idea",
         ),
     ] {
         assert!(allowed, "{entity}: -> purged must be allowed");
@@ -321,26 +331,32 @@ pub async fn run(pool: &PgPool) -> Result<PurgeReport, sqlx::Error> {
     Ok(report)
 }
 
-/// Purge of the ideas hidden for [`HIDDEN_TEXT_RETENTION_MONTHS`] (see the module documentation).
+/// Purge of the ideas hidden for [`HIDDEN_TEXT_RETENTION_MONTHS`] and of those withdrawn by
+/// their author for [`WITHDRAWN_RETENTION_MONTHS`] (see the module documentation).
 async fn purge_hidden_ideas(
     conn: &mut PgConnection,
     report: &mut PurgeReport,
 ) -> Result<(), sqlx::Error> {
-    let ideas: Vec<Uuid> = sqlx::query_scalar(
-        "SELECT id FROM ideas
-         WHERE status = 'hidden'
-           AND coalesce(hidden_at, status_changed_at) < now() - make_interval(months => $1)
-           AND NOT EXISTS (SELECT 1 FROM review_requests q
-                           WHERE q.target_kind = 'idea' AND q.target_id = ideas.id
-                             AND q.status = 'pending')
+    let rows: Vec<(Uuid, String)> = sqlx::query_as(
+        "SELECT id, status FROM ideas
+         WHERE (status = 'hidden'
+                AND coalesce(hidden_at, status_changed_at) < now() - make_interval(months => $1)
+                AND NOT EXISTS (SELECT 1 FROM review_requests q
+                                WHERE q.target_kind = 'idea' AND q.target_id = ideas.id
+                                  AND q.status = 'pending'))
+            OR (status = 'withdrawn'
+                AND coalesce(withdrawn_at, status_changed_at) < now() - make_interval(months => $2))
          FOR UPDATE",
     )
     .bind(HIDDEN_TEXT_RETENTION_MONTHS)
+    .bind(WITHDRAWN_RETENTION_MONTHS)
     .fetch_all(&mut *conn)
     .await?;
-    if ideas.is_empty() {
+    if rows.is_empty() {
         return Ok(());
     }
+    let ideas: Vec<Uuid> = rows.iter().map(|(id, _)| *id).collect();
+    let from: Vec<&str> = rows.iter().map(|(_, status)| status.as_str()).collect();
 
     // Contributions (improvements, objections, duplicates): deleted with their traces.
     let contributions: Vec<Uuid> =
@@ -393,12 +409,15 @@ async fn purge_hidden_ideas(
     .await?;
     sqlx::query(
         "INSERT INTO idea_events (idea_id, from_status, to_status, actor, reason_code)
-         SELECT id, 'hidden', 'purged', 'worker', 'retention' FROM unnest($1::uuid[]) AS id",
+         SELECT id, from_status, 'purged', 'worker', 'retention'
+         FROM unnest($1::uuid[], $2::text[]) AS t (id, from_status)",
     )
     .bind(&ideas)
+    .bind(&from)
     .execute(&mut *conn)
     .await?;
-    report.hidden_ideas = ideas.len() as i64;
+    report.withdrawn_ideas = from.iter().filter(|s| **s == "withdrawn").count() as i64;
+    report.hidden_ideas = ideas.len() as i64 - report.withdrawn_ideas;
 
     // Texts generated from them: the figures stay for statistics.
     sqlx::query(
@@ -502,6 +521,7 @@ impl JobHandler for PurgeHandler {
                 contributions = report.contributions,
                 reports = report.reports,
                 hidden_ideas = report.hidden_ideas,
+                withdrawn_ideas = report.withdrawn_ideas,
                 merged_duplicates = report.merged_duplicates,
                 hidden_idea_contributions = report.hidden_idea_contributions,
                 report_contacts = report.report_contacts,
@@ -1094,6 +1114,144 @@ mod tests {
         }
         // Idempotent.
         assert_eq!(run(&pool).await.unwrap().hidden_ideas, 0);
+    }
+
+    /// A published idea withdrawn by its author `months` ago (owner decision D2), with a
+    /// contribution, a report, a right of reply and a merged duplicate.
+    async fn withdrawn_idea(pool: &PgPool, slug: &str, months: i32) -> (Uuid, Uuid, Uuid) {
+        let id = crate::test_support::published_idea(pool, slug).await;
+        let duplicate: Uuid = sqlx::query_scalar(
+            "INSERT INTO ideas (original_text, status, parent_idea_id)
+             VALUES ('Même idée.', 'merged', $1) RETURNING id",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO contributions (idea_id, kind, status, text)
+             VALUES ($1, 'objection', 'accepted', 'Objection.')",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+        let report: Uuid = sqlx::query_scalar(
+            "INSERT INTO reports (idea_id, reason, details, reporter_email, status)
+             VALUES ($1, 'autre', 'Précision.', 'r@exemple.fr', 'accepted') RETURNING id",
+        )
+        .bind(id)
+        .fetch_one(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "INSERT INTO rights_of_reply (idea_id, author_label, body, requested_on)
+             VALUES ($1, 'Le service concerné', 'Réponse.', current_date)",
+        )
+        .bind(id)
+        .execute(pool)
+        .await
+        .unwrap();
+        sqlx::query(
+            "UPDATE ideas SET status = 'withdrawn', withdrawn_from = 'published',
+                 withdrawn_at = now() - make_interval(months => $2)
+             WHERE id = $1",
+        )
+        .bind(id)
+        .bind(months)
+        .execute(pool)
+        .await
+        .unwrap();
+        for (kind, target) in [("idea", duplicate), ("report", report)] {
+            sqlx::query(
+                "INSERT INTO tracking_tokens (token_hash, target_kind, target_id)
+                 VALUES (sha256(uuid_send($2)), $1, $2)",
+            )
+            .bind(kind)
+            .bind(target)
+            .execute(pool)
+            .await
+            .unwrap();
+        }
+        (id, duplicate, report)
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn purges_withdrawn_ideas_12_months_after_their_withdrawal(pool: PgPool) {
+        let (old, duplicate, report_id) = withdrawn_idea(&pool, "ancienne", 13).await;
+        let (recent, _, _) = withdrawn_idea(&pool, "recente", 11).await;
+
+        let report = run(&pool).await.unwrap();
+        assert_eq!(
+            (
+                report.withdrawn_ideas,
+                report.hidden_ideas,
+                report.merged_duplicates,
+                report.hidden_idea_contributions,
+                report.hidden_idea_reports
+            ),
+            (1, 0, 1, 1, 1)
+        );
+
+        let idea: serde_json::Value =
+            sqlx::query_scalar("SELECT to_jsonb(i) FROM ideas i WHERE id = $1")
+                .bind(old)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(idea["status"], "purged");
+        for field in ["original_text", "title", "summary", "slug"] {
+            assert_eq!(idea[field], serde_json::Value::Null, "{field}");
+        }
+        // The withdrawal stays known: the idea is never counted again in public statistics.
+        assert!(idea["withdrawn_at"].is_string());
+        assert_eq!(idea["withdrawn_from"], "published");
+        let (contributions, replies, details, contact, tokens): (
+            i64,
+            i64,
+            Option<String>,
+            Option<String>,
+            i64,
+        ) = sqlx::query_as(
+            "SELECT (SELECT count(*) FROM contributions WHERE idea_id = $1),
+                    (SELECT count(*) FROM rights_of_reply WHERE idea_id = $1),
+                    (SELECT details FROM reports WHERE id = $2),
+                    (SELECT reporter_email FROM reports WHERE id = $2),
+                    (SELECT count(*) FROM tracking_tokens WHERE target_id = ANY($3))",
+        )
+        .bind(old)
+        .bind(report_id)
+        .bind(vec![duplicate, report_id])
+        .fetch_one(&pool)
+        .await
+        .unwrap();
+        assert_eq!(
+            (contributions, replies, details, contact, tokens),
+            (0, 0, None, None, 0)
+        );
+        let events: Vec<(Uuid, Option<String>)> = sqlx::query_as(
+            "SELECT idea_id, from_status FROM idea_events
+             WHERE reason_code = 'retention' AND to_status = 'purged' ORDER BY idea_id",
+        )
+        .fetch_all(&pool)
+        .await
+        .unwrap();
+        let mut expected = vec![
+            (old, Some("withdrawn".to_owned())),
+            (duplicate, Some("merged".to_owned())),
+        ];
+        expected.sort();
+        assert_eq!(events, expected);
+
+        // Withdrawn 11 months ago: kept for the admin.
+        let (status, text): (String, Option<String>) =
+            sqlx::query_as("SELECT status, original_text FROM ideas WHERE id = $1")
+                .bind(recent)
+                .fetch_one(&pool)
+                .await
+                .unwrap();
+        assert_eq!(status, "withdrawn");
+        assert!(text.is_some());
     }
 
     /// A report on `idea`, in `status`, created `months` ago, with details, a contact and a

@@ -405,7 +405,8 @@ pub struct KeyCount {
 /// Public counters. Aggregates only: no text, no identifier, no fine timestamp.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct PublicStats {
-    /// Ideas received and still known (texts deleted by their authors are not counted).
+    /// Ideas received and still known (texts deleted or withdrawn by their authors, and the
+    /// duplicates merged into a withdrawn idea, are not counted).
     pub ideas_received: i64,
     pub ideas_published: i64,
     /// Being screened, deduplicated or analysed.
@@ -441,18 +442,20 @@ async fn stats_of(pool: &PgPool) -> sqlx::Result<PublicStats> {
     }
     let totals: Totals = sqlx::query_as(
         "SELECT count(*) AS ideas_received,
-                count(*) FILTER (WHERE status = 'published') AS ideas_published,
-                count(*) FILTER (WHERE status IN ('submitted', 'screening', 'second_opinion',
+                count(*) FILTER (WHERE i.status = 'published') AS ideas_published,
+                count(*) FILTER (WHERE i.status IN ('submitted', 'screening', 'second_opinion',
                     'accepted', 'dedup', 'queued_analysis', 'analyzing', 'analysis_failed'))
                     AS ideas_in_progress,
-                count(*) FILTER (WHERE rejected_at IS NOT NULL) AS ideas_rejected,
-                count(*) FILTER (WHERE status = 'merged') AS duplicates_merged,
-                (SELECT count(*) FROM contributions
-                 WHERE status = 'integrated' AND kind <> 'doublon') AS contributions_integrated,
-                (max(published_at) FILTER (WHERE status = 'published')
+                count(*) FILTER (WHERE i.rejected_at IS NOT NULL) AS ideas_rejected,
+                count(*) FILTER (WHERE i.status = 'merged') AS duplicates_merged,
+                (SELECT count(*) FROM contributions c JOIN ideas ci ON ci.id = c.idea_id
+                 WHERE c.status = 'integrated' AND c.kind <> 'doublon'
+                   AND ci.withdrawn_at IS NULL) AS contributions_integrated,
+                (max(i.published_at) FILTER (WHERE i.status = 'published')
                     AT TIME ZONE 'Europe/Paris')::date AS last_published_on,
                 (now() AT TIME ZONE 'Europe/Paris')::date AS computed_on
-         FROM ideas",
+         FROM ideas i LEFT JOIN ideas p ON p.id = i.parent_idea_id
+         WHERE i.withdrawn_at IS NULL AND p.withdrawn_at IS NULL",
     )
     .fetch_one(pool)
     .await?;

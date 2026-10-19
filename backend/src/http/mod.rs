@@ -47,6 +47,8 @@ mod security_tests;
 mod submission_tests;
 #[cfg(test)]
 mod tracking_tests;
+#[cfg(test)]
+mod withdrawal_tests;
 
 use admin::AdminToken;
 use client_ip::TrustedProxyHops;

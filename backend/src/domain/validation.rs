@@ -2,8 +2,9 @@
 //!
 //! The normalized text is what gets stored, screened and analysed: line endings are unified,
 //! control and invisible formatting characters (zero-width, bidirectional overrides…) are
-//! removed, horizontal whitespace is collapsed, blank lines are limited to one in a row and the
-//! whole text is trimmed. Lengths are counted in Unicode characters after normalization.
+//! removed, full-width ASCII forms become ASCII, horizontal whitespace is collapsed, blank lines
+//! are limited to one in a row and the whole text is trimmed. Lengths are counted in Unicode
+//! characters after normalization.
 
 /// Inclusive bounds of a text length, in characters.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -91,6 +92,9 @@ pub fn normalize_text(raw: &str) -> String {
                 '\n'
             }
             '\u{2028}' | '\u{2029}' | '\u{0085}' => '\n',
+            // Full-width ASCII forms (`＠`, `０６`…) become ASCII, so that the masking of
+            // personal data (§7.5) sees them; NFKC would also rewrite `m²` or `½`.
+            '\u{FF01}'..='\u{FF5E}' => char::from_u32(c as u32 - 0xFEE0).unwrap_or(c),
             c => c,
         };
         if c == '\n' {
@@ -295,6 +299,15 @@ mod tests {
     #[test]
     fn unicode_line_separators_become_newlines() {
         assert_eq!(normalize_text("a\u{2028}b\u{2029}c\u{0085}d"), "a\nb\nc\nd");
+    }
+
+    #[test]
+    fn folds_full_width_ascii() {
+        assert_eq!(
+            normalize_text("jean＠exemple．fr ０６ １２ ３４ ５６ ７８"),
+            "jean@exemple.fr 06 12 34 56 78"
+        );
+        assert_eq!(normalize_text("10 m² ½"), "10 m² ½");
     }
 
     #[test]

@@ -64,11 +64,16 @@ static PERSONAL_PATH_RE: LazyLock<Regex> = LazyLock::new(|| {
 static EMAIL_RE: LazyLock<Regex> = LazyLock::new(|| {
     re(r"(?i)(?:mailto:)?[\p{L}\p{N}._%+\-]+@[\p{L}\p{N}\-]+(?:\.[\p{L}\p{N}\-]+)*\.[a-z]{2,}\b")
 });
-/// Obfuscated e-mail address: `jean.dupont [at] exemple [point] fr`.
+/// Obfuscated e-mail address: `jean.dupont [at] exemple [point] fr`, `jean arobase exemple
+/// point com`, `jean @ exemple.fr`, `jean＠exemple.fr`, `jean@exemple[.]com`. Written in words,
+/// the domain must end with a common top-level domain, so that prose does not match.
 static OBFUSCATED_EMAIL_RE: LazyLock<Regex> = LazyLock::new(|| {
-    re(
-        r"(?i)[\p{L}\p{N}._%+\-]+\s*(?:\[\s*(?:at|arobase|@)\s*\]|\(\s*(?:at|arobase|@)\s*\))\s*[\p{L}\p{N}\-]+(?:\s*(?:\.|\[\s*(?:dot|point)\s*\]|\(\s*(?:dot|point)\s*\))\s*[\p{L}\p{N}\-]+)+",
-    )
+    let at =
+        r"(?:\s*(?:[\[(]\s*(?:at|arobase|@|＠|﹫)\s*[\])]|[@＠﹫])\s*|\s+(?:at|arobase|chez)\s+)";
+    let dot = r"(?:\s*(?:\.|[\[(]\s*(?:\.|dot|point)\s*[\])])\s*|\s+(?:dot|point)\s+)";
+    re(&format!(
+        r"(?i)[\p{{L}}\p{{N}}._%+\-]+{at}[\p{{L}}\p{{N}}\-]+(?:{dot}[\p{{L}}\p{{N}}\-]+)*{dot}(?:com|fr|net|org|eu|be|ch|ca|info|io|me|biz|de|uk|es|it|re)\b"
+    ))
 });
 /// IBAN candidate: country code, check digits, then groups of up to 4 characters.
 static IBAN_RE: LazyLock<Regex> =
@@ -79,11 +84,14 @@ static NIR_RE: LazyLock<Regex> = LazyLock::new(|| {
         r"(?i)\b[1-478][ .\-]?\d{2}[ .\-]?(?:0[1-9]|1[0-2]|[2-3]\d|4[0-2]|[5-9]\d)[ .\-]?(?:\d{2}|2[ab])[ .\-]?\d{3}[ .\-]?\d{3}(?:[ .\-]?\d{2})?\b",
     )
 });
-/// French phone number, national or international format (metropolitan and overseas codes).
+/// French phone number, national or international format (metropolitan and overseas codes),
+/// with `+33 0…`, `(+33)` and `/` between pairs of digits (`06/12/34/56/78`: `/` is accepted
+/// only there, so that dates stay visible).
 static PHONE_RE: LazyLock<Regex> = LazyLock::new(|| {
-    re(
-        r"(?:(?:\+|00)[ .\-]?(?:33|262|269|508|590|594|596|681|687|689)[ .\-]?(?:\(0\)[ .\-]?)?|\b0)[1-9](?:[ .\-]?\d){8}\b",
-    )
+    let codes = "(?:33|262|269|508|590|594|596|681|687|689)";
+    re(&format!(
+        r"(?:(?:\(\s*(?:\+|00)\s*{codes}\s*\)|(?:\+|00)[ .\-]?{codes})[ .\-]?(?:\(0\)[ .\-]?|0[ .\-]?)?[1-9](?:[ .\-]?\d){{8}}|\b0[1-9](?:[ .\-]?\d){{8}}|\b0[1-9](?:/\d\d){{4}})\b"
+    ))
 });
 /// Street address: number, optional `bis`/`ter`, street type, then the street name, optionally
 /// followed by a postal code and a town. The name continues with capitalised words only, so
@@ -113,15 +121,16 @@ fn is_digit_at(text: &str, index: usize, before: bool) -> bool {
 }
 
 /// Whether the digits of a candidate number touch other digits (`1 234 06 12 34 56 78`…), or a
-/// decimal separator followed by digits: it is then part of a longer figure.
+/// decimal separator followed by digits: it is then part of a longer figure. Glue is exactly one
+/// separator between two digits; a separator next to a space (`1. 06…`, `…78. 3 euros`,
+/// `…78 - 2 fois`, `…78, 2 fois`) is a boundary between the number and another figure.
 fn is_isolated_number(text: &str, start: usize, end: usize) -> bool {
-    let before = text[..start].trim_end_matches([' ', '.', '-', ',']);
-    let glued_before = before.len() < start && before.ends_with(|c: char| c.is_ascii_digit());
-    let after = text[end..].trim_start_matches([' ', '.', '-', ',']);
-    let glued_after = after.len() < text.len() - end
-        && after.starts_with(|c: char| c.is_ascii_digit())
-        // « 06 12 34 56 78, 2 fois » remains a phone number.
-        && !text[end..].starts_with(", ");
+    let mut before = text[..start].chars().rev();
+    let glued_before = matches!(before.next(), Some(' ' | '.' | '-' | ','))
+        && before.next().is_some_and(|c| c.is_ascii_digit());
+    let mut after = text[end..].chars();
+    let glued_after = matches!(after.next(), Some(' ' | '.' | '-' | ','))
+        && after.next().is_some_and(|c| c.is_ascii_digit());
     !is_digit_at(text, start, true)
         && !is_digit_at(text, end, false)
         && !glued_before
@@ -199,13 +208,26 @@ pub fn find(text: &str) -> Vec<(usize, usize, PiiKind)> {
             spans.push((m.start(), m.start() + url.len(), PiiKind::Url));
         }
     }
-    for regex in [&*EMAIL_RE, &*OBFUSCATED_EMAIL_RE] {
-        spans.extend(
-            regex
-                .find_iter(text)
-                .map(|m| (m.start(), m.end(), PiiKind::Email)),
-        );
-    }
+    let plain: Vec<(usize, usize)> = EMAIL_RE
+        .find_iter(text)
+        .map(|m| (m.start(), m.end()))
+        .collect();
+    spans.extend(
+        plain
+            .iter()
+            .map(|&(start, end)| (start, end, PiiKind::Email)),
+    );
+    // An obfuscated match inside a plain address is the same address.
+    spans.extend(
+        OBFUSCATED_EMAIL_RE
+            .find_iter(text)
+            .filter(|m| {
+                !plain
+                    .iter()
+                    .any(|&(start, end)| start <= m.start() && m.end() <= end)
+            })
+            .map(|m| (m.start(), m.end(), PiiKind::Email)),
+    );
     spans.extend(IBAN_RE.find_iter(text).filter_map(|m| {
         iban_len(m.as_str()).map(|len| (m.start(), m.start() + len, PiiKind::Iban))
     }));
@@ -315,6 +337,36 @@ mod tests {
             ("+262 692 12 34 56 à La Réunion", "[] à La Réunion"),
             ("0692 12 34 56", "[]"),
             ("06 12 34 56 78, 2 fois", "[], 2 fois"),
+            // PRIV-1: a figure in the next sentence or a list number is not glue.
+            (
+                "Appelez le 06 12 34 56 78. 3 euros suffisent",
+                "Appelez le []. 3 euros suffisent",
+            ),
+            ("Contacts : 1. 06 12 34 56 78", "Contacts : 1. []"),
+            ("06 12 34 56 78 - 2 fois", "[] - 2 fois"),
+            // PRIV-1: common international and slashed forms.
+            ("+33 06 12 34 56 78", "[]"),
+            ("+33 0 6 12 34 56 78", "[]"),
+            ("(+33) 6 12 34 56 78", "[]"),
+            ("(0033) 6 12 34 56 78", "[]"),
+            ("06/12/34/56/78", "[]"),
+        ]);
+    }
+
+    /// PRIV-1: e-mail obfuscations written in words or with spaces around `@`.
+    #[test]
+    fn obfuscated_emails() {
+        check(&[
+            ("jean.dupont arobase gmail point com", "[]"),
+            ("jean.dupont @ gmail.com", "[]"),
+            ("jean.dupont at gmail dot com", "[]"),
+            ("jean.dupont@gmail[.]com", "[]"),
+            ("jean.dupont＠gmail.com", "[]"),
+            ("jean.dupont (arobase) gmail (point) fr", "[]"),
+            (
+                "appelez-moi au +33 06 12 34 56 78 ou écrivez à jean.dupont arobase gmail point com.",
+                "appelez-moi au [] ou écrivez à [].",
+            ),
         ]);
     }
 
@@ -428,6 +480,13 @@ mod tests {
             "Le compte FR2025 de l'État.",
             "Augmenter de +33 % la taxe.",
             "Téléphone 06 12 34 56 78 90 12 (numéro trop long)",
+            "Le 01/02/2024 15 personnes",
+            "Les 12/03/2024 et 13/03/2024.",
+            "Rendez-vous chez Paul point final.",
+            "Il est at home.",
+            "Taux de 2 @ 3 %",
+            "Un gain de 1 234 06 12 34 56 € fictif.",
+            "Le point com de la bulle internet.",
         ]);
     }
 

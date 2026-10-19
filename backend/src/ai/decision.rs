@@ -166,12 +166,17 @@ impl DecisionClient {
         if !status.is_success() {
             return Err(DecisionError::Http(status.as_u16()));
         }
-        let body: DecisionResponse = response.json().await.map_err(|err| {
-            if err.is_timeout() {
-                DecisionError::Timeout
-            } else {
-                DecisionError::InvalidResponse("body is not the expected JSON".to_owned())
-            }
+        let bytes = super::read_capped(response, super::MAX_DECISION_RESPONSE_BYTES)
+            .await
+            .map_err(|err| match err {
+                super::BodyError::TooLarge => {
+                    DecisionError::InvalidResponse("response too large".to_owned())
+                }
+                super::BodyError::Transport(err) if err.is_timeout() => DecisionError::Timeout,
+                super::BodyError::Transport(_) => DecisionError::Unreachable,
+            })?;
+        let body: DecisionResponse = serde_json::from_slice(&bytes).map_err(|_| {
+            DecisionError::InvalidResponse("body is not the expected JSON".to_owned())
         })?;
         if let Some(missing) = questions.keys().find(|k| !body.answers.contains_key(*k)) {
             return Err(DecisionError::InvalidResponse(format!(
@@ -976,6 +981,28 @@ mod tests {
         let err = client.ask(&json!("x"), &questions).await.unwrap_err();
         assert_eq!(err, DecisionError::Timeout);
         assert!(started.elapsed() < Duration::from_secs(1));
+    }
+
+    #[tokio::test]
+    async fn oversized_answers_are_refused() {
+        let server = MockServer::start().await;
+        let grid = fixture_grid();
+        Mock::given(path("/v1/systemone"))
+            .respond_with(
+                ResponseTemplate::new(200)
+                    .set_body_string(" ".repeat(crate::ai::MAX_DECISION_RESPONSE_BYTES + 1)),
+            )
+            .mount(&server)
+            .await;
+        let client = client_for(&server, Duration::from_secs(5));
+        let err = client
+            .ask(&json!("x"), &questions(&grid.idea))
+            .await
+            .unwrap_err();
+        assert_eq!(
+            err,
+            DecisionError::InvalidResponse("response too large".to_owned())
+        );
     }
 
     #[tokio::test]

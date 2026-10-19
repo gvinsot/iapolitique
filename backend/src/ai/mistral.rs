@@ -553,18 +553,29 @@ impl MistralClient {
                 retry_after,
             });
         }
-        match response.json::<Value>().await {
-            Ok(value) => Ok((value, status)),
-            Err(err) => Err(Failure {
-                error: if err.is_timeout() {
+        let failure = |error| Failure {
+            error,
+            http_status: Some(status),
+            retry_after: None,
+        };
+        let bytes = match super::read_capped(response, super::MAX_MISTRAL_RESPONSE_BYTES).await {
+            Ok(bytes) => bytes,
+            Err(super::BodyError::TooLarge) => {
+                return Err(failure(MistralError::InvalidOutput(
+                    "response too large".into(),
+                )));
+            }
+            Err(super::BodyError::Transport(err)) => {
+                return Err(failure(if err.is_timeout() {
                     MistralError::Timeout
                 } else {
-                    MistralError::InvalidOutput("body is not JSON".into())
-                },
-                http_status: Some(status),
-                retry_after: None,
-            }),
-        }
+                    MistralError::Unreachable
+                }));
+            }
+        };
+        serde_json::from_slice::<Value>(&bytes)
+            .map(|value| (value, status))
+            .map_err(|_| failure(MistralError::InvalidOutput("body is not JSON".into())))
     }
 }
 
@@ -1014,6 +1025,27 @@ mod tests {
         assert!(calls.iter().all(|c| c["status"] == "invalid_output"));
         // Invalid answers are billed all the same.
         assert!(calls.iter().all(|c| c["cost_micro_eur"] == 3_200));
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn oversized_answers_are_refused_before_parsing(pool: PgPool) {
+        let server = MockServer::start().await;
+        let mut huge = chat_response(json!(ACCEPT));
+        huge["padding"] = json!("x".repeat(crate::ai::MAX_MISTRAL_RESPONSE_BYTES));
+        Mock::given(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(huge))
+            .up_to_n_times(1)
+            .mount(&server)
+            .await;
+        Mock::given(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(chat_response(json!(ACCEPT))))
+            .mount(&server)
+            .await;
+        let completion = structured_call(&client(&server), &pool).await.unwrap();
+        assert_eq!(completion.attempts, 2);
+        let calls = calls(&pool).await;
+        assert_eq!(calls[0]["status"], "invalid_output");
+        assert_eq!(calls[1]["status"], "success");
     }
 
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]

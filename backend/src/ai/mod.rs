@@ -33,9 +33,74 @@ pub fn http_client(timeout: Duration) -> reqwest::Result<reqwest::Client> {
         .build()
 }
 
+/// Largest Mistral response accepted (§14.5): a full analysis with sources is a few tens of
+/// kilobytes; anything far beyond is refused before parsing.
+pub const MAX_MISTRAL_RESPONSE_BYTES: usize = 2 << 20;
+/// Largest decision service response accepted: answers to a dozen questions.
+pub const MAX_DECISION_RESPONSE_BYTES: usize = 256 << 10;
+
+/// Why a response body could not be read.
+#[derive(Debug)]
+pub enum BodyError {
+    /// Larger than the accepted maximum (announced or received).
+    TooLarge,
+    /// Transport error (timeout, connection reset…).
+    Transport(reqwest::Error),
+}
+
+/// Reads a response body of at most `max` bytes, without buffering more than that: an announced
+/// `Content-Length` above it is refused at once, a body that grows beyond it is cut short.
+pub async fn read_capped(
+    mut response: reqwest::Response,
+    max: usize,
+) -> Result<Vec<u8>, BodyError> {
+    if response
+        .content_length()
+        .is_some_and(|length| length > max as u64)
+    {
+        return Err(BodyError::TooLarge);
+    }
+    let mut body = Vec::new();
+    while let Some(chunk) = response.chunk().await.map_err(BodyError::Transport)? {
+        if body.len() + chunk.len() > max {
+            return Err(BodyError::TooLarge);
+        }
+        body.extend_from_slice(&chunk);
+    }
+    Ok(body)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn bodies_are_read_up_to_a_maximum() {
+        use wiremock::matchers::path;
+        use wiremock::{Mock, MockServer, ResponseTemplate};
+
+        let server = MockServer::start().await;
+        Mock::given(path("/small"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("0123456789"))
+            .mount(&server)
+            .await;
+        Mock::given(path("/big"))
+            .respond_with(ResponseTemplate::new(200).set_body_string("x".repeat(10_000)))
+            .mount(&server)
+            .await;
+        let client = http_client(Duration::from_secs(5)).unwrap();
+        let get = |p: &str| client.get(format!("{}{p}", server.uri())).send();
+        let body = read_capped(get("/small").await.unwrap(), 10).await.unwrap();
+        assert_eq!(body, b"0123456789");
+        assert!(matches!(
+            read_capped(get("/small").await.unwrap(), 9).await,
+            Err(BodyError::TooLarge)
+        ));
+        assert!(matches!(
+            read_capped(get("/big").await.unwrap(), 9_999).await,
+            Err(BodyError::TooLarge)
+        ));
+    }
 
     #[test]
     fn builds_a_tls_client() {

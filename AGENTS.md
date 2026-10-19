@@ -1057,7 +1057,8 @@ modèle de décision, budget Mistral (§6.4), `statement_timeout` PostgreSQL cô
 (`DATABASE_STATEMENT_TIMEOUT_SECS` pour l'api, `DATABASE_JOB_STATEMENT_TIMEOUT_SECS` pour le worker,
 posé à chaque connexion du pool ; migrations sur une connexion dédiée sans limite),
 concurrence du worker bornée, pagination bornée, regex à temps linéaire uniquement (crate
-`regex`), taille maximale des réponses IA acceptées, exports servis depuis la base (pas de
+`regex`), taille maximale des réponses IA acceptées (`ai::read_capped` : 2 Mio pour Mistral, réponse
+refusée comme sortie invalide ; 256 Kio pour le modèle de décision), exports servis depuis la base (pas de
 génération à la demande).
 
 ### 14.6 Secrets, erreurs et journaux

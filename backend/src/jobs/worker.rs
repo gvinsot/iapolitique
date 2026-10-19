@@ -131,6 +131,12 @@ pub fn default_registry() -> Registry {
     registry
 }
 
+/// Longest run of one job: beyond, it is aborted and retried later (attempt counted). Above
+/// the longest legitimate run, an analysis with every retry of its Mistral calls (about
+/// 2 h 45, §6.1): it frees a slot held by a job that hangs, since the liveness of the loop no
+/// longer looks at busy slots.
+pub const MAX_JOB_DURATION: Duration = Duration::from_secs(4 * 3600);
+
 /// Tuning of the loop.
 #[derive(Debug, Clone)]
 pub struct WorkerOptions {
@@ -143,6 +149,8 @@ pub struct WorkerOptions {
     pub maintenance_interval: Duration,
     /// Time given to running jobs at shutdown.
     pub shutdown_grace: Duration,
+    /// Longest run of one job ([`MAX_JOB_DURATION`]).
+    pub max_job_duration: Duration,
 }
 
 impl WorkerOptions {
@@ -156,6 +164,7 @@ impl WorkerOptions {
             lock_timeout: config.job_lock_timeout,
             maintenance_interval: Duration::from_secs(30),
             shutdown_grace: Duration::from_secs(25),
+            max_job_duration: MAX_JOB_DURATION,
         }
     }
 }
@@ -240,6 +249,7 @@ impl Worker {
                         job,
                         self.options.id.clone(),
                         self.options.lock_timeout,
+                        self.options.max_job_duration,
                     );
                     tokio::spawn(
                         async move {
@@ -300,6 +310,7 @@ async fn process(
     job: Job,
     worker_id: String,
     lock_timeout: Duration,
+    max_duration: Duration,
 ) {
     let started = Instant::now();
     let (job_id, kind, attempt) = (job.id, job.kind, job.attempts);
@@ -339,7 +350,24 @@ async fn process(
         (Ok(None), Some(handler)) => {
             let job = job.clone();
             let ctx = Arc::clone(&ctx);
-            tokio::spawn(async move { handler.handle(&ctx, &job).await }.in_current_span()).await
+            let task =
+                tokio::spawn(async move { handler.handle(&ctx, &job).await }.in_current_span());
+            let abort = task.abort_handle();
+            match tokio::time::timeout(max_duration, task).await {
+                Ok(joined) => joined,
+                Err(_) => {
+                    abort.abort();
+                    let limit = max_duration.as_secs();
+                    tracing::error!(
+                        job_id,
+                        limit_secs = limit,
+                        "job exceeded its maximum duration"
+                    );
+                    Ok(Err(JobError::Transient(format!(
+                        "job exceeded its maximum duration ({limit} s): aborted"
+                    ))))
+                }
+            }
         }
     };
     heartbeat.abort();
@@ -420,6 +448,7 @@ mod tests {
             lock_timeout: Duration::from_secs(60),
             maintenance_interval: Duration::from_secs(60),
             shutdown_grace: Duration::from_secs(5),
+            max_job_duration: Duration::from_secs(60),
         }
     }
 
@@ -618,6 +647,61 @@ mod tests {
             job_states(&pool).await,
             [("slow".into(), "succeeded".into(), 1)]
         );
+    }
+
+    /// A job that runs past its maximum duration is aborted and retried later (attempt
+    /// counted), freeing its slot: the loop no longer restarts the worker for busy slots.
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn a_job_past_its_maximum_duration_is_aborted_and_retried(pool: PgPool) {
+        let calls = Arc::new(AtomicUsize::new(0));
+        let mut registry = Registry::new();
+        registry.register(Scripted {
+            kind: JobKind::ScreenIdea,
+            calls: Arc::clone(&calls),
+        });
+        enqueue(
+            &pool,
+            &NewJob::new(JobKind::ScreenIdea).payload(serde_json::json!({ "mode": "slow" })),
+        )
+        .await
+        .unwrap();
+        let ctx = JobContext {
+            pool: pool.clone(),
+            config: test_config(false),
+            prompts: crate::ai::prompts::test_prompts(),
+            screener: test_screener(),
+            mistral: None,
+        };
+        let worker = Worker::new(
+            ctx,
+            registry,
+            WorkerOptions {
+                max_job_duration: Duration::from_millis(200),
+                ..options()
+            },
+            Liveness::new(Duration::from_secs(60)),
+        );
+        let (stop, shutdown) = watch::channel(false);
+        let running = tokio::spawn(worker.run(shutdown));
+        let deadline = Instant::now() + Duration::from_secs(10);
+        let (status, attempts, error) = loop {
+            let row: (String, i32, Option<String>) =
+                sqlx::query_as("SELECT status, attempts, last_error FROM jobs")
+                    .fetch_one(&pool)
+                    .await
+                    .unwrap();
+            if row.2.is_some() {
+                break row;
+            }
+            assert!(Instant::now() < deadline, "job not aborted in time");
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        };
+        stop.send(true).unwrap();
+        running.await.unwrap().unwrap();
+        assert_eq!(status, "queued");
+        assert_eq!(attempts, 1);
+        assert!(error.unwrap().contains("maximum duration"));
+        assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]

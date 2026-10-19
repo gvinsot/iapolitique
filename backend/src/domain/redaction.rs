@@ -45,9 +45,10 @@ fn re(pattern: &str) -> Regex {
     Regex::new(pattern).expect("valid redaction pattern")
 }
 
-/// `http(s)://…` or `www.…` up to the next whitespace or closing bracket.
-static URL_RE: LazyLock<Regex> =
-    LazyLock::new(|| re(r#"(?i)\b(?:https?://|www\.)[^\s<>"'«»()\[\]{}]+"#));
+/// `http(s)://…`, `www.…` or `host.tld/…` up to the next whitespace or closing bracket.
+static URL_RE: LazyLock<Regex> = LazyLock::new(|| {
+    re(r#"(?i)\b(?:https?://|www\.|(?:[a-z0-9-]+\.)+[a-z]{2,}/)[^\s<>"'«»()\[\]{}]+"#)
+});
 /// Hosts whose URLs designate a person (profiles of social networks…).
 static PERSONAL_HOST_RE: LazyLock<Regex> = LazyLock::new(|| {
     re(
@@ -76,12 +77,21 @@ static OBFUSCATED_EMAIL_RE: LazyLock<Regex> = LazyLock::new(|| {
     ))
 });
 /// IBAN candidate: country code, check digits, then groups of up to 4 characters.
-static IBAN_RE: LazyLock<Regex> =
-    LazyLock::new(|| re(r"(?i)\b[a-z]{2}\d{2}(?:[ \-]?[a-z0-9]{1,4}){3,8}\b"));
+/// Groups may be separated by a space, `-`, `.` or `/`. A separator inside the country code and
+/// check digits (`FR 76 …`) is accepted in uppercase only: case-insensitive, ordinary French
+/// words followed by figures would pass the checksum about once in 97.
+static IBAN_RE: LazyLock<Regex> = LazyLock::new(|| {
+    re(
+        r"(?i:\b[a-z]{2}\d{2}(?:[ .\-/]?[a-z0-9]{1,4}){3,8}\b)|\b[A-Z]{2}[ .\-/]\d{2}(?:[ .\-/]?[A-Z0-9]{1,4}){3,8}\b",
+    )
+});
+/// French RIB without its IBAN prefix: bank (5 digits), branch (5), account (11), key (2).
+static RIB_RE: LazyLock<Regex> =
+    LazyLock::new(|| re(r"(?i)\b\d{5}[ .\-]?\d{5}[ .\-]?[a-z0-9]{11}[ .\-]?\d{2}\b"));
 /// NIR: sex, year, month, department (2A/2B for Corsica), commune, order, optional key.
 static NIR_RE: LazyLock<Regex> = LazyLock::new(|| {
     re(
-        r"(?i)\b[1-478][ .\-]?\d{2}[ .\-]?(?:0[1-9]|1[0-2]|[2-3]\d|4[0-2]|[5-9]\d)[ .\-]?(?:\d{2}|2[ab])[ .\-]?\d{3}[ .\-]?\d{3}(?:[ .\-]?\d{2})?\b",
+        r"(?i)\b[1-478][ .\-/]?\d{2}[ .\-/]?(?:0[1-9]|1[0-2]|[2-3]\d|4[0-2]|[5-9]\d)[ .\-/]?(?:\d{2}|2[ab])[ .\-/]?\d{3}[ .\-/]?\d{3}(?:[ .\-/]?\d{2})?\b",
     )
 });
 /// French phone number, national or international format (metropolitan and overseas codes),
@@ -97,7 +107,9 @@ static PHONE_RE: LazyLock<Regex> = LazyLock::new(|| {
 /// followed by a postal code and a town. The name continues with capitalised words only, so
 /// the rest of the sentence is kept. Unambiguous street types (`rue`, `avenue`…) accept a
 /// lowercase first word (`rue des tilleuls`); ambiguous ones (`place`, `cours`, `route`…) need
-/// a capitalised name (`place de la Mairie`, not `1 place de parking`).
+/// a capitalised name (`place de la Mairie`, not `1 place de parking`), as do abbreviations
+/// (`12 av Foch`, `12 pl. de la Mairie`; `r`/`r.` are left out: `R. 4127-1` is an article).
+/// Also `lieu-dit Les Granges` without a number and postal boxes (`BP 123 75002 Paris`).
 static ADDRESS_RE: LazyLock<Regex> = LazyLock::new(|| {
     let number = r"\b\d{1,4}(?:\s?(?:bis|ter|quater|[a-d])\b)?\s*,?\s+";
     let particles = r"(?:(?:de\s+la|des|du|de|aux|au|les|la|le)\s+|(?:de\s+l|d|l)['’]\s*)?";
@@ -107,7 +119,7 @@ static ADDRESS_RE: LazyLock<Regex> = LazyLock::new(|| {
         r"(?:\s+(?:{particles}{capital_word}|{capital_word}))*(?:\s*,?\s*\d{{5}}\s+\p{{Lu}}[\p{{L}}'’\-]*(?:[ \-]\p{{Lu}}[\p{{L}}'’\-]*)*)?"
     );
     re(&format!(
-        r"(?:{number}(?i:rue|avenue|av\.|bd|boulevard|bld|allée|allee|impasse|faubourg|fbg|ruelle|venelle|lotissement)\s+{particles}{name_word}{tail})|(?:{number}(?i:place|cours|route|chemin|quai|square|passage|sentier|voie|résidence|residence|cité|cite|hameau|lieu-dit|esplanade|promenade|parvis|villa|traverse|montée|mail|rond-point|clos)\s+{particles}{capital_word}{tail})"
+        r"(?:(?i:lieu-dit|lieudit)\s+{particles}{capital_word}{tail})|(?:\b(?i:BP|CS)\s?\d{{1,5}}\s*,?\s*\d{{5}}\s+\p{{Lu}}[\p{{L}}'’\-]*)|(?:{number}(?i:rue|avenue|av\.|bd|boulevard|bld|allées?|allees?|impasse|faubourg|fbg|ruelle|venelle|lotissement|chemin|sente)\s+{particles}{name_word}{tail})|(?:{number}(?i:av|bvd|blvd|ch\.?|rte|pl\.?|imp\.?|sq\.?|domaine|parc|place|cours|route|quai|square|passage|sentier|voie|résidence|residence|cité|cite|hameau|lieu-dit|esplanade|promenade|parvis|villa|traverse|montée|mail|rond-point|clos)\s+{particles}{capital_word}{tail})"
     ))
 });
 
@@ -181,6 +193,43 @@ fn iban_len(candidate: &str) -> Option<usize> {
         .max()
 }
 
+/// French RIB key: `97 - (89 × bank + 15 × branch + 3 × account) mod 97`, the letters of the
+/// account counting as digits (A, J → 1 … I, R, Z → 9).
+fn is_rib(candidate: &str) -> bool {
+    let digits: Vec<u64> = candidate
+        .chars()
+        .filter(char::is_ascii_alphanumeric)
+        .map(|c| match c.to_ascii_uppercase() {
+            d @ '0'..='9' => u64::from(d as u8 - b'0'),
+            'A' | 'J' => 1,
+            'B' | 'K' | 'S' => 2,
+            'C' | 'L' | 'T' => 3,
+            'D' | 'M' | 'U' => 4,
+            'E' | 'N' | 'V' => 5,
+            'F' | 'O' | 'W' => 6,
+            'G' | 'P' | 'X' => 7,
+            'H' | 'Q' | 'Y' => 8,
+            _ => 9,
+        })
+        .collect();
+    if digits.len() != 23 {
+        return false;
+    }
+    let number = |range: std::ops::Range<usize>| digits[range].iter().fold(0, |n, d| n * 10 + d);
+    let (bank, branch, account, key) =
+        (number(0..5), number(5..10), number(10..21), number(21..23));
+    97 - (89 * bank + 15 * branch + 3 * account) % 97 == key
+}
+
+/// `52 av. J.-C.` is a date, not an address.
+fn is_before_christ(text: &str, end: usize) -> bool {
+    text[..end].ends_with(['J', 'j'])
+        && text[end..]
+            .trim_start_matches('.')
+            .trim_start()
+            .starts_with(['-', '‑'])
+}
+
 fn is_personal_url(url: &str) -> bool {
     let without_scheme = url
         .split_once("://")
@@ -193,6 +242,20 @@ fn is_personal_url(url: &str) -> bool {
     let host = host.rsplit('@').next().unwrap_or(host);
     let host = host.split(':').next().unwrap_or(host);
     let profile_path = !path.trim_matches(['/', '?', '#']).is_empty();
+    let (lower_host, lower_path) = (host.to_ascii_lowercase(), path.to_ascii_lowercase());
+    // Hosts that also serve impersonal pages: only their person paths.
+    let host_is = |domain: &str| {
+        lower_host == domain
+            || lower_host
+                .strip_suffix(domain)
+                .is_some_and(|sub| sub.ends_with('.'))
+    };
+    if (host_is("youtube.com") && lower_path.starts_with("/c/"))
+        || (host_is("societe.com") && lower_path.starts_with("/dirigeant/"))
+        || (host_is("doctolib.fr") && lower_path.trim_end_matches('/').matches('/').count() >= 3)
+    {
+        return true;
+    }
     (PERSONAL_HOST_RE.is_match(host) && profile_path)
         || PERSONAL_PATH_RE.is_match(path)
         || without_scheme.contains('@')
@@ -232,6 +295,12 @@ pub fn find(text: &str) -> Vec<(usize, usize, PiiKind)> {
         iban_len(m.as_str()).map(|len| (m.start(), m.start() + len, PiiKind::Iban))
     }));
     spans.extend(
+        RIB_RE
+            .find_iter(text)
+            .filter(|m| is_rib(m.as_str()))
+            .map(|m| (m.start(), m.end(), PiiKind::Iban)),
+    );
+    spans.extend(
         NIR_RE
             .find_iter(text)
             .filter(|m| is_isolated_number(text, m.start(), m.end()))
@@ -246,6 +315,7 @@ pub fn find(text: &str) -> Vec<(usize, usize, PiiKind)> {
     spans.extend(
         ADDRESS_RE
             .find_iter(text)
+            .filter(|m| !is_before_christ(text, m.end()))
             .map(|m| (m.start(), m.end(), PiiKind::Address)),
     );
     spans.sort_unstable();
@@ -383,6 +453,11 @@ mod tests {
             ("FR77 3000 6000 0112 3456 7890 189", "[]"),
             ("DE89 3704 0044 0532 0130 00", "[]"),
             ("BE68539007547034", "[]"),
+            // PRIV-2: separators inside the country code, dots and slashes, bare RIB.
+            ("FR 76 3000 6000 0112 3456 7890 189", "[]"),
+            ("FR76.3000.6000.0112.3456.7890.189", "[]"),
+            ("IBAN : FR76/3000/6000/0112/3456/7890/189", "IBAN : []"),
+            ("RIB 30006 00001 12345678901 89", "RIB []"),
         ]);
     }
 
@@ -394,6 +469,8 @@ mod tests {
             ("2 95 12 2A 123 456 78", "[]"),
             ("2.95.12.2B.123.456", "[]"),
             ("numéro 1850578006084", "numéro []"),
+            // PRIV-2: slashes.
+            ("1/85/05/78/006/084/36", "[]"),
         ]);
     }
 
@@ -414,6 +491,16 @@ mod tests {
                 "Le [] est trop cher.",
             ),
             ("au 8 rue d'Alsace près de la gare", "au [] près de la gare"),
+            // PRIV-2: abbreviations and other street types.
+            ("J'habite au 12 av Foch à Lyon", "J'habite au [] à Lyon"),
+            ("12 chemin des vignes", "[]"),
+            ("12 bvd Voltaire", "[]"),
+            ("12 rte de Lyon", "[]"),
+            ("12 pl. de la Mairie", "[]"),
+            ("15 allées Jean Jaurès", "[]"),
+            ("3 sente des Prés", "[]"),
+            ("Lieu-dit Les Granges 24000 Périgueux", "[]"),
+            ("BP 123 75002 Paris", "[]"),
         ]);
     }
 
@@ -431,6 +518,15 @@ mod tests {
             ("https://mastodon.social/@quelquun", "[]"),
             ("https://forum.exemple.fr/users/jdupont", "[]"),
             ("https://exemple.fr/contact?email=a@b.fr", "[]"),
+            // PRIV-2: without a scheme or `www.`, and host-specific profile paths.
+            ("Mon profil : instagram.com/jdupont75", "Mon profil : []"),
+            ("facebook.com/jean.dupont", "[]"),
+            ("https://youtube.com/c/jdupont", "[]"),
+            ("https://www.societe.com/dirigeant/jean-dupont-123", "[]"),
+            (
+                "https://www.doctolib.fr/medecin-generaliste/lyon/jean-dupont",
+                "[]",
+            ),
         ]);
     }
 
@@ -487,6 +583,17 @@ mod tests {
             "Taux de 2 @ 3 %",
             "Un gain de 1 234 06 12 34 56 € fictif.",
             "Le point com de la bulle internet.",
+            "Voir insee.fr/fr/statistiques/1234567",
+            "Lire legifrance.gouv.fr/loda/id/JORFTEXT000",
+            "En 2024/2025/2026/2027 le budget",
+            "Les 12 chemins de randonnée",
+            "Le 12 r de la Loi",
+            "2 pl de parking",
+            "Le 12/03/2024 à 14 h.",
+            "Né en 52 av. J.-C. déjà",
+            // Wrong RIB key.
+            "Le lot 30006 00001 12345678901 88 fictif",
+            "https://www.doctolib.fr/centre-de-sante",
         ]);
     }
 

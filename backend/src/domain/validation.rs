@@ -67,7 +67,7 @@ impl TextError {
 /// `Default_Ignorable_Code_Point` of Unicode (zero-width characters, bidi controls, variation
 /// selectors, Hangul fillers, the Unicode tag characters that can smuggle hidden ASCII…) and
 /// every other format character (`Cf`), INJ-4.
-fn is_invisible_format_char(c: char) -> bool {
+pub(crate) fn is_invisible_format_char(c: char) -> bool {
     matches!(
         c,
         '\u{00AD}'                      // soft hyphen

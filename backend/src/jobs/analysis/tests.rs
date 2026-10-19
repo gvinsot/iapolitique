@@ -636,3 +636,19 @@ async fn an_idea_deleted_during_the_research_stops_the_analysis(pool: PgPool) {
         .unwrap();
     assert_eq!(budget.spent.0, calls[0].2);
 }
+
+/// INJ-6: a value PostgreSQL cannot store fails the analysis for good (no rerun of the paid
+/// calls); other database errors stay transient.
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn unstorable_values_are_permanent_errors(pool: PgPool) {
+    let nul = sqlx::query(r#"SELECT '{"title":"a\u0000b"}'::jsonb"#)
+        .execute(&pool)
+        .await
+        .unwrap_err();
+    assert!(matches!(store_db_error(nul), JobError::Permanent(_)));
+    let other = sqlx::query("SELECT * FROM no_such_table")
+        .execute(&pool)
+        .await
+        .unwrap_err();
+    assert!(matches!(store_db_error(other), JobError::Transient(_)));
+}

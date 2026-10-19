@@ -106,8 +106,20 @@ fn status_error(err: StatusError) -> JobError {
 
 fn store_error(err: StoreError) -> JobError {
     match err {
-        StoreError::Database(err) => err.into(),
+        StoreError::Database(err) => store_db_error(err),
         StoreError::Status(err) => status_error(err),
+    }
+}
+
+/// A value PostgreSQL cannot store (`22P05` untranslatable character, `22021` character not in
+/// repertoire, `22001` string too long) will fail again: the analysis fails for good instead of
+/// rerunning its paid calls (INJ-6). Other database errors stay transient.
+fn store_db_error(err: sqlx::Error) -> JobError {
+    let code = err.as_database_error().and_then(|e| e.code());
+    if matches!(code.as_deref(), Some("22P05" | "22021" | "22001")) {
+        JobError::Permanent(format!("analysis cannot be stored: {err}"))
+    } else {
+        err.into()
     }
 }
 
@@ -174,7 +186,12 @@ impl JobHandler for AnalyzeHandler {
                     Ok(JobOutcome::Done)
                 }
                 Ok(Analysed::Ready(result)) => {
-                    publish(pool, &inputs, mode, &result).await?;
+                    if let Err(err) = publish(pool, &inputs, mode, &result).await {
+                        if let (JobError::Permanent(message), Mode::First) = (&err, mode) {
+                            fail(pool, idea_id, message).await?;
+                        }
+                        return Err(err);
+                    }
                     if analyses::has_pending_inputs(pool, idea_id).await? {
                         // Arrived while this analysis ran: their job was absorbed by this one.
                         return Ok(JobOutcome::RetryAt(chrono::Utc::now()));

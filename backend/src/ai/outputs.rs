@@ -25,6 +25,37 @@ static SOURCE_ID_RE: LazyLock<Regex> =
 static SOURCE_REF_RE: LazyLock<Regex> =
     LazyLock::new(|| Regex::new(r"\[(S[0-9]+)\]").expect("valid regex"));
 
+/// Longest accepted title of an analysis (also the source of its slug).
+pub const MAX_TITLE_CHARS: usize = 200;
+/// Longest accepted summary of an analysis.
+pub const MAX_SUMMARY_CHARS: usize = 1_500;
+/// Longest accepted long text of an analysis (proposal, calculation, explanation…).
+pub const MAX_LONG_TEXT_CHARS: usize = 6_000;
+/// Longest accepted list item or short explanation.
+pub const MAX_ITEM_CHARS: usize = 1_500;
+/// Longest accepted source field (title, publisher, use).
+pub const MAX_SOURCE_FIELD_CHARS: usize = 500;
+
+/// Checks a generated text before it is stored and published (INJ-6): no control character
+/// but `\n` and `\t` (PostgreSQL refuses NUL, and a failed storage would rerun the paid
+/// analysis), no bidi override or invisible format character (spoofed titles), and at most
+/// `max_chars` characters.
+fn check_ai_text(field: &str, value: &str, max_chars: usize, problems: &mut Vec<String>) {
+    if let Some(c) = value.chars().find(|&c| {
+        (c.is_control() && c != '\n' && c != '\t')
+            || crate::domain::validation::is_invisible_format_char(c)
+    }) {
+        problems.push(format!(
+            "{field}: forbidden character U+{:04X}",
+            u32::from(c)
+        ));
+    }
+    let len = value.chars().count();
+    if len > max_chars {
+        problems.push(format!("{field}: {len} characters, at most {max_chars}"));
+    }
+}
+
 /// Longest accepted source URL.
 pub const MAX_SOURCE_URL_LEN: usize = 2_048;
 
@@ -182,6 +213,82 @@ pub struct AnalysisOutput {
 }
 
 impl AnalysisOutput {
+    /// Characters and lengths of every generated string (INJ-6).
+    fn check_texts(&self, problems: &mut Vec<String>) {
+        let p = problems;
+        check_ai_text("title", &self.title, MAX_TITLE_CHARS, p);
+        check_ai_text("summary", &self.summary, MAX_SUMMARY_CHARS, p);
+        for (field, value) in [
+            ("improved_proposal", &self.improved_proposal),
+            ("existing_situation", &self.existing_situation),
+            (
+                "annual_gain_eur.calculation",
+                &self.annual_gain_eur.calculation,
+            ),
+            (
+                "implementation_cost_eur.calculation",
+                &self.implementation_cost_eur.calculation,
+            ),
+            ("confidence_explanation", &self.confidence_explanation),
+            ("changes_since_previous", &self.changes_since_previous),
+        ] {
+            check_ai_text(field, value, MAX_LONG_TEXT_CHARS, p);
+        }
+        check_ai_text("territory.name", &self.territory.name, MAX_TITLE_CHARS, p);
+        check_ai_text("category", &self.category, MAX_TITLE_CHARS, p);
+        for (field, list) in [
+            ("feasibility.obstacles", &self.feasibility.obstacles),
+            ("assumptions", &self.assumptions),
+            ("pros", &self.pros),
+            ("cons", &self.cons),
+            ("risks", &self.risks),
+        ] {
+            for item in list {
+                check_ai_text(field, item, MAX_ITEM_CHARS, p);
+            }
+        }
+        for (public, impact) in &self.impacts {
+            check_ai_text("impacts", public, MAX_SOURCE_FIELD_CHARS, p);
+            check_ai_text(
+                "impacts.explanation",
+                &impact.explanation,
+                MAX_ITEM_CHARS,
+                p,
+            );
+        }
+        for source in &self.sources {
+            check_ai_text("sources.id", &source.id, MAX_SOURCE_FIELD_CHARS, p);
+            check_ai_text("sources.title", &source.title, MAX_SOURCE_FIELD_CHARS, p);
+            check_ai_text(
+                "sources.publisher",
+                &source.publisher,
+                MAX_SOURCE_FIELD_CHARS,
+                p,
+            );
+            check_ai_text(
+                "sources.used_for",
+                &source.used_for,
+                MAX_SOURCE_FIELD_CHARS,
+                p,
+            );
+            check_ai_text("sources.url", &source.url, MAX_SOURCE_URL_LEN, p);
+        }
+        for c in &self.contributions_considered {
+            check_ai_text(
+                "contributions_considered.summary",
+                &c.summary,
+                MAX_ITEM_CHARS,
+                p,
+            );
+            check_ai_text(
+                "contributions_considered.response",
+                &c.response,
+                MAX_ITEM_CHARS,
+                p,
+            );
+        }
+    }
+
     /// Every generated text that may cite sources.
     fn texts(&self) -> Vec<&str> {
         let mut texts = vec![
@@ -223,6 +330,7 @@ impl AnalysisOutput {
         if self.title.trim().is_empty() || self.summary.trim().is_empty() {
             problems.push("empty title or summary".to_owned());
         }
+        self.check_texts(&mut problems);
         if taxonomy.category(&self.category).is_none() {
             problems.push(format!("unknown category `{}`", self.category));
         } else if !taxonomy.category_allowed(self.admin_level.as_str(), &self.category) {
@@ -326,6 +434,16 @@ impl SecondOpinionOutput {
         if self.explanation.trim().is_empty() {
             return Err("empty explanation".to_owned());
         }
+        let mut problems = Vec::new();
+        check_ai_text(
+            "explanation",
+            &self.explanation,
+            MAX_LONG_TEXT_CHARS,
+            &mut problems,
+        );
+        if !problems.is_empty() {
+            return Err(problems.join("; "));
+        }
         match self.decision {
             Decision::Accept if self.reason_code != "none" => {
                 Err("an acceptance needs reason_code none".to_owned())
@@ -360,6 +478,22 @@ impl ReportReviewOutput {
     pub fn check(&self) -> Result<(), String> {
         if self.explanation.trim().is_empty() {
             return Err("empty explanation".to_owned());
+        }
+        let mut problems = Vec::new();
+        check_ai_text(
+            "explanation",
+            &self.explanation,
+            MAX_LONG_TEXT_CHARS,
+            &mut problems,
+        );
+        check_ai_text(
+            "corrections",
+            &self.corrections,
+            MAX_LONG_TEXT_CHARS,
+            &mut problems,
+        );
+        if !problems.is_empty() {
+            return Err(problems.join("; "));
         }
         if self.outcome == ReviewOutcome::Update
             && !self.escalate
@@ -581,6 +715,47 @@ mod tests {
             ..accept
         };
         assert!(inconsistent.check(section).is_err());
+    }
+
+    /// INJ-6: NUL (refused by PostgreSQL), bidi overrides and oversized strings are invalid
+    /// outputs, retried by the client instead of failing the storage.
+    #[test]
+    fn generated_texts_are_checked_for_characters_and_length() {
+        for title in [
+            "Mutualiser\u{0}les achats".to_owned(),
+            "Mutualiser \u{202E}stahca".to_owned(),
+            "Mutualiser\u{E0041}".to_owned(),
+            "x".repeat(MAX_TITLE_CHARS + 1),
+        ] {
+            let mut output = analysis();
+            output.title = title.clone();
+            assert!(check(&output).is_err(), "{title:?}");
+        }
+        let mut output = analysis();
+        output.title = "x".repeat(MAX_TITLE_CHARS);
+        output.summary = "Ligne 1.\nLigne\t2.".into();
+        assert_eq!(check(&output), Ok(()));
+        let mut output = analysis();
+        output.sources[0].publisher = "Cour\u{0007} des comptes".into();
+        assert!(check(&output).is_err());
+        let mut output = analysis();
+        output.pros[0] = "x".repeat(MAX_ITEM_CHARS + 1);
+        assert!(check(&output).is_err());
+
+        let section = &test_prompts().screening.idea;
+        let opinion = SecondOpinionOutput {
+            decision: Decision::Accept,
+            reason_code: "none".into(),
+            explanation: "Conforme\u{0}.".into(),
+        };
+        assert!(opinion.check(section).is_err());
+        let review = ReportReviewOutput {
+            outcome: ReviewOutcome::Update,
+            escalate: false,
+            explanation: "Chiffre erroné.".into(),
+            corrections: "Corriger \u{202E}le montant.".into(),
+        };
+        assert!(review.check().is_err());
     }
 
     #[test]

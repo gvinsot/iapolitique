@@ -132,6 +132,67 @@ de passe (`ALTER ROLE iapolitique_prod_app PASSWORD '…'`), puis suivre la proc
 Effets d'une rotation : `ADMIN_API_TOKEN` doit être ressaisi dans l'administration ;
 `ALTCHA_HMAC_KEY` invalide les défis en cours (quelques minutes).
 
+### 2.1 Rotation de la clé Mistral (secret Docker immuable)
+
+**Quand** : clé compromise, révoquée ou expirée, ou alerte « Clé Mistral refusée depuis le … »
+au tableau de bord admin (HTTP 401/403 de Mistral, AGENTS.md §6.4 ; le worker journalise aussi un
+`ERROR` par heure). Pendant l'alerte rien n'échoue : les jobs IA attendent (15 min puis jusqu'à
+1 h) et l'api ne tente plus le second avis en ligne.
+
+L'api et le worker démarrent **sans** `MISTRAL_API_KEY` (les jobs IA restent en file, §13.1) :
+contrairement aux autres secrets, inutile de passer les services à 0 réplique.
+
+1. Créer la nouvelle clé dans la console Mistral (espace de travail d'iapolitique, option
+   « Anonymous improvement data » toujours désactivée), et la vérifier depuis un poste, sans
+   l'écrire dans un ticket, un log ou l'historique du shell :
+   ```bash
+   read -rs KEY && curl -sS -o /dev/null -w '%{http_code}\n' \
+     -H "Authorization: Bearer $KEY" https://api.mistral.ai/v1/models   # attendu : 200
+   ```
+2. Remplacer `MISTRAL_API_KEY` dans l'environnement de la stack via PulsarCD (éditeur `.env`
+   ou MCP `set_stack_env`) ; pour la QA, dans `.env.qa` si elle y a sa propre clé.
+3. Retirer l'ancien secret des services puis le supprimer, sur un manager. Chaque
+   `--secret-rm` redémarre les tâches du service sans la clé (jobs IA en attente quelques
+   minutes) :
+   ```bash
+   docker service update --detach --secret-rm iapolitique_MISTRAL_API_KEY iapolitique_worker
+   docker service update --detach --secret-rm iapolitique_MISTRAL_API_KEY iapolitique_api
+   docker secret rm iapolitique_MISTRAL_API_KEY
+   ```
+   `docker secret rm` échoue tant qu'un service l'utilise encore : `docker secret inspect` et
+   `docker service inspect --format '{{json .Spec.TaskTemplate.ContainerSpec.Secrets}}' <service>`
+   montrent lequel.
+4. Redéployer **la version en service** depuis PulsarCD (`deploy_stack` avec ce tag, ou
+   `trigger_pipeline` pour la QA) : PulsarCD recrée `iapolitique_MISTRAL_API_KEY` avec la nouvelle
+   valeur et le remonte dans les deux services.
+5. Vérifier : `docker secret inspect -f '{{.CreatedAt}}' iapolitique_MISTRAL_API_KEY` (date du
+   jour), `get_service_tasks` sur `iapolitique_api` et `iapolitique_worker` (tâches `Running`),
+   puis l'alerte disparaît du tableau de bord au premier appel accepté (au plus 1 h). Relancer
+   alors les idées passées en `analysis_failed` avant la panne : bouton « Relancer toutes les
+   analyses échouées » du tableau de bord (`POST /api/admin/ideas/reanalyze-failed`).
+6. Révoquer l'ancienne clé dans la console Mistral.
+
+Variantes :
+
+- **Arrêt complet** (plus simple, site indisponible quelques minutes) : `docker stack rm
+  iapolitique`, attendre que `docker service ls` ne montre plus la stack, `docker secret rm
+  iapolitique_MISTRAL_API_KEY`, puis redéployer la version en service depuis PulsarCD (étape 4).
+- **Remplacement à chaud** (urgence, sans attendre un redéploiement) : créer un secret de nom
+  différent et le monter sous le nom attendu par le backend :
+  ```bash
+  read -rs KEY && printf '%s' "$KEY" | docker secret create iapolitique_MISTRAL_API_KEY_2 -
+  for svc in iapolitique_worker iapolitique_api; do
+    docker service update --detach --secret-rm iapolitique_MISTRAL_API_KEY \
+      --secret-add source=iapolitique_MISTRAL_API_KEY_2,target=MISTRAL_API_KEY "$svc"
+  done
+  ```
+  Le prochain déploiement PulsarCD remonterait l'ancien secret `iapolitique_MISTRAL_API_KEY`
+  s'il existe encore : mettre à jour `.env` (étape 2) et supprimer l'ancien secret (`docker secret
+  rm iapolitique_MISTRAL_API_KEY`) **avant** tout redéploiement, puis, après celui-ci, supprimer
+  `iapolitique_MISTRAL_API_KEY_2`.
+
+Même procédure pour la QA avec le préfixe `qa-iapolitique_`.
+
 ## 3. Logs et diagnostic
 
 Les logs du backend sont en JSON (`tracing`), en anglais, sans IP, jeton, en-tête
@@ -379,3 +440,75 @@ ni faire compter des échecs d'authentification.
 Tant que ni l'un ni l'autre n'est en place, l'exposition résiduelle est acceptée et notée dans
 AGENTS.md §14.4 et §14.7 : 8080 et 8081 sont joignables depuis les réseaux partagés, 8081
 protégé par le seul jeton.
+
+**Décision du propriétaire D4 (2026-10-19)** : la correction est **reportée** ; NET-1 reste un
+risque résiduel documenté (`docs/securite.md` §3.2 et §5). La procédure ci-dessous est prête pour
+le jour où elle sera lancée. Elle ne traite que `proxy` (NET-1) : `postgresqlcluster_internal` et
+`llm-net` (NET-4) demandent des changements côté base et côté services LLM.
+
+#### Procédure pas à pas (à lancer plus tard)
+
+Préparation (aucune coupure) :
+
+1. Relever l'état de départ, sur un manager :
+   ```bash
+   docker service inspect --format '{{json .Spec.TaskTemplate.Networks}}' privatenetwork_traefik
+   docker network inspect proxy --format '{{.Driver}} attachable={{.Attachable}} internal={{.Internal}}'
+   docker network ls --filter name=iapolitique
+   ```
+   et noter la version d'iapolitique en production et en QA (`get_deployed_tags`).
+2. Créer les deux réseaux, chiffrés et non `attachable` (aucun `docker run` ne peut s'y brancher) :
+   ```bash
+   docker network create --driver overlay --opt encrypted iapolitique_edge
+   docker network create --driver overlay --opt encrypted qa-iapolitique_edge
+   ```
+3. Propriétaire de la stack `privatenetwork` : ajouter ces deux réseaux au service `traefik` dans
+   **son compose** (`networks:` du service, et `external: true` en bas du fichier), puis la
+   redéployer par PulsarCD. Vérifier que Traefik est bien sur les trois réseaux (commande de
+   l'étape 1) et que les autres sites répondent toujours.
+
+Dans le dépôt (un commit, poussé sur `main`, d'abord en QA) :
+
+4. `devops/docker-compose.swarm.yml` : déclarer le réseau
+   ```yaml
+   networks:
+     edge:
+       external: true
+       name: iapolitique_edge   # PulsarCD le préfixe en QA (qa-iapolitique_edge), comme llm-net
+   ```
+   remplacer `proxy` par `edge` dans les `networks` d'`api` et de `frontend`, et remplacer
+   l'étiquette `traefik.swarm.network=proxy` par `traefik.swarm.network=iapolitique_edge` sur les
+   deux services ; retirer `proxy` des réseaux déclarés.
+5. `devops/check_compose_security.py` : `ALLOWED_NETWORKS` (`api` : `edge`,
+   `postgresqlcluster_internal`, `llm` ; `frontend` : `edge`), `PROXY_SERVICES` exigé sur `edge`,
+   refus explicite de `proxy` pour tout service, et l'étiquette `traefik.swarm.network` vérifiée ;
+   tests correspondants dans `test_check_compose_security.py`.
+6. Mettre à jour AGENTS.md (§10.1 réseaux, §14.4 et §14.7 : exposition résiduelle levée pour
+   `proxy`), `docs/securite.md` (NET-1 corrigé, NET-4 ouvert) et ce paragraphe.
+
+Mise en service :
+
+7. QA d'abord (`trigger_pipeline`) : vérifier que PulsarCD a bien réécrit **le nom du réseau et
+   l'étiquette** (`docker service inspect qa-iapolitique_api --format '{{json .Spec.Labels}}'` et
+   `{{json .Spec.TaskTemplate.Networks}}`) ; sinon, poser l'étiquette avec une variable
+   (`traefik.swarm.network=${EDGE_NETWORK:-iapolitique_edge}`, `EDGE_NETWORK` dans `.env.qa`).
+8. Contrôles QA :
+   ```bash
+   curl -sS -o /dev/null -w '%{http_code}\n' https://qa.iapolitique.fr/api/health          # 200
+   curl -sS -o /dev/null -w '%{http_code}\n' https://qa.iapolitique.fr/                    # 200
+   # Depuis le réseau partagé, l'api ne doit plus répondre (nom inconnu ou délai dépassé) :
+   docker run --rm --network proxy curlimages/curl:8.17.0 -m 5 -sS \
+     http://qa-iapolitique_api:8080/api/health || echo "injoignable : attendu"
+   ```
+   puis, depuis le LAN, l'administration sur `qa.admin.iapolitique.fr` (connexion, tableau de
+   bord), et la sonde `xff` de la campagne locale n'a plus d'objet sur la QA (jamais de sonde
+   active sur la QA : seulement les `GET` ci-dessus).
+9. Production : promotion par PulsarCD de la même version, mêmes contrôles avec `iapolitique.fr`
+   et `iapolitique_api`.
+10. Complément applicatif (backend, commit séparé) : `TRUSTED_PROXY_CIDRS` = sous-réseau du
+    réseau dédié (`docker network inspect iapolitique_edge --format '{{(index .IPAM.Config 0).Subnet}}'`),
+    `X-Forwarded-For` ignoré pour tout autre pair TCP.
+
+Retour arrière : remettre `proxy` et `traefik.swarm.network=proxy` dans le compose et redéployer
+la version précédente par PulsarCD (`deploy_stack`) ; les réseaux `*_edge` peuvent rester, ils ne
+servent à rien sans services.

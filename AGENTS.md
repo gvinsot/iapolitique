@@ -496,7 +496,8 @@ sont affichées sur chaque idée. Aucun ajustement manuel du score d'une idée.
   l'authentification (réponse, sortie invalide, autre 4xx) clôt l'alerte. Le tableau de bord
   admin l'affiche (`alerts`, « Clé Mistral refusée depuis le … ») ; les idées passées en
   `analysis_failed` avant la correction se relancent en masse
-  (`POST /api/admin/ideas/reanalyze-failed`, §13.2).
+  (`POST /api/admin/ideas/reanalyze-failed`, §13.2). Remplacer la clé (secret Docker immuable) :
+  `docs/ops.md` §2.1.
 - Priorité de la file : second avis > signalement > nouvelle idée > contribution > relance admin.
 - QA : plafond bien plus bas (dans `.env.qa`).
 
@@ -1240,7 +1241,8 @@ fichier incomplet.
   8081 (sans `dashboard-allowlist@file`, protégé par le seul jeton, et capable de déclencher le
   verrouillage). Corrections attendues et procédure : `docs/ops.md` §5.4 (réseau overlay dédié
   partagé avec Traefik seul, à créer par le propriétaire de Traefik ; confiance en
-  `X-Forwarded-For` limitée au pair Traefik côté backend).
+  `X-Forwarded-For` limitée au pair Traefik côté backend). Correction **reportée** par le
+  propriétaire (décision D4, 2026-10-19) : risque résiduel accepté, procédure pas à pas prête.
 
 ### 14.5 Abus et déni de service
 

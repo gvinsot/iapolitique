@@ -24,8 +24,10 @@ import {
   FilterSelect,
 } from "@/components/admin/admin-ui";
 import {
+  DashboardAlerts,
   DashboardQueues,
   DashboardTiles,
+  ReanalyzeFailedAction,
   ScreeningRatesTable,
 } from "@/components/admin/dashboard-tiles";
 import {
@@ -47,11 +49,13 @@ import { Label } from "@/components/ui/label";
 import { useAdminListParams } from "@/hooks/use-admin-list-params";
 import { useTaxonomyLabels } from "@/hooks/use-taxonomy";
 import {
+  bulkReanalysisMessage,
   ideaStatusLabels,
   jobKindLabels,
   jobStatusLabels,
   parisToday,
   reportStatusLabels,
+  requeueAllFailed,
   screeningOutcomeLabels,
   targetKindLabels,
 } from "@/lib/admin-model";
@@ -90,8 +94,22 @@ function useDashboard() {
   return $api.useQuery("get", "/api/admin/dashboard", {}, { refetchInterval: 60_000 });
 }
 
+/** Requeues every failed analysis (500 per call, called again while some remain). */
+function useReanalyzeFailed() {
+  const invalidate = useInvalidate();
+  return async () => {
+    const total = await requeueAllFailed(async () => {
+      const { data } = await apiClient.POST("/api/admin/ideas/reanalyze-failed");
+      return requireData(data);
+    });
+    toast.success(bulkReanalysisMessage(total));
+    await invalidate("/api/admin/ideas", "/api/admin/dashboard", "/api/admin/jobs");
+  };
+}
+
 export function AdminDashboardPage() {
   const query = useDashboard();
+  const reanalyzeFailed = useReanalyzeFailed();
   return (
     <div className="space-y-8">
       <AdminPageHeader
@@ -114,11 +132,21 @@ export function AdminDashboardPage() {
       <AdminQuery query={query} label="le tableau de bord">
         {(dashboard) => (
           <div className="space-y-8">
+            <DashboardAlerts alerts={dashboard.alerts ?? []} />
             <DashboardTiles dashboard={dashboard} />
             <section aria-labelledby="files-attente" className="space-y-3">
-              <h2 id="files-attente" className="text-lg font-semibold">
-                À traiter
-              </h2>
+              <div className="flex flex-wrap items-end justify-between gap-2">
+                <h2 id="files-attente" className="text-lg font-semibold">
+                  À traiter
+                </h2>
+                <ReanalyzeFailedAction
+                  failedCount={dashboard.queues.ideas_analysis_failed}
+                  keyRefused={(dashboard.alerts ?? []).some(
+                    (alert) => alert.code === "mistral_auth",
+                  )}
+                  onConfirm={reanalyzeFailed}
+                />
+              </div>
               <DashboardQueues queues={dashboard.queues} />
             </section>
             <ScreeningRatesTable dashboard={dashboard} />
@@ -263,6 +291,7 @@ function SearchForm({
 export function AdminIdeasPage() {
   const list = useAdminListParams(["status", "q"] as const);
   const invalidate = useInvalidate();
+  const reanalyzeFailed = useReanalyzeFailed();
   const query = $api.useQuery("get", "/api/admin/ideas", {
     params: {
       query: {
@@ -308,6 +337,15 @@ export function AdminIdeasPage() {
       <AdminPageHeader
         title="Idées"
         description="Idées de tout statut, plus récemment modifiées d’abord : masquer, republier, relancer une analyse, publier un droit de réponse."
+        actions={
+          list.values.status === "analysis_failed" && query.data ? (
+            <ReanalyzeFailedAction
+              failedCount={query.data.total}
+              keyRefused={false}
+              onConfirm={reanalyzeFailed}
+            />
+          ) : undefined
+        }
       />
       <div className="flex flex-wrap items-end gap-4">
         <FilterSelect

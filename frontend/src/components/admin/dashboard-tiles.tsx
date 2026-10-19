@@ -1,14 +1,24 @@
-import { CoinsIcon, FilterIcon, ListTodoIcon, type LucideIcon, WalletIcon } from "lucide-react";
+import {
+  CoinsIcon,
+  FilterIcon,
+  KeyRoundIcon,
+  ListTodoIcon,
+  type LucideIcon,
+  RotateCcwIcon,
+  WalletIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { Link } from "react-router";
 
-import type { AdminDashboard, AdminQueues } from "@/api/types";
+import type { AdminAlert, AdminDashboard, AdminQueues } from "@/api/types";
 import { paths } from "@/app/paths";
+import { Alert, AlertDescription, AlertTitle } from "@/components/ui/alert";
 import { labelFor, targetSectionLabels } from "@/lib/admin-model";
 import { formatDateTime, formatEurosPrecise, formatInteger, formatPercent } from "@/lib/format";
 import { cn } from "@/lib/utils";
 
 import { adminLinkClass } from "./admin-styles";
+import { ConfirmDialog } from "./admin-ui";
 
 interface TileProps {
   label: string;
@@ -245,5 +255,86 @@ export function ScreeningRatesTable({ dashboard }: { dashboard: AdminDashboard }
         </tbody>
       </table>
     </div>
+  );
+}
+
+const ALERT_TITLES: Record<string, string> = {
+  mistral_auth: "Clé Mistral refusée",
+};
+
+/**
+ * Configuration alerts in progress (AGENTS.md §6.4): a refused Mistral key makes every AI job
+ * wait without failing until the key is fixed. The message comes from the API, in French.
+ */
+export function DashboardAlerts({ alerts }: { alerts: readonly AdminAlert[] }) {
+  if (alerts.length === 0) return null;
+  return (
+    <section aria-label="Alertes de configuration" className="space-y-3">
+      {alerts.map((alert) => (
+        <Alert key={`${alert.code}-${alert.since}`} variant="destructive">
+          <KeyRoundIcon aria-hidden="true" />
+          <AlertTitle>{labelFor(ALERT_TITLES, alert.code)}</AlertTitle>
+          <AlertDescription>
+            <p>{alert.message}</p>
+            <p>
+              {formatInteger(alert.failures)} appel{alert.failures > 1 ? "s" : ""} refusé
+              {alert.failures > 1 ? "s" : ""}, le dernier le {formatDateTime(alert.last_seen_at)}.
+              Les jobs IA attendent sans échouer et reprennent seuls au premier appel accepté.
+            </p>
+            {alert.code === "mistral_auth" ? (
+              <p>
+                Corrigez <code>MISTRAL_API_KEY</code> dans l’environnement PulsarCD puis redéployez
+                (procédure : <code>docs/ops.md</code>, rotation de la clé Mistral) ; relancez
+                ensuite les analyses passées en échec.
+              </p>
+            ) : null}
+          </AlertDescription>
+        </Alert>
+      ))}
+    </section>
+  );
+}
+
+interface ReanalyzeFailedActionProps {
+  /** Ideas currently in `analysis_failed` (dashboard queue). */
+  failedCount: number;
+  /** A refused Mistral key is still reported: the analyses would only wait. */
+  keyRefused: boolean;
+  onConfirm: () => Promise<void>;
+}
+
+/**
+ * « Relancer toutes les analyses échouées » (POST /api/admin/ideas/reanalyze-failed), confirmed
+ * in a dialog, never with window.confirm.
+ */
+export function ReanalyzeFailedAction({
+  failedCount,
+  keyRefused,
+  onConfirm,
+}: ReanalyzeFailedActionProps) {
+  return (
+    <ConfirmDialog
+      trigger={
+        <>
+          <RotateCcwIcon aria-hidden="true" />
+          Relancer toutes les analyses échouées
+        </>
+      }
+      triggerLabel={`Relancer toutes les analyses échouées (${formatInteger(failedCount)})`}
+      title="Relancer toutes les analyses échouées"
+      description={
+        <>
+          {failedCount === 0
+            ? "Aucune idée n’est en échec d’analyse pour l’instant."
+            : `${formatInteger(failedCount)} idée${failedCount > 1 ? "s" : ""} en échec d’analyse ${failedCount > 1 ? "repartent" : "repart"} en file, plus anciennes d’abord.`}{" "}
+          Chaque analyse relancée consomme du budget Mistral. L’action est consignée au journal.
+          {keyRefused
+            ? " Attention : la clé Mistral est encore refusée, les analyses attendront qu’elle soit corrigée."
+            : null}
+        </>
+      }
+      confirm="Relancer les analyses"
+      onConfirm={() => onConfirm()}
+    />
   );
 }

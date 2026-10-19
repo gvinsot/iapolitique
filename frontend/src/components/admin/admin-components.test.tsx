@@ -4,9 +4,11 @@ import { describe, expect, it, vi } from "vitest";
 import { ApiError } from "@/api/errors";
 import type { AdminThresholdsUpdate } from "@/api/types";
 import {
+  bulkReanalysisMessage,
   expectedFromLabel,
   hoursUntil,
   parisToday,
+  requeueAllFailed,
   rightOfReplyDeadline,
   thresholdOverrides,
   validateDedupThreshold,
@@ -28,7 +30,12 @@ import {
 import { renderComponent } from "@/test/render-component";
 
 import { CostsTable, JobsTable } from "./admin-lists";
-import { DashboardQueues, DashboardTiles } from "./dashboard-tiles";
+import {
+  DashboardAlerts,
+  DashboardQueues,
+  DashboardTiles,
+  ReanalyzeFailedAction,
+} from "./dashboard-tiles";
 import {
   EscalationsTable,
   IdeasTable,
@@ -451,5 +458,73 @@ describe("sealed copies (D3)", () => {
     expect(
       screen.getByRole("link", { name: "Copie scellée de « Créer une taxe sur un exemple »" }),
     ).toHaveAttribute("href", "/admin/escalades/e-1/copie-scellee");
+  });
+});
+
+describe("Mistral key alert and bulk re-analysis", () => {
+  const alert = {
+    code: "mistral_auth",
+    since: "2026-10-19T06:00:00Z",
+    last_seen_at: "2026-10-19T07:45:00Z",
+    http_status: 401,
+    failures: 12,
+    message:
+      "Clé Mistral refusée depuis le 19/10/2026 à 08:00 (HTTP 401) : vérifiez MISTRAL_API_KEY.",
+  };
+
+  it("shows a refused Mistral key with the API message and what to do", () => {
+    renderComponent(<DashboardAlerts alerts={[alert]} />);
+    const section = screen.getByRole("region", { name: "Alertes de configuration" });
+    expect(within(section).getByText("Clé Mistral refusée")).toBeInTheDocument();
+    expect(section).toHaveTextContent(alert.message);
+    expect(section).toHaveTextContent("12 appels refusés");
+    expect(section).toHaveTextContent("MISTRAL_API_KEY dans l’environnement PulsarCD");
+  });
+
+  it("shows nothing when all is well", () => {
+    renderComponent(<DashboardAlerts alerts={[]} />);
+    expect(screen.queryByRole("region", { name: "Alertes de configuration" })).toBeNull();
+  });
+
+  it("asks for a confirmation in a dialog before requeuing, never window.confirm", async () => {
+    const confirmSpy = vi.spyOn(window, "confirm");
+    const onConfirm = vi.fn(() => Promise.resolve());
+    const { user } = renderComponent(
+      <ReanalyzeFailedAction failedCount={2} keyRefused onConfirm={onConfirm} />,
+    );
+    await user.click(
+      screen.getByRole("button", { name: "Relancer toutes les analyses échouées (2)" }),
+    );
+    const dialog = await screen.findByRole("dialog", {
+      name: "Relancer toutes les analyses échouées",
+    });
+    expect(dialog).toHaveTextContent("2 idées en échec d’analyse repartent en file");
+    expect(dialog).toHaveTextContent("la clé Mistral est encore refusée");
+    expect(onConfirm).not.toHaveBeenCalled();
+    await user.click(within(dialog).getByRole("button", { name: "Relancer les analyses" }));
+    expect(onConfirm).toHaveBeenCalledOnce();
+    expect(confirmSpy).not.toHaveBeenCalled();
+  });
+
+  it("calls the bulk action again while ideas remain, within a bound", async () => {
+    const answers = [
+      { requeued: 500, remaining: 120 },
+      { requeued: 120, remaining: 0 },
+    ];
+    const call = vi.fn(() => Promise.resolve(answers.shift() ?? { requeued: 0, remaining: 0 }));
+    await expect(requeueAllFailed(call)).resolves.toEqual({ requeued: 620, remaining: 0 });
+    expect(call).toHaveBeenCalledTimes(2);
+
+    const stuck = vi.fn(() => Promise.resolve({ requeued: 500, remaining: 9000 }));
+    await expect(requeueAllFailed(stuck, 3)).resolves.toEqual({ requeued: 1500, remaining: 9000 });
+    expect(stuck).toHaveBeenCalledTimes(3);
+
+    expect(bulkReanalysisMessage({ requeued: 0, remaining: 0 })).toBe(
+      "Aucune analyse en échec à relancer.",
+    );
+    expect(bulkReanalysisMessage({ requeued: 1, remaining: 0 })).toBe("1 analyse remise en file.");
+    expect(bulkReanalysisMessage({ requeued: 1500, remaining: 9000 })).toMatch(
+      /9000 restent en échec/,
+    );
   });
 });

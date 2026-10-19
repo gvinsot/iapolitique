@@ -231,4 +231,44 @@ describe("admin pages", () => {
       await screen.findByText("Aucune copie scellée pour cette escalade."),
     ).toBeInTheDocument();
   });
+
+  it("shows the Mistral key alert and requeues every failed analysis after confirmation", async () => {
+    const answers = [
+      { requeued: 500, remaining: 1 },
+      { requeued: 1, remaining: 0 },
+    ];
+    const calls = adminRoutes({
+      "GET /api/admin/dashboard": {
+        ...dashboardFixture,
+        alerts: [
+          {
+            code: "mistral_auth",
+            since: "2026-10-19T06:00:00Z",
+            last_seen_at: "2026-10-19T07:45:00Z",
+            http_status: 401,
+            failures: 3,
+            message: "Clé Mistral refusée depuis le 19/10/2026 à 08:00 (HTTP 401).",
+          },
+        ],
+      },
+      "POST /api/admin/ideas/reanalyze-failed": () =>
+        Response.json(answers.shift() ?? { requeued: 0, remaining: 0 }, { status: 202 }),
+    });
+    const { user } = renderRoute("/admin");
+    expect(
+      await screen.findByText("Clé Mistral refusée depuis le 19/10/2026 à 08:00 (HTTP 401)."),
+    ).toBeInTheDocument();
+
+    await user.click(screen.getByRole("button", { name: /Relancer toutes les analyses échouées/ }));
+    const dialog = await screen.findByRole("dialog");
+    await user.click(within(dialog).getByRole("button", { name: "Relancer les analyses" }));
+    expect(await screen.findByText("501 analyses remises en file.")).toBeInTheDocument();
+    const posts = calls.filter((call) => call.path === "/api/admin/ideas/reanalyze-failed");
+    expect(posts).toHaveLength(2);
+    expect(posts[0]).toMatchObject({
+      method: "POST",
+      body: null,
+      authorization: `Bearer ${TOKEN}`,
+    });
+  });
 });

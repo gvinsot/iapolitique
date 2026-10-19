@@ -220,3 +220,39 @@ export function thresholdOverrides(
   }
   return update;
 }
+
+/** At most this many calls of POST /api/admin/ideas/reanalyze-failed per click (500 each). */
+export const MAX_REANALYZE_ROUNDS = 20;
+
+export interface BulkReanalysisTotal {
+  requeued: number;
+  remaining: number;
+}
+
+/**
+ * Requeues every idea whose analysis failed: the API handles 500 per call and says how many
+ * remain, so it is called again while some remain (bounded, never an endless loop).
+ */
+export async function requeueAllFailed(
+  call: () => Promise<BulkReanalysisTotal>,
+  maxRounds: number = MAX_REANALYZE_ROUNDS,
+): Promise<BulkReanalysisTotal> {
+  let requeued = 0;
+  let remaining = 0;
+  for (let round = 0; round < maxRounds; round += 1) {
+    const result = await call();
+    requeued += result.requeued;
+    remaining = result.remaining;
+    if (remaining === 0 || result.requeued === 0) break;
+  }
+  return { requeued, remaining };
+}
+
+/** French summary of a bulk re-analysis. */
+export function bulkReanalysisMessage({ requeued, remaining }: BulkReanalysisTotal): string {
+  if (requeued === 0 && remaining === 0) return "Aucune analyse en échec à relancer.";
+  const done = requeued === 1 ? "1 analyse remise en file" : `${requeued} analyses remises en file`;
+  return remaining > 0
+    ? `${done} ; ${remaining} restent en échec, relancez à nouveau.`
+    : `${done}.`;
+}

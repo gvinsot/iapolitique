@@ -78,6 +78,31 @@ class ImagePinsTest(unittest.TestCase):
         self.write(checker.COMPOSE, "services:\n  x:\n    image: postgres:18\n")
         self.assert_reported("image postgres:18 is not pinned")
 
+    def set_arg(self, name: str, key: str, value: str) -> None:
+        text = (self.tmp / name).read_text(encoding="utf-8")
+        self.write(name, re.sub(rf"ARG {key}=\S+", f"ARG {key}={value}", text))
+
+    def test_versions_with_known_cves_are_refused(self) -> None:
+        self.set_arg("frontend/Dockerfile", "NODE_VERSION", "22.23.3")
+        self.assert_reported("ARG NODE_VERSION=22.23.3 has known CVEs, use 22.23.4 or later")
+        self.set_arg("frontend/Dockerfile", "NGINX_VERSION", "1.31.6")
+        self.assert_reported("ARG NGINX_VERSION=1.31.6 has known CVEs, use 1.31.7 or later")
+        self.set_arg("frontend/Dockerfile", "NGINX_VERSION", "1.30.5")
+        self.assert_reported("ARG NGINX_VERSION=1.30.5 has known CVEs, use 1.30.6 or later")
+
+    def test_floating_or_unsupported_versions_are_refused(self) -> None:
+        self.set_arg("frontend/Dockerfile", "NODE_VERSION", "22")
+        self.assert_reported("ARG NODE_VERSION=22 must be an exact x.y.z release")
+        self.set_arg("frontend/Dockerfile", "NODE_VERSION", "20.19.9")
+        self.assert_reported("ARG NODE_VERSION=20.19.9: line 20 is not supported")
+        self.set_arg("frontend/Dockerfile", "NGINX_VERSION", "1.29.9")
+        self.assert_reported("ARG NGINX_VERSION=1.29.9: line 1.29 is not supported")
+
+    def test_fixed_versions_are_accepted(self) -> None:
+        for key, value in (("NODE_VERSION", "24.22.1"), ("NODE_VERSION", "26.12.1"), ("NGINX_VERSION", "1.30.6")):
+            with self.subTest(value=value):
+                self.assertEqual(checker.check_minimum_versions("x", {key: value}), [])
+
     def test_pending_dockerfiles_are_reported_without_failing(self) -> None:
         for name in checker.PENDING:
             with self.subTest(name=name):

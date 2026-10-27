@@ -10,7 +10,10 @@ problem:
 - an `ARG` declared in several Dockerfiles (RUST_VERSION, RUST_DIGEST, NGINX_DIGEST…) has the
   same default everywhere, so the CI checks the image that ships;
 - every `image:` of devops/docker-compose.swarm.yml that is not built here
-  (registry.methodinfo.fr) is pinned with `@sha256:`.
+  (registry.methodinfo.fr) is pinned with `@sha256:`;
+- the version ARGs of MINIMUM_VERSIONS name an exact `x.y.z` release of a supported line, at
+  least the first release that fixes the known CVEs of that line (a digest freezes a release:
+  without this floor, a vulnerable one could stay pinned).
 
 A Dockerfile listed in PENDING is reported but does not fail the check yet: remove it from the
 list once it is pinned.
@@ -31,6 +34,19 @@ OWN_REGISTRY = "registry.methodinfo.fr/"
 DIGEST = re.compile(r"sha256:[0-9a-f]{64}")
 ARG_LINE = re.compile(r"^\s*ARG\s+([A-Za-z_][A-Za-z0-9_]*)(?:=(\S*))?\s*$")
 FROM_LINE = re.compile(r"^\s*FROM\s+(?:--platform=\S+\s+)?(\S+)(?:\s+AS\s+(\S+))?\s*$", re.IGNORECASE)
+# Oldest acceptable release per supported line (major for Node.js, major.minor for nginx); a line
+# missing here (end of life, or not reviewed yet) is refused. Raise a floor with each security
+# release, in the same commit as the new version and digest (AGENTS.md §14.7).
+MINIMUM_VERSIONS: dict[str, dict[str, tuple[int, int, int]]] = {
+    # Node.js security release of 2026-10-21 (CVE-2026-111497 Brotli, CVE-2026-105483,
+    # CVE-2026-106069, CVE-2026-106072 TLS hostname, CVE-2026-105481 keep-alive, CVE-2026-106074,
+    # CVE-2026-106071, CVE-2026-106070). Releases of 2026-10-20 (UTC) on nodejs.org.
+    "NODE_VERSION": {"22": (22, 23, 4), "24": (24, 22, 1), "26": (26, 12, 1)},
+    # nginx batch of 2026-10-14 (CVE-2026-15176, CVE-2026-93479, CVE-2026-97205, CVE-2026-95101,
+    # CVE-2026-97629): fixed in 1.30.6 (stable) and 1.31.7 (mainline).
+    "NGINX_VERSION": {"1.30": (1, 30, 6), "1.31": (1, 31, 7)},
+}
+EXACT_VERSION = re.compile(r"(\d+)\.(\d+)\.(\d+)")
 IMAGE_LINE = re.compile(r"^\s*image:\s*[\"']?([^\"'\s#]+)")
 
 
@@ -82,6 +98,29 @@ def check_dockerfile(name: str, text: str) -> tuple[list[str], dict[str, str]]:
     return problems, args
 
 
+def check_minimum_versions(name: str, args: dict[str, str]) -> list[str]:
+    """Version ARGs below the floor of their line, floating, or on an unsupported line."""
+    problems = []
+    for key, floors in MINIMUM_VERSIONS.items():
+        value = args.get(key)
+        if value is None:
+            continue
+        exact = EXACT_VERSION.fullmatch(value)
+        if not exact:
+            problems.append(f"{name}: ARG {key}={value} must be an exact x.y.z release")
+            continue
+        version = tuple(int(part) for part in exact.groups())
+        line = str(version[0]) if key == "NODE_VERSION" else f"{version[0]}.{version[1]}"
+        floor = floors.get(line)
+        if floor is None:
+            supported = ", ".join(sorted(floors))
+            problems.append(f"{name}: ARG {key}={value}: line {line} is not supported ({supported})")
+        elif version < floor:
+            minimum = ".".join(str(part) for part in floor)
+            problems.append(f"{name}: ARG {key}={value} has known CVEs, use {minimum} or later")
+    return problems
+
+
 def check_compose(text: str) -> list[str]:
     problems = []
     for line in text.splitlines():
@@ -108,6 +147,7 @@ def check(root: Path) -> tuple[list[str], list[str]]:
             errors.append(f"{name}: missing")
             continue
         problems, args = check_dockerfile(name, path.read_text(encoding="utf-8"))
+        problems.extend(check_minimum_versions(name, args))
         (notes if name in PENDING else errors).extend(problems)
         if name in PENDING and not problems:
             notes.append(f"{name}: now pinned, remove it from PENDING in devops/check_image_pins.py")
@@ -135,7 +175,7 @@ def main() -> int:
     if errors:
         print(f"{len(errors)} image pinning problem(s)", file=sys.stderr)
         return 1
-    print("ok    base images pinned by digest")
+    print("ok    base images pinned by digest, at or above the CVE floors")
     return 0
 
 

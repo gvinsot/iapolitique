@@ -1465,7 +1465,15 @@ stderr.
   `@sha256:` (`test-db`). `devops/check_image_pins.py` (CI) le vérifie : chaque `FROM` nomme un
   stage ou une image `@${*_DIGEST}` / `@sha256:`, et un `ARG` présent dans plusieurs Dockerfiles
   (`RUST_VERSION`, `RUST_DIGEST`, `NGINX_DIGEST`…) a la même valeur partout ; aucun Dockerfile
-  n'est plus en attente (`PENDING` vide) : tous sont contrôlés de façon bloquante.
+  n'est plus en attente (`PENDING` vide) : tous sont contrôlés de façon bloquante. Les versions
+  sont exactes (`NODE_VERSION=22.23.4`, `NGINX_VERSION=1.31.7`, jamais une ligne flottante) et
+  au moins égales au plancher de leur ligne dans `MINIMUM_VERSIONS` de `check_image_pins.py`
+  (première version qui corrige les CVE connues ; une ligne absente, fin de vie comprise, est
+  refusée) : à relever à chaque version de sécurité, dans le même commit que la version et le
+  digest. Planchers au 2026-10-27 : Node.js 22.23.4 / 24.22.1 / 26.12.1 (version de sécurité du
+  2026-10-21), nginx 1.30.6 / 1.31.7 (lot du 2026-10-14 ; `frontend/nginx.conf` utilise une
+  capture d'expression régulière dans un `map`, l'un des motifs concernés, mais ni `alias`, ni
+  `rewrite`, ni SSI, ni `aio`).
 - Dans `devops/docker-compose.swarm.yml`, api, worker et frontend ont `read_only: true`,
   `init: true` et `cap_drop: [ALL]` (tous pris en charge par `docker stack deploy`, vérifié sur
   Docker 29) ; les seuls chemins inscriptibles sont des volumes `type: tmpfs` (la clé courte

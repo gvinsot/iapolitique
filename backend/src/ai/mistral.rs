@@ -41,7 +41,8 @@ use uuid::Uuid;
 
 use super::outputs::source_url_key;
 use super::prompts::{OutputSchema, RenderedPrompt};
-use crate::config::{MistralConfig, MistralPrices, Secret};
+use super::web_search::{MAX_QUERY_CHARS, McpSearch};
+use crate::config::{MistralConfig, MistralPrices, Secret, WebSearchProvider};
 use crate::db::{self, ai_calls::NewAiCall, provider_alerts};
 use crate::domain::money::MicroEur;
 use crate::domain::types::{AiCallStatus, AiProvider, AiPurpose, ReasoningEffort, TargetKind};
@@ -353,6 +354,9 @@ struct Attempt<T> {
     /// HTTP 400/422 saying the model does not take built-in connectors (`web_search`,
     /// [`rejects_connectors`]).
     rejects_connectors: bool,
+    /// Searches run by the backend for this answer (MCP search tool, §6.1): counted in
+    /// `ai_calls.web_search_count`, not billed by Mistral.
+    external_searches: u64,
     /// Research step: distinct citable pages of the answer (`ai_calls.consulted_pages`).
     consulted_pages: Option<u64>,
 }
@@ -374,6 +378,7 @@ impl<T> Attempt<T> {
             rejects_reasoning: false,
             error_detail: None,
             rejects_connectors: false,
+            external_searches: 0,
             consulted_pages: None,
         }
     }
@@ -585,6 +590,8 @@ pub struct MistralClient {
     review_model: String,
     research_model: String,
     research_fallback_model: Option<String>,
+    /// Search tool of the research (`WEB_SEARCH_PROVIDER=mcp`); `None`: Mistral's connector.
+    web_search: Option<McpSearch>,
     embed_model: String,
     analysis_effort: Option<ReasoningEffort>,
     review_effort: Option<ReasoningEffort>,
@@ -611,6 +618,13 @@ impl MistralClient {
                 .research_fallback_model
                 .clone()
                 .filter(|fallback| *fallback != config.research_model),
+            web_search: match config.web_search.provider {
+                WebSearchProvider::Mcp => Some(
+                    McpSearch::new(&config.web_search.mcp)
+                        .map_err(|_| MistralError::Unreachable)?,
+                ),
+                WebSearchProvider::Mistral => None,
+            },
             embed_model: config.embed_model.clone(),
             analysis_effort: config.analysis_reasoning_effort,
             review_effort: config.review_reasoning_effort,
@@ -844,6 +858,11 @@ impl MistralClient {
         tier: ModelTier,
         prompt: &RenderedPrompt,
     ) -> Result<Completion<Research>, MistralError> {
+        if let Some(search) = &self.web_search {
+            return self
+                .research_with_search_tool(pool, ctx, tier, prompt, search)
+                .await;
+        }
         let base = json!({
             "instructions": prompt.system,
             "inputs": prompt.user,
@@ -913,6 +932,193 @@ impl MistralClient {
             },
         )
         .await
+    }
+
+    /// Web research through chat completions with one function, `search_web`, run by the
+    /// backend with the search tool of the MCP server (§6.1): the model calls it, each call is
+    /// answered with the results of the server (titles, addresses, extracts), until the model
+    /// writes its memo. At most [`MAX_RESEARCH_TURNS`] answers, [`MAX_RESEARCH_SEARCHES`]
+    /// searches ([`MAX_SEARCHES_PER_TURN`] per answer); the last answer allowed is asked
+    /// without the function (`tool_choice: none`). Each answer is a call of its own (retries,
+    /// `ai_calls`). The pages are the results of the searches only (INJ-3); a failed search is
+    /// told to the model, which may search again. Thinking is never sent back nor kept.
+    async fn research_with_search_tool(
+        &self,
+        pool: &PgPool,
+        ctx: &CallContext,
+        tier: ModelTier,
+        prompt: &RenderedPrompt,
+        search: &McpSearch,
+    ) -> Result<Completion<Research>, MistralError> {
+        let model = self.research_model().to_owned();
+        let tools = json!([{
+            "type": "function",
+            "function": {
+                "name": SEARCH_FUNCTION,
+                "description": "Recherche sur le web. Renvoie au plus dix résultats : titre, \
+                                adresse et extrait de chaque page. Une requête courte et précise \
+                                par appel.",
+                "parameters": {
+                    "type": "object",
+                    "properties": {
+                        "query": {
+                            "type": "string",
+                            "description": "Requête de recherche, en français de préférence."
+                        }
+                    },
+                    "required": ["query"],
+                    "additionalProperties": false
+                }
+            }
+        }]);
+        let mut messages = vec![
+            json!({ "role": "system", "content": prompt.system }),
+            json!({ "role": "user", "content": prompt.user }),
+        ];
+        let mut references = Vec::new();
+        let (mut usage, mut cost, mut attempts) = (Usage::default(), MicroEur::ZERO, 0);
+        let (mut searches, mut failed_searches) = (0u64, 0u64);
+        for turn in 1..=MAX_RESEARCH_TURNS {
+            let last = turn == MAX_RESEARCH_TURNS || searches >= MAX_RESEARCH_SEARCHES;
+            let remaining = MAX_RESEARCH_SEARCHES.saturating_sub(searches);
+            // Recorded with the memo (`ai_calls.consulted_pages`): the pages known by then.
+            let pages_so_far = consulted_page_count(&references) as u64;
+            let body = json!({
+                "messages": &messages,
+                "tools": &tools,
+                "tool_choice": if last { "none" } else { "auto" },
+                "temperature": RESEARCH_TEMPERATURE,
+                "stream": false,
+            });
+            let body = &body;
+            let completion = self
+                .run(
+                    pool,
+                    ctx,
+                    Some(tier),
+                    model.clone(),
+                    None,
+                    move |effort, model| async move {
+                        let mut body = body.clone();
+                        body["model"] = json!(model);
+                        if let Some(effort) = effort {
+                            body["reasoning_effort"] = json!(effort.as_str());
+                        }
+                        let (response, http_status) = match self
+                            .post("/v1/chat/completions", &body, self.timeouts.chat(effort))
+                            .await
+                        {
+                            Ok(ok) => ok,
+                            Err(failure) => return failure.into(),
+                        };
+                        let parsed = parse_research_turn(&response, last);
+                        let mut attempt =
+                            Attempt::answered(parsed.turn, parsed.usage, parsed.model, http_status);
+                        if let Ok(ResearchTurn::Memo(_)) = &attempt.result {
+                            attempt.consulted_pages = Some(pages_so_far);
+                        }
+                        if let Ok(ResearchTurn::Search { calls, .. }) = &attempt.result {
+                            attempt.external_searches = calls
+                                .iter()
+                                .filter(|c| c.query.is_some())
+                                .count()
+                                .min(MAX_SEARCHES_PER_TURN)
+                                .min(remaining as usize)
+                                as u64;
+                        }
+                        attempt
+                    },
+                )
+                .await?;
+            usage.add(completion.usage);
+            cost = cost + completion.cost;
+            attempts += completion.attempts;
+            match completion.value {
+                ResearchTurn::Memo(text) => {
+                    let consulted_pages = consulted_page_count(&references);
+                    // Structure only (§14.6): never a query, a text, a title or a URL.
+                    tracing::info!(
+                        purpose = ctx.purpose.as_str(),
+                        provider = "mcp",
+                        search_tool = search.tool(),
+                        model = %completion.model,
+                        reasoning_effort = self
+                            .effort_for(tier, &model)
+                            .map_or("omitted", ReasoningEffort::as_str),
+                        turns = turn,
+                        web_searches = searches,
+                        failed_searches,
+                        consulted_pages,
+                        "web research answer structure"
+                    );
+                    usage.web_searches = searches;
+                    return Ok(Completion {
+                        value: Research { text, references },
+                        model: completion.model,
+                        usage,
+                        cost,
+                        attempts,
+                    });
+                }
+                ResearchTurn::Search { assistant, calls } => {
+                    messages.push(assistant);
+                    for (index, call) in calls.into_iter().enumerate() {
+                        let content = match call.query {
+                            None => "Erreur : seul l'outil search_web existe, avec une requête \
+                                     `query` non vide."
+                                .to_owned(),
+                            Some(_)
+                                if index >= MAX_SEARCHES_PER_TURN
+                                    || searches >= MAX_RESEARCH_SEARCHES =>
+                            {
+                                "Erreur : trop de recherches, rédige ta réponse avec les \
+                                 résultats déjà obtenus."
+                                    .to_owned()
+                            }
+                            Some(query) => {
+                                searches += 1;
+                                match search.search(&query).await {
+                                    Ok(answer) => {
+                                        for result in &answer.results {
+                                            push_page(
+                                                &mut references,
+                                                WebReference {
+                                                    title: result.title.clone(),
+                                                    url: Some(result.url.clone()),
+                                                    source: Some(search.tool().to_owned()),
+                                                },
+                                            );
+                                        }
+                                        answer.for_model()
+                                    }
+                                    Err(error) => {
+                                        failed_searches += 1;
+                                        tracing::warn!(
+                                            purpose = ctx.purpose.as_str(),
+                                            search_tool = search.tool(),
+                                            error = %error.code(),
+                                            "web search failed"
+                                        );
+                                        "Erreur : la recherche a échoué, réessaie plus tard ou \
+                                         avec une autre requête."
+                                            .to_owned()
+                                    }
+                                }
+                            }
+                        };
+                        messages.push(json!({
+                            "role": "tool",
+                            "tool_call_id": call.id,
+                            "name": SEARCH_FUNCTION,
+                            "content": content,
+                        }));
+                    }
+                }
+            }
+        }
+        Err(MistralError::InvalidOutput(
+            "the web research did not conclude".into(),
+        ))
     }
 
     /// Embeddings of `texts` with `MISTRAL_EMBED_MODEL`, in input order, each of
@@ -1014,7 +1220,7 @@ impl MistralClient {
                 prompt_version: ctx.prompt_version.clone(),
                 input_tokens: attempt.usage.input_tokens,
                 output_tokens: attempt.usage.output_tokens,
-                web_search_count: attempt.usage.web_searches,
+                web_search_count: attempt.usage.web_searches + attempt.external_searches,
                 consulted_pages: attempt.consulted_pages,
                 // The effort really sent: `None` once the model refused it.
                 reasoning_effort: effort,
@@ -1251,6 +1457,7 @@ impl<T> From<Failure> for Attempt<T> {
             rejects_reasoning: failure.rejects_reasoning,
             error_detail: failure.error_detail,
             rejects_connectors: failure.rejects_connectors,
+            external_searches: 0,
             consulted_pages: None,
         }
     }
@@ -1512,6 +1719,109 @@ fn push_page(references: &mut Vec<WebReference>, reference: WebReference) {
     });
     if !known {
         references.push(reference);
+    }
+}
+
+/// Name of the search function given to the research model (MCP search, §6.1).
+const SEARCH_FUNCTION: &str = "search_web";
+/// Bounds of a research with the MCP search tool: answers of the model, searches in all and
+/// per answer (Mistral's connector ran 12 to 22 searches per research in October 2026).
+pub const MAX_RESEARCH_TURNS: u32 = 8;
+pub const MAX_RESEARCH_SEARCHES: u64 = 24;
+pub const MAX_SEARCHES_PER_TURN: usize = 8;
+
+/// A function call of a research answer: its id, and the query if it is a well-formed
+/// `search_web` call.
+#[derive(Debug, Clone, PartialEq, Eq)]
+struct SearchCall {
+    id: String,
+    query: Option<String>,
+}
+
+/// An answer of the research model: searches to run, or the memo.
+#[derive(Debug, Clone, PartialEq)]
+enum ResearchTurn {
+    /// `assistant`: the message to send back (its text only, and its tool calls).
+    Search {
+        assistant: Value,
+        calls: Vec<SearchCall>,
+    },
+    Memo(String),
+}
+
+struct ParsedTurn {
+    turn: Result<ResearchTurn, MistralError>,
+    usage: Usage,
+    model: Option<String>,
+}
+
+/// A chat completion of the research: the `tool_calls` of `choices[0].message` (unless
+/// `last`, asked without the function), or its text. The message sent back keeps the text
+/// chunks only, never thinking.
+fn parse_research_turn(response: &Value, last: bool) -> ParsedTurn {
+    let chat = parse_chat(response);
+    let message = response.pointer("/choices/0/message");
+    let tool_calls = message
+        .and_then(|m| m.get("tool_calls"))
+        .and_then(Value::as_array)
+        .filter(|calls| !calls.is_empty() && !last);
+    let turn = match tool_calls {
+        Some(tool_calls) => {
+            let mut sent = Vec::new();
+            let mut calls = Vec::new();
+            for (index, call) in tool_calls.iter().enumerate() {
+                let id = call
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .filter(|id| !id.is_empty() && id.len() <= 100)
+                    .map_or_else(|| format!("call_{index}"), str::to_owned);
+                let function = call.get("function");
+                let name = function.and_then(|f| f.get("name")).and_then(Value::as_str);
+                let arguments = function.and_then(|f| f.get("arguments"));
+                // `arguments`: a JSON string (chat completions), or an object.
+                let arguments = match arguments {
+                    Some(Value::String(text)) => serde_json::from_str::<Value>(text).ok(),
+                    Some(value @ Value::Object(_)) => Some(value.clone()),
+                    _ => None,
+                };
+                let query = arguments
+                    .as_ref()
+                    .and_then(|a| a.get("query"))
+                    .and_then(Value::as_str)
+                    .map(|q| q.chars().filter(|c| !c.is_control()).collect::<String>())
+                    .map(|q| q.trim().chars().take(MAX_QUERY_CHARS).collect::<String>())
+                    .filter(|q| !q.is_empty() && name == Some(SEARCH_FUNCTION));
+                sent.push(json!({
+                    "id": id,
+                    "type": "function",
+                    "function": {
+                        "name": name.filter(|n| n.len() <= 64).unwrap_or("unknown"),
+                        "arguments": arguments.map_or_else(|| "{}".to_owned(), |a| a.to_string()),
+                    },
+                }));
+                calls.push(SearchCall { id, query });
+            }
+            let text = message
+                .and_then(|m| m.get("content"))
+                .and_then(answer_text)
+                .unwrap_or_default();
+            Ok(ResearchTurn::Search {
+                assistant: json!({ "role": "assistant", "content": text, "tool_calls": sent }),
+                calls,
+            })
+        }
+        None => chat.content.and_then(|text| {
+            if text.trim().is_empty() {
+                Err(MistralError::InvalidOutput("empty research answer".into()))
+            } else {
+                Ok(ResearchTurn::Memo(text))
+            }
+        }),
+    };
+    ParsedTurn {
+        turn,
+        usage: chat.usage,
+        model: chat.model,
     }
 }
 
@@ -2439,6 +2749,299 @@ mod tests {
             .unwrap_err();
         assert!(matches!(error, MistralError::Http { status: 400 }));
         assert_eq!(client.research_model(), "mistral-large-4");
+    }
+
+    /// The test client with the MCP search tool of `server` (`/mcp`, key `search-key`).
+    fn mcp_client(server: &MockServer) -> MistralClient {
+        let url = format!("{}/mcp", server.uri());
+        client_with(
+            server,
+            &[
+                ("WEB_SEARCH_MCP_API_KEY", "search-key"),
+                ("WEB_SEARCH_MCP_URL", url.as_str()),
+            ],
+        )
+    }
+
+    /// A chat completion asking for `queries` (`search_web`), plus a call of another function;
+    /// its message holds thinking only.
+    fn search_turn(queries: &[&str]) -> Value {
+        let mut calls: Vec<Value> = queries
+            .iter()
+            .enumerate()
+            .map(|(i, q)| {
+                json!({ "id": format!("t{i}"), "type": "function", "function": {
+                    "name": "search_web",
+                    "arguments": json!({ "query": q }).to_string() } })
+            })
+            .collect();
+        calls.push(json!({ "id": "tx", "type": "function",
+            "function": { "name": "run_shell", "arguments": "{\"cmd\":\"ls\"}" } }));
+        json!({
+            "id": "c1", "object": "chat.completion", "model": "mistral-large-2512",
+            "choices": [{ "index": 0, "finish_reason": "tool_calls", "message": {
+                "role": "assistant",
+                "content": [{ "type": "thinking",
+                              "thinking": [{ "type": "text", "text": "PENSEE-SECRETE" }] }],
+                "tool_calls": calls,
+            } }],
+            "usage": { "prompt_tokens": 1_000, "completion_tokens": 100, "total_tokens": 1_100 }
+        })
+    }
+
+    fn memo_turn() -> Value {
+        json!({
+            "id": "c2", "object": "chat.completion", "model": "mistral-large-2512",
+            "choices": [{ "index": 0, "finish_reason": "stop", "message": {
+                "role": "assistant", "content": "1. Mesure étudiée : mutualiser les achats." } }],
+            "usage": { "prompt_tokens": 3_000, "completion_tokens": 500, "total_tokens": 3_500 }
+        })
+    }
+
+    fn mcp_answer(text: &str) -> ResponseTemplate {
+        ResponseTemplate::new(200).set_body_json(json!({ "jsonrpc": "2.0", "id": 1,
+            "result": { "content": [{ "type": "text", "text": text }], "isError": false } }))
+    }
+
+    const MCP_RESULTS: &str = "# Search Results\n\
+[Les achats hospitaliers : 25 Md€ par an.](https://duckduckgo.com/l/?uddg=https%3A%2F%2Fwww.ccomptes.fr%2Ffr%2Fpublications%2Fles%2Dachats%2Dhospitaliers&rut=e7)\n\
+## [Rapport sur les achats des hôpitaux](https://www.vie-publique.fr/rapport/272320)\n";
+
+    fn research_prompt() -> RenderedPrompt {
+        test_prompts()
+            .analysis_research
+            .render(
+                &PromptVars::new()
+                    .set("today", "2026-10-31")
+                    .set("idea_text", "Idée"),
+            )
+            .unwrap()
+    }
+
+    async fn requests_to(server: &MockServer, to: &str) -> Vec<Value> {
+        server
+            .received_requests()
+            .await
+            .unwrap()
+            .iter()
+            .filter(|r| r.url.path() == to)
+            .map(|r| serde_json::from_slice(&r.body).unwrap())
+            .collect()
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn research_runs_the_searches_with_the_mcp_tool(pool: PgPool) {
+        let server = MockServer::start().await;
+        Mock::given(path("/v1/chat/completions"))
+            .respond_with(
+                ResponseTemplate::new(200).set_body_json(search_turn(&["requete-secrete"])),
+            )
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(memo_turn()))
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(method("POST"))
+            .and(path("/mcp"))
+            .and(header("authorization", "Bearer search-key"))
+            .and(body_partial_json(
+                json!({ "method": "tools/call", "params": {
+                "name": "search_web", "arguments": { "query": "requete-secrete" } } }),
+            ))
+            .respond_with(mcp_answer(MCP_RESULTS))
+            .expect(1)
+            .mount(&server)
+            .await;
+        let client = mcp_client(&server);
+        let ctx = CallContext {
+            prompt_version: Some("1.2.0".into()),
+            ..CallContext::new(AiPurpose::AnalysisResearch)
+        };
+        let (completion, logs) = crate::http::security_tests::capture_logs(client.research(
+            &pool,
+            &ctx,
+            ModelTier::Analysis,
+            &research_prompt(),
+        ))
+        .await;
+        let completion = completion.unwrap();
+        let research = &completion.value;
+        assert_eq!(research.text, "1. Mesure étudiée : mutualiser les achats.");
+        let urls: Vec<_> = research
+            .references
+            .iter()
+            .map(|r| r.url.as_deref())
+            .collect();
+        assert_eq!(
+            urls,
+            [
+                Some("https://www.ccomptes.fr/fr/publications/les-achats-hospitaliers"),
+                Some("https://www.vie-publique.fr/rapport/272320"),
+            ]
+        );
+        assert_eq!(
+            research.references[1].title,
+            "Rapport sur les achats des hôpitaux"
+        );
+        assert_eq!(completion.usage.web_searches, 1);
+        assert_eq!(completion.attempts, 2);
+        // Tokens only: the MCP searches are not billed by Mistral.
+        assert_eq!(
+            completion.cost,
+            MicroEur(2 * 1_000 + 6 * 100 + 2 * 3_000 + 6 * 500)
+        );
+
+        let chats = requests_to(&server, "/v1/chat/completions").await;
+        assert_eq!(chats[0]["model"], "mistral-large-latest");
+        assert_eq!(chats[0]["tools"][0]["function"]["name"], "search_web");
+        assert_eq!(chats[0]["tool_choice"], "auto");
+        assert_eq!(chats[0]["reasoning_effort"], "high");
+        assert!(chats[0].get("response_format").is_none());
+        let messages = chats[1]["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), 5);
+        // The answer sent back keeps its calls, never its thinking.
+        assert_eq!(messages[2]["role"], "assistant");
+        assert_eq!(messages[2]["content"], "");
+        assert_eq!(messages[2]["tool_calls"][0]["id"], "t0");
+        assert!(!chats[1].to_string().contains("PENSEE-SECRETE"));
+        assert_eq!(messages[3]["role"], "tool");
+        assert_eq!(messages[3]["tool_call_id"], "t0");
+        let results = messages[3]["content"].as_str().unwrap();
+        assert!(
+            results.starts_with(
+                "1. (sans titre)\n   adresse : https://www.ccomptes.fr/fr/publications/"
+            )
+        );
+        assert!(!results.contains("duckduckgo"));
+        // Another function is never run.
+        assert_eq!(messages[4]["tool_call_id"], "tx");
+        assert!(
+            messages[4]["content"]
+                .as_str()
+                .unwrap()
+                .starts_with("Erreur : seul l'outil")
+        );
+
+        let recorded: Vec<(Value, Value, Value)> = calls(&pool)
+            .await
+            .iter()
+            .map(|c| {
+                (
+                    c["purpose"].clone(),
+                    c["web_search_count"].clone(),
+                    c["consulted_pages"].clone(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            recorded,
+            [
+                (json!("analysis_research"), json!(1), Value::Null),
+                (json!("analysis_research"), json!(0), json!(2)),
+            ]
+        );
+        assert!(logs.contains("web research answer structure"), "{logs}");
+        assert!(logs.contains(r#""provider":"mcp""#), "{logs}");
+        for secret in [
+            "requete-secrete",
+            "PENSEE-SECRETE",
+            "search-key",
+            "ccomptes",
+        ] {
+            assert!(!logs.contains(secret), "{secret} logged: {logs}");
+        }
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn research_searches_are_bounded(pool: PgPool) {
+        let server = MockServer::start().await;
+        // The model searches again and again, until it is asked without the function.
+        Mock::given(path("/v1/chat/completions"))
+            .and(body_partial_json(json!({ "tool_choice": "none" })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(memo_turn()))
+            .with_priority(1)
+            .expect(1)
+            .mount(&server)
+            .await;
+        let ten: Vec<String> = (0..10).map(|i| format!("q{i}")).collect();
+        let ten: Vec<&str> = ten.iter().map(String::as_str).collect();
+        Mock::given(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(search_turn(&ten)))
+            .mount(&server)
+            .await;
+        Mock::given(path("/mcp"))
+            .respond_with(mcp_answer(MCP_RESULTS))
+            .mount(&server)
+            .await;
+        let completion = mcp_client(&server)
+            .research(
+                &pool,
+                &CallContext::new(AiPurpose::AnalysisResearch),
+                ModelTier::Analysis,
+                &research_prompt(),
+            )
+            .await
+            .unwrap();
+        // 8 searches per answer at most, 24 in all: three answers search, the fourth writes.
+        assert_eq!(completion.usage.web_searches, MAX_RESEARCH_SEARCHES);
+        assert_eq!(requests_to(&server, "/mcp").await.len(), 24);
+        let chats = requests_to(&server, "/v1/chat/completions").await;
+        assert_eq!(chats.len(), 4);
+        let refused = chats[1]["messages"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .filter(|m| {
+                m["content"]
+                    .as_str()
+                    .is_some_and(|c| c.starts_with("Erreur : trop de recherches"))
+            })
+            .count();
+        assert_eq!(refused, 2);
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn a_failed_search_is_told_to_the_model(pool: PgPool) {
+        let server = MockServer::start().await;
+        Mock::given(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(search_turn(&["q"])))
+            .up_to_n_times(1)
+            .with_priority(1)
+            .mount(&server)
+            .await;
+        Mock::given(path("/v1/chat/completions"))
+            .respond_with(ResponseTemplate::new(200).set_body_json(memo_turn()))
+            .mount(&server)
+            .await;
+        Mock::given(path("/mcp"))
+            .respond_with(ResponseTemplate::new(401).set_body_string("API key required"))
+            .mount(&server)
+            .await;
+        let (completion, logs) =
+            crate::http::security_tests::capture_logs(mcp_client(&server).research(
+                &pool,
+                &CallContext::new(AiPurpose::AnalysisResearch),
+                ModelTier::Analysis,
+                &research_prompt(),
+            ))
+            .await;
+        // No page: the analysis job asks once more, then fails (§6.2).
+        assert!(completion.unwrap().value.references.is_empty());
+        let chats = requests_to(&server, "/v1/chat/completions").await;
+        assert!(
+            chats[1]["messages"][3]["content"]
+                .as_str()
+                .unwrap()
+                .starts_with("Erreur : la recherche a échoué")
+        );
+        assert!(
+            logs.contains("web search failed") && logs.contains("http_401"),
+            "{logs}"
+        );
     }
 
     #[test]

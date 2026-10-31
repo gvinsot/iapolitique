@@ -7,6 +7,7 @@
 //! - [`mistral`]: Mistral client (structured outputs, web research, embeddings) with retries,
 //!   cost estimation and `ai_calls` records.
 //! - [`outputs`]: typed Mistral outputs and the checks a JSON schema cannot express.
+//! - [`web_search`]: search tool of an MCP server, given to the model of the web research.
 
 use std::time::Duration;
 
@@ -15,6 +16,7 @@ pub mod decision;
 pub mod mistral;
 pub mod outputs;
 pub mod prompts;
+pub mod web_search;
 
 /// Installs `ring` as the process-wide rustls crypto provider (reqwest is built without one, so
 /// that a single TLS stack is compiled). Idempotent.

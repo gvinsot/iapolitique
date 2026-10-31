@@ -6662,6 +6662,17 @@
             "description": "Research model used if `research` refuses the built-in connectors (`web_search`);\n`null` without fallback. Optional in the spec, like `research`.",
             "example": "mistral-medium-latest"
           },
+          "web_search": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MethodologyWebSearch",
+                "description": "Who runs the searches of the web research. Always sent; optional in the spec, like\n`research`."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
           "review": {
             "$ref": "#/components/schemas/MethodologyModel",
             "description": "Second opinion on the gray zone and review of reports."
@@ -6732,6 +6743,38 @@
               "$ref": "#/components/schemas/MethodologyFile"
             },
             "description": "Full text of every file of `prompts/` (to display as plain text)."
+          }
+        }
+      },
+      "MethodologyWebSearch": {
+        "type": "object",
+        "description": "The search tool of the web research (§6.1).",
+        "required": [
+          "provider",
+          "server",
+          "tool"
+        ],
+        "properties": {
+          "provider": {
+            "type": "string",
+            "description": "`mcp`: the `search_web` function of the research model, run by the backend with the\nsearch tool of an MCP server; `mistral`: Mistral's built-in `web_search` connector.",
+            "example": "mcp"
+          },
+          "server": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Host name of the MCP server (`mcp` only).",
+            "example": "pulsarteam.io"
+          },
+          "tool": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Name of the MCP tool called (`mcp` only).",
+            "example": "search_web"
           }
         }
       },

@@ -98,6 +98,7 @@ LAN uniquement ───────▶ Traefik (dashboard-allowlist@file)
 api ────────────▶ llamacpp-decision-service (réseau llm-net)   filtrage synchrone
 api / worker ───▶ PostgreSQL (réseau postgresqlcluster_internal)
 worker ─────────▶ API Mistral (Internet)                        analyse, second avis, embeddings
+worker ─────────▶ serveur MCP de recherche (Internet, PulsarTeam par défaut)   recherche web
 ```
 
 - **api** : sert l'API publique (port 8080) et l'API d'administration (port 8081, jamais routée
@@ -434,8 +435,39 @@ version de prompt (l'admin peut relancer manuellement).
   15 min ou plus, et des délais de 480 s pour la recherche et de 360 s pour la structuration,
   qui cite jusqu'à 100 pages, ont coupé des appels en production le 2026-10-19) ; le verrou du job est
   entretenu pendant ce temps (heartbeat, `JOB_LOCK_TIMEOUT_SECS`).
-- **Recherche web obligatoire** pour le chiffrage (outil `web_search` de l'API Agents /
-  Conversations de Mistral). Vérifier la documentation Mistral en vigueur au moment de
+- **Service de recherche web** (demande de l'éditeur du 2026-10-31 : chercher avec PulsarTeam
+  tout en gardant `mistral-large-4`) : `WEB_SEARCH_PROVIDER` = `mcp` ou `mistral` ; vide :
+  `mcp` si une clé MCP est définie (`WEB_SEARCH_MCP_API_KEY`, à défaut
+  `PULSARTEAM_WEBSEARCH_KEY`), `mistral` sinon. **`mcp`** (`ai::web_search`,
+  `MistralClient::research_with_search_tool`) : l'étape 1 passe par les chat completions du
+  modèle de recherche avec **une** fonction, `search_web` (`{ query }`), sans connecteur
+  intégré ; chaque appel est exécuté par le backend en `tools/call` JSON-RPC de l'outil
+  `WEB_SEARCH_MCP_TOOL` (`search_web`) du serveur `WEB_SEARCH_MCP_URL`
+  (`https://pulsarteam.io/api/mcp/browser`, résultats DuckDuckGo), transport Streamable HTTP
+  (réponse JSON ou SSE ; `initialize` puis l'appel avec `Mcp-Session-Id` seulement si le serveur
+  refuse l'appel direct par 400/404 ou une erreur JSON-RPC), clé en `Authorization: Bearer`,
+  30 s et 1 Mio au plus par recherche, requête de 300 caractères au plus (jamais journalisée).
+  La réponse Markdown est lue lien par lien (`[texte](url)` ; ligne de titre `#` = titre du
+  résultat, autres liens = extraits) : redirections DuckDuckGo (`duckduckgo.com/l/?uddg=`)
+  déballées, autres liens DuckDuckGo (publicités) et schémas autres que http(s) écartés,
+  10 résultats au plus (titre 300, extrait 500 caractères, une ligne, caractères invisibles
+  retirés) ; le modèle reçoit en message `tool` « 1. titre / adresse / extrait » (jamais la
+  réponse brute ; sans lien, le texte borné à 4 000 caractères et aucune page). Bornes : 8
+  réponses du modèle, 24 recherches dont 8 par réponse (au-delà, « trop de recherches ») ; la
+  dernière réponse permise est demandée avec `tool_choice: none`. Un appel d'une autre fonction
+  n'est jamais exécuté (« seul l'outil search_web existe ») ; une recherche en échec (`WARN`
+  « web search failed », code seul) est dite au modèle, qui peut chercher autrement. La réponse
+  renvoyée au modèle garde ses `tool_calls` et ses seuls fragments `text`, jamais sa réflexion.
+  Les pages citables sont les résultats des recherches (`Research.references`, `source` = nom
+  de l'outil), jamais le texte du modèle (INJ-3). Chaque réponse du modèle est un appel Mistral
+  (`ai_calls`, `analysis_research`, `web_search_count` = recherches demandées, `consulted_pages`
+  sur la réponse finale) ; les recherches MCP ne sont pas facturées par Mistral
+  (`MISTRAL_WEB_SEARCH_EUR_PER_CALL` ne s'applique qu'au connecteur). Une ligne `INFO` « web
+  research answer structure » (`provider: mcp`, tours, recherches, échecs, pages). Le second
+  avis, la revue de signalement et la structuration ne cherchent pas. **`mistral`** :
+  connecteur intégré ci-dessous (repli de modèle compris).
+- **Recherche web obligatoire** pour le chiffrage (avec `mistral` : outil `web_search` de l'API
+  Agents / Conversations de Mistral). Vérifier la documentation Mistral en vigueur au moment de
   l'implémentation (noms d'outils, sortie structurée). Le modèle décide lui-même d'appeler
   l'outil (guide web search : « autonomously decides whether to invoke the search ») ;
   `completion_args.tool_choice` (`auto|none|any|required`) figure bien dans le schéma
@@ -886,6 +918,11 @@ n'est pas un avis juridique : ne pas trancher les points de sa section 5 sans l'
   « Preview ». Ne jamais transmettre IP, empreinte ou jeton. Le point d'accès UE
   (`MISTRAL_API_BASE_URL`) est à confirmer ; la recherche web sort de la garantie régionale
   (mentionné dans la politique de confidentialité).
+- **Service de recherche MCP** (§6.1, PulsarTeam par défaut) : il ne reçoit que les requêtes de
+  recherche rédigées par le modèle à partir du texte masqué, jamais le texte complet, une IP,
+  une empreinte ou un jeton ; décrit dans `/confidentialite` (mise à jour du 2026-10-31). Sa
+  qualification (sous-traitant ou non, accord de traitement, localisation de PulsarTeam et de
+  DuckDuckGo) est à valider par l'éditeur (§11).
 - **Journaux** : l'application ne collecte jamais l'IP en clair ; nginx sans IP. Les journaux
   d'accès Traefik (infrastructure partagée) doivent tronquer l'IP ou être gardés 7 jours au plus
   (voir `docs/ops.md`).
@@ -1010,7 +1047,7 @@ décidée par l'humain.
   toutes les variables avec des valeurs factices et est tenu à jour à chaque nouvelle variable.
 - Les variables sensibles portent un suffixe reconnu par PulsarCD pour devenir des secrets
   Docker : `DATABASE_CONNECTION_STRING`, `MISTRAL_API_KEY`, `ALTCHA_HMAC_KEY`,
-  `ADMIN_API_TOKEN`. Ne jamais utiliser `DATABASE_URL` (serait déployé en clair).
+  `ADMIN_API_TOKEN`, `WEB_SEARCH_MCP_API_KEY` (ou `PULSARTEAM_WEBSEARCH_KEY`). Ne jamais utiliser `DATABASE_URL` (serait déployé en clair).
 - Coordonnées légales (non secrètes mais hors git) : `LEGAL_PUBLISHER_NAME`,
   `LEGAL_PUBLISHER_ADDRESS`, `LEGAL_PUBLISHER_PHONE`, `LEGAL_CONTACT_EMAIL`, `LEGAL_PRIVACY_EMAIL`.
   `LEGAL_CONTACT_EMAIL` et `TRAEFIK_HOST` sont aussi transmises au frontend, qui en tire
@@ -1018,7 +1055,8 @@ décidée par l'humain.
 - Variables non sensibles : `TRAEFIK_HOST`, `ADMIN_HOST`, `LLM_NETWORK`, `DECISION_SERVICE_URL`,
   `DECISION_SERVICE_TIMEOUT_SECS`, `DECISION_SERVICE_JOB_TIMEOUT_SECS`, `MISTRAL_API_BASE_URL`,
   `MISTRAL_ANALYSIS_MODEL`, `MISTRAL_REVIEW_MODEL`, `MISTRAL_RESEARCH_MODEL`,
-  `MISTRAL_RESEARCH_FALLBACK_MODEL`, `MISTRAL_EMBED_MODEL`,
+  `MISTRAL_RESEARCH_FALLBACK_MODEL`, `WEB_SEARCH_PROVIDER`, `WEB_SEARCH_MCP_URL`,
+  `WEB_SEARCH_MCP_TOOL`, `MISTRAL_EMBED_MODEL`,
   `MISTRAL_ANALYSIS_REASONING_EFFORT`, `MISTRAL_REVIEW_REASONING_EFFORT`,
   `MISTRAL_DAILY_BUDGET_EUR`, prix unitaires Mistral, `DEDUP_SIMILARITY_THRESHOLD`, limites de
   rate limit, `RUST_LOG`, `DATABASE_MAX_CONNECTIONS`, `WORKER_CONCURRENCY`, `TRUSTED_PROXY_HOPS`,
@@ -1049,6 +1087,10 @@ publiée hors dépôt (§7.5) ; aucune IP en clair (§7.2, §7.5).
   écrits à la main : `docs/calibration/screening_report.md` §4, `DEDUP_SIMILARITY_THRESHOLD`) ;
 - prix unitaires Mistral et plafonds journaliers réels ;
 - points juridiques de la section 5 de `docs/juridique/memo.md` (à faire valider par un juriste).
+- statut du service de recherche MCP (PulsarTeam, DuckDuckGo) au regard du RGPD (§7.5) ;
+- `mistral-large-4` est en « Public Preview » chez Mistral (fiche du modèle, 2026-10-31) alors
+  que §7.5 exclut les modèles « Preview » : maintien demandé par l'éditeur le 2026-10-31, à
+  confirmer.
 
 ---
 
@@ -1098,7 +1140,10 @@ configuration liste tous les problèmes et empêche le démarrage) :
 | `DECISION_SERVICE_JOB_TIMEOUT_SECS` | 30 | délai du filtrage par les jobs `screen_*` du worker (1 à 120 s, au moins `DECISION_SERVICE_TIMEOUT_SECS`) |
 | `MISTRAL_API_BASE_URL` | `https://api.mistral.ai` | surchargeable pour les tests |
 | `MISTRAL_ANALYSIS_MODEL`, `MISTRAL_REVIEW_MODEL`, `MISTRAL_EMBED_MODEL` | `mistral-large-latest`, = analyse, `mistral-embed` | modèles |
-| `MISTRAL_RESEARCH_MODEL`, `MISTRAL_RESEARCH_FALLBACK_MODEL` | = analyse, `mistral-medium-latest` | recherche web de l'analyse (étape 1) et modèle de repli si le premier refuse les connecteurs intégrés (§6.1) ; repli égal au modèle de recherche : pas de repli |
+| `MISTRAL_RESEARCH_MODEL`, `MISTRAL_RESEARCH_FALLBACK_MODEL` | = analyse, `mistral-medium-latest` | recherche web de l'analyse (étape 1) et modèle de repli si le premier refuse les connecteurs intégrés (§6.1, `WEB_SEARCH_PROVIDER=mistral` seulement) ; repli égal au modèle de recherche : pas de repli |
+| `WEB_SEARCH_PROVIDER` | `mcp` si une clé MCP est définie, `mistral` sinon | service de recherche web de l'étape 1 (§6.1) : `mcp` ou `mistral` (casse indifférente), toute autre valeur est une erreur de configuration |
+| `WEB_SEARCH_MCP_URL`, `WEB_SEARCH_MCP_TOOL` | `https://pulsarteam.io/api/mcp/browser`, `search_web` | serveur MCP de recherche (URL http(s)) et outil appelé (`[A-Za-z0-9_.-]`, 64 caractères au plus) |
+| `WEB_SEARCH_MCP_API_KEY`, `PULSARTEAM_WEBSEARCH_KEY` | absents | secret : clé du serveur MCP (`Authorization: Bearer`) ; la seconde est lue si la première est vide |
 | `MISTRAL_ANALYSIS_REASONING_EFFORT`, `MISTRAL_REVIEW_REASONING_EFFORT` | `high`, `none` | `reasoning_effort` envoyé à Mistral (§6.1) : analyse (recherche et structuration) ; second avis et revue de signalement. `high` ou `none` (casse indifférente), toute autre valeur est une erreur de configuration. **Exception à la règle du vide** : variable absente = défaut, variable définie mais vide = paramètre omis (défaut de Mistral) ; le compose les passe donc avec `${VAR-défaut}` (sans `:`) |
 | `MISTRAL_DAILY_BUDGET_EUR` | 5 | plafond journalier (décimal, `.` ou `,`) |
 | `MISTRAL_ANALYSIS_INPUT_EUR_PER_MTOK`, `MISTRAL_ANALYSIS_OUTPUT_EUR_PER_MTOK` | 2, 6 | prix par million de tokens |
@@ -1133,7 +1178,7 @@ API publique (port 8080) :
 | GET | `/api/ideas/{slug}` | page d'une idée `published` : `{ slug, title, summary, admin_level, territory?, category, kind, original: { text (masqué), personal_data_masked, attribution, notice }, analysis (champs du §6.2 sans identifiants, `impacts` en liste ordonnée `{ public, label, effect, explanation }`), score: { label, scoring_version, net_annual_eur, feasibility_factor, confidence_factor, delay_factor, score, points, max_points }, contributions: [{ kind, summary, taken_into_account, response, integrated_on }] (résumés neutres, jamais le texte), rights_of_reply: [{ author_label, body, published_at, updated_at }], ai: { ai_generated, provider, model, generated_at (minuit Europe/Paris, comme `updated_at`), analysis_version, prompt_version, research_prompt_version, schema_version, scoring_version, web_search_count, human_reviewed, notice }, proposal_count, contribution_count, published_on, updated_at, canonical_url }` ; idée inconnue, masquée ou purgée : `404 idea_not_found` ; idée fusionnée : `301` vers `/api/ideas/{slug parent}` (corps `{ slug }`) |
 | POST | `/api/ideas/{slug}/contributions` | amélioration ou objection `{ kind: amelioration\|objection, text, accept_licence, accept_publication, altcha }` → `201` comme `/api/ideas` ; `404 idea_not_found` si l'idée n'est pas publiée |
 | POST | `/api/ideas/{slug}/reports` | signalement `{ reason, details? (alias precision), reporter_name?, reporter_email?, good_faith, altcha }` → `201` comme `/api/ideas` ; erreurs `good_faith_required`, `invalid_email`, `idea_not_found` |
-| GET | `/api/methodology` | méthodologie en vigueur (§6.5) : `{ screening_version, taxonomy_version, prompt_versions, analysis_schema_version, export_schema_version, cgu_version, models: { analysis: { model, reasoning_effort, configured_reasoning_effort } (structuration), research: { … } (recherche web), research_fallback (modèle de repli ou `null`), review: { … }, embedding } (configuration en vigueur, §6.1 ; `research` et `research_fallback` facultatifs dans la spec ; `reasoning_effort` : effort réellement envoyé, `high`, `none` ou `null` si omis par configuration ou refusé par le modèle ; `configured_reasoning_effort` : effort configuré, facultatif dans la spec), scoring: { version, formula (FORMULA_FR), amortization_years, max_feasibility, delay_half_life_months, confidence_factors, points_floor, points_ceiling, max_points, points_per_decade }, screening: { version, sections: [{ kind, label, criteria: [{ key, question_type, instructions, answers?, levels, pass_when?, pass_from_level?, reject_below, accept_above (seuils appliqués, réglage §13.6 compris), thresholds_adjusted, reason_code, reason_message, rule? }] }] }, files: [{ file, kind, version?, content }] }` (texte intégral des fichiers de `prompts/`, à afficher en texte brut) |
+| GET | `/api/methodology` | méthodologie en vigueur (§6.5) : `{ screening_version, taxonomy_version, prompt_versions, analysis_schema_version, export_schema_version, cgu_version, models: { analysis: { model, reasoning_effort, configured_reasoning_effort } (structuration), research: { … } (recherche web), research_fallback (modèle de repli ou `null`, toujours `null` avec `mcp`), web_search: { provider (`mcp` ou `mistral`), server (nom d'hôte du serveur MCP ou `null`), tool (outil MCP ou `null`) }, review: { … }, embedding } (configuration en vigueur, §6.1 ; `research`, `research_fallback` et `web_search` facultatifs dans la spec ; `reasoning_effort` : effort réellement envoyé, `high`, `none` ou `null` si omis par configuration ou refusé par le modèle ; `configured_reasoning_effort` : effort configuré, facultatif dans la spec), scoring: { version, formula (FORMULA_FR), amortization_years, max_feasibility, delay_half_life_months, confidence_factors, points_floor, points_ceiling, max_points, points_per_decade }, screening: { version, sections: [{ kind, label, criteria: [{ key, question_type, instructions, answers?, levels, pass_when?, pass_from_level?, reject_below, accept_above (seuils appliqués, réglage §13.6 compris), thresholds_adjusted, reason_code, reason_message, rule? }] }] }, files: [{ file, kind, version?, content }] }` (texte intégral des fichiers de `prompts/`, à afficher en texte brut) |
 | GET | `/api/taxonomy` | `{ version, admin_levels, categories: [{ key, label, description?, group, admin_levels }], impact_publics, impact_effects, idea_kinds, confidence_levels, legal_vehicles, report_reasons, contribution_kinds, rejection_reasons: [{ code, message, rule? }] }` |
 | GET | `/api/stats` | compteurs publics agrégés : `{ ideas_received, ideas_published, ideas_in_progress, ideas_rejected, duplicates_merged, contributions_integrated, published_by_admin_level, published_by_kind, last_published_on, computed_on }` (aucun texte, identifiant ni horodatage fin ; une idée retirée par son auteur, ses contributions et les doublons qui y ont été fusionnés ne sont pas comptés) |
 | GET | `/api/exports/ideas.json`, `/api/exports/ideas.csv`, `/api/exports/LICENSE`, `/api/exports/metadata.json` | exports open data : dernière génération de chaque format de la table `exports` (`json`, `csv`, `license`, `metadata`, §7.4), `Content-Type` de `ExportFormat::content_type`, `Content-Disposition: attachment` avec un nom fixe daté du jour de génération (`iapolitique-ideas-AAAA-MM-JJ.json`, `….csv`, `iapolitique-LICENSE-AAAA-MM-JJ.txt`, `iapolitique-metadata-AAAA-MM-JJ.json`), `ETag` (SHA-256 du contenu, `If-None-Match` → `304`), `Last-Modified` ; avant la première génération : `503 exports_unavailable` avec `Retry-After: 300` |
@@ -1347,7 +1392,8 @@ dispensent d'aucune des mesures ci-dessous.
   compris `Content-Disposition`, construit à partir de noms fixes), aucun chemin de fichier
   construit à partir d'une entrée.
 - **SSRF** : le backend n'appelle que les URL configurées (`DECISION_SERVICE_URL`,
-  `MISTRAL_API_BASE_URL`) ; il ne télécharge jamais une URL fournie par un visiteur ou par l'IA.
+  `MISTRAL_API_BASE_URL`, `WEB_SEARCH_MCP_URL`) ; il ne télécharge jamais une URL fournie par un
+  visiteur ou par l'IA (les adresses des résultats de recherche sont lues, jamais appelées).
 - **Désérialisation** : structures d'entrée avec `#[serde(deny_unknown_fields)]`, longueur
   maximale sur **chaque** chaîne, énumérations fermées, bornes sur les nombres et la pagination
   (`per_page ≤ 50`), format du jeton vérifié (base64url, longueur exacte) avant hachage, slugs

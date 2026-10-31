@@ -303,9 +303,14 @@ export function PrivacyPage() {
         d’adresse IP, d’empreinte ni de lien de suivi.
       </p>
       <p>
-        Le chiffrage s’appuie sur une recherche web effectuée par Mistral AI ; cette fonction peut
-        faire appel à des prestataires situés hors de l’Union européenne (la liste des
-        sous-traitants de Mistral AI est publiée sur son centre de confiance, trust.mistral.ai).
+        Le chiffrage s’appuie sur une recherche web. Les requêtes de recherche sont rédigées par
+        Mistral AI à partir du texte masqué ; elles sont exécutées par le service de recherche
+        indiqué sur la page « Méthodologie » : par défaut le service de recherche de PulsarTeam
+        (pulsarteam.io), qui interroge le moteur DuckDuckGo, ou la recherche web de Mistral AI.
+        Seules ces requêtes leur sont transmises, jamais votre texte complet, une adresse IP, une
+        empreinte ni un lien de suivi. Ces services peuvent faire appel à des prestataires situés
+        hors de l’Union européenne (la liste des sous-traitants de Mistral AI est publiée sur son
+        centre de confiance, trust.mistral.ai).
       </p>
       <p>
         Les décisions de filtrage sont prises automatiquement. Un refus n’a aucun effet juridique à

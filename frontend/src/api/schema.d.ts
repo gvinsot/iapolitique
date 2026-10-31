@@ -2174,6 +2174,7 @@ export interface components {
              * @example mistral-medium-latest
              */
             research_fallback?: string | null;
+            web_search?: components["schemas"]["MethodologyWebSearch"] | null;
             /** @description Second opinion on the gray zone and review of reports. */
             review: components["schemas"]["MethodologyModel"];
             /**
@@ -2204,6 +2205,25 @@ export interface components {
             screening: components["schemas"]["ScreeningMethod"];
             /** @description Full text of every file of `prompts/` (to display as plain text). */
             files: components["schemas"]["MethodologyFile"][];
+        };
+        /** @description The search tool of the web research (§6.1). */
+        MethodologyWebSearch: {
+            /**
+             * @description `mcp`: the `search_web` function of the research model, run by the backend with the
+             *     search tool of an MCP server; `mistral`: Mistral's built-in `web_search` connector.
+             * @example mcp
+             */
+            provider: string;
+            /**
+             * @description Host name of the MCP server (`mcp` only).
+             * @example pulsarteam.io
+             */
+            server: string | null;
+            /**
+             * @description Name of the MCP tool called (`mcp` only).
+             * @example search_web
+             */
+            tool: string | null;
         };
         /**
          * @description Result of a key check.
@@ -2736,6 +2756,7 @@ export type SchemaMethodologyFileKind = components['schemas']['MethodologyFileKi
 export type SchemaMethodologyModel = components['schemas']['MethodologyModel'];
 export type SchemaMethodologyModels = components['schemas']['MethodologyModels'];
 export type SchemaMethodologyResponse = components['schemas']['MethodologyResponse'];
+export type SchemaMethodologyWebSearch = components['schemas']['MethodologyWebSearch'];
 export type SchemaMistralKeyCheckResult = components['schemas']['MistralKeyCheckResult'];
 export type SchemaOriginalText = components['schemas']['OriginalText'];
 export type SchemaPublicStats = components['schemas']['PublicStats'];

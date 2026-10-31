@@ -18,7 +18,7 @@ use crate::ai::decision::ThresholdOverrides;
 use crate::ai::prompts::{
     Criterion, CriterionKind, MethodologyFile, Prompts, Taxonomy, TaxonomyEntry,
 };
-use crate::config::MistralConfig;
+use crate::config::{MistralConfig, WebSearchProvider};
 use crate::db::provider_alerts;
 use crate::domain::rules::{self, CGU_VERSION, RuleReference};
 use crate::domain::scoring::{
@@ -143,6 +143,40 @@ impl MethodologyModel {
     }
 }
 
+/// The search tool of the web research (§6.1).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
+pub struct MethodologyWebSearch {
+    /// `mcp`: the `search_web` function of the research model, run by the backend with the
+    /// search tool of an MCP server; `mistral`: Mistral's built-in `web_search` connector.
+    #[schema(example = "mcp")]
+    pub provider: String,
+    /// Host name of the MCP server (`mcp` only).
+    #[schema(required = true, example = "pulsarteam.io")]
+    pub server: Option<String>,
+    /// Name of the MCP tool called (`mcp` only).
+    #[schema(required = true, example = "search_web")]
+    pub tool: Option<String>,
+}
+
+impl MethodologyWebSearch {
+    fn from_config(config: &crate::config::WebSearchConfig) -> Self {
+        match config.provider {
+            WebSearchProvider::Mcp => Self {
+                provider: config.provider.as_str().to_owned(),
+                server: url::Url::parse(&config.mcp.url)
+                    .ok()
+                    .and_then(|url| url.host_str().map(str::to_owned)),
+                tool: Some(config.mcp.tool.clone()),
+            },
+            WebSearchProvider::Mistral => Self {
+                provider: config.provider.as_str().to_owned(),
+                server: None,
+                tool: None,
+            },
+        }
+    }
+}
+
 /// The Mistral models configured in production (§6.1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct MethodologyModels {
@@ -157,6 +191,10 @@ pub struct MethodologyModels {
     /// `null` without fallback. Optional in the spec, like `research`.
     #[schema(required = false, example = "mistral-medium-latest")]
     pub research_fallback: Option<String>,
+    /// Who runs the searches of the web research. Always sent; optional in the spec, like
+    /// `research`.
+    #[schema(required = false)]
+    pub web_search: Option<MethodologyWebSearch>,
     /// Second opinion on the gray zone and review of reports.
     pub review: MethodologyModel,
     /// Embeddings of the duplicate detection (no reasoning).
@@ -184,7 +222,12 @@ impl MethodologyModels {
                 config.analysis_reasoning_effort,
                 refused,
             )),
-            research_fallback: config.research_fallback_model.clone(),
+            // The fallback only serves Mistral's connector.
+            research_fallback: config
+                .research_fallback_model
+                .clone()
+                .filter(|_| config.web_search.provider == WebSearchProvider::Mistral),
+            web_search: Some(MethodologyWebSearch::from_config(&config.web_search)),
             embedding: config.embed_model.clone(),
         }
     }
@@ -686,6 +729,7 @@ mod tests {
                 "research": { "model": "mistral-large-latest", "reasoning_effort": "high",
                               "configured_reasoning_effort": "high" },
                 "research_fallback": "mistral-medium-latest",
+                "web_search": { "provider": "mistral", "server": null, "tool": null },
                 "embedding": "mistral-embed"
             })
         );
@@ -733,6 +777,20 @@ mod tests {
             json!({ "model": "mistral-large-latest", "reasoning_effort": null,
                     "configured_reasoning_effort": null })
         );
+        // The MCP search tool: its server and tool, and no connector fallback.
+        let app = TestApp::new(
+            app.pool.clone(),
+            false,
+            &[("PULSARTEAM_WEBSEARCH_KEY", "search-key")],
+        )
+        .await;
+        let (_, _, body) = get_json(&app.router, "/api/methodology", &[]).await;
+        assert_eq!(
+            body["models"]["web_search"],
+            json!({ "provider": "mcp", "server": "pulsarteam.io", "tool": "search_web" })
+        );
+        assert_eq!(body["models"]["research_fallback"], serde_json::Value::Null);
+        assert!(!body.to_string().contains("search-key"));
     }
 
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]

@@ -196,6 +196,35 @@ impl DecisionServiceConfig {
     }
 }
 
+/// Default search MCP server: PulsarTeam's browser (`search_web`, DuckDuckGo results).
+pub const DEFAULT_WEB_SEARCH_MCP_URL: &str = "https://pulsarteam.io/api/mcp/browser";
+pub const DEFAULT_WEB_SEARCH_MCP_TOOL: &str = "search_web";
+
+/// Who runs the searches of the web research (`WEB_SEARCH_PROVIDER`, §6.1).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WebSearchProvider {
+    /// The `search_web` function of the research model, run through the search tool of an MCP
+    /// server (chat completions).
+    Mcp,
+    /// Mistral's built-in `web_search` connector (Conversations API).
+    Mistral,
+}
+
+impl WebSearchProvider {
+    pub fn as_str(self) -> &'static str {
+        match self {
+            Self::Mcp => "mcp",
+            Self::Mistral => "mistral",
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
+pub struct WebSearchConfig {
+    pub provider: WebSearchProvider,
+    pub mcp: crate::ai::web_search::McpSearchConfig,
+}
+
 /// Research model used when the configured one refuses the built-in connectors: the model of
 /// Mistral's web search examples (<https://docs.mistral.ai/agents/tools/built-in/websearch>).
 pub const DEFAULT_RESEARCH_FALLBACK_MODEL: &str = "mistral-medium-latest";
@@ -213,6 +242,8 @@ pub struct MistralConfig {
     /// `MISTRAL_RESEARCH_FALLBACK_MODEL`: research model used once `research_model` refused
     /// the built-in connectors (`web_search`); `None` when it is the research model itself.
     pub research_fallback_model: Option<String>,
+    /// Search tool of the web research (§6.1).
+    pub web_search: WebSearchConfig,
     pub embed_model: String,
     /// `MISTRAL_ANALYSIS_REASONING_EFFORT`: research and structuring of analyses (§6.1). `None`:
     /// the parameter is omitted (Mistral's default, undocumented).
@@ -362,6 +393,7 @@ impl Config {
             DEFAULT_RESEARCH_FALLBACK_MODEL,
         ))
         .filter(|fallback| *fallback != research_model);
+        let web_search = env.web_search();
         let analysis_input = env.eur("MISTRAL_ANALYSIS_INPUT_EUR_PER_MTOK", "2");
         let analysis_output = env.eur("MISTRAL_ANALYSIS_OUTPUT_EUR_PER_MTOK", "6");
         let prices = MistralPrices {
@@ -380,6 +412,7 @@ impl Config {
             review_model,
             research_model,
             research_fallback_model,
+            web_search,
             embed_model: env.string("MISTRAL_EMBED_MODEL", "mistral-embed"),
             analysis_reasoning_effort: env
                 .reasoning_effort("MISTRAL_ANALYSIS_REASONING_EFFORT", ReasoningEffort::High),
@@ -595,6 +628,50 @@ impl<F: Fn(&str) -> Option<String>> Reader<F> {
         }
     }
 
+    /// `WEB_SEARCH_*`: the MCP server if a key is set (`WEB_SEARCH_MCP_API_KEY`, or
+    /// `PULSARTEAM_WEBSEARCH_KEY`), Mistral's connector otherwise, unless
+    /// `WEB_SEARCH_PROVIDER` says which.
+    fn web_search(&mut self) -> WebSearchConfig {
+        let api_key = self
+            .secret("WEB_SEARCH_MCP_API_KEY")
+            .filter(|key| !key.expose().is_empty())
+            .or_else(|| self.secret("PULSARTEAM_WEBSEARCH_KEY"))
+            .filter(|key| !key.expose().is_empty());
+        let provider = match self
+            .opt_string("WEB_SEARCH_PROVIDER")
+            .map(|p| p.to_ascii_lowercase())
+            .as_deref()
+        {
+            None | Some("") if api_key.is_some() => WebSearchProvider::Mcp,
+            None | Some("") | Some("mistral") => WebSearchProvider::Mistral,
+            Some("mcp") => WebSearchProvider::Mcp,
+            Some(other) => {
+                self.problem(format!(
+                    "WEB_SEARCH_PROVIDER: expected `mcp`, `mistral` or an empty value, got `{}`",
+                    other.chars().take(40).collect::<String>()
+                ));
+                WebSearchProvider::Mistral
+            }
+        };
+        let url = self.url("WEB_SEARCH_MCP_URL", DEFAULT_WEB_SEARCH_MCP_URL);
+        let tool = self.string("WEB_SEARCH_MCP_TOOL", DEFAULT_WEB_SEARCH_MCP_TOOL);
+        if tool.is_empty()
+            || tool.len() > 64
+            || !tool
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.'))
+        {
+            self.problem(
+                "WEB_SEARCH_MCP_TOOL: expected a tool name (letters, digits, `_`, `-`, `.`)"
+                    .to_owned(),
+            );
+        }
+        WebSearchConfig {
+            provider,
+            mcp: crate::ai::web_search::McpSearchConfig { url, tool, api_key },
+        }
+    }
+
     fn url(&mut self, key: &str, default: &str) -> String {
         let value = self.string(key, default);
         if !(value.starts_with("http://") || value.starts_with("https://")) {
@@ -762,6 +839,16 @@ mod tests {
             Some("mistral-medium-latest")
         );
         assert_eq!(config.mistral.embed_model, "mistral-embed");
+        // Without a search key: Mistral's connector; the MCP server is PulsarTeam's.
+        assert_eq!(
+            config.mistral.web_search.provider,
+            WebSearchProvider::Mistral
+        );
+        assert_eq!(
+            config.mistral.web_search.mcp.url,
+            DEFAULT_WEB_SEARCH_MCP_URL
+        );
+        assert_eq!(config.mistral.web_search.mcp.tool, "search_web");
         assert_eq!(config.mistral.daily_budget, MicroEur(5_000_000));
         assert_eq!(
             config.mistral.prices.review_input_per_mtok,
@@ -858,6 +945,44 @@ mod tests {
             config.decision_service.url,
             "http://192.168.1.27:8001/v1/systemone"
         );
+    }
+
+    #[test]
+    fn web_search_goes_to_the_mcp_server_once_a_key_is_set() {
+        let with = |extra: &[(&'static str, &'static str)]| {
+            let mut env = api_env();
+            env.extend_from_slice(extra);
+            Config::from_lookup(Role::Worker, lookup(&env)).map(|c| c.mistral.web_search)
+        };
+        let search = with(&[("PULSARTEAM_WEBSEARCH_KEY", "k-1")]).unwrap();
+        assert_eq!(search.provider, WebSearchProvider::Mcp);
+        assert_eq!(search.mcp.api_key.unwrap().expose(), "k-1");
+        let search = with(&[
+            ("WEB_SEARCH_MCP_API_KEY", "k-2"),
+            ("PULSARTEAM_WEBSEARCH_KEY", "k-1"),
+            ("WEB_SEARCH_MCP_URL", "https://search.example/mcp/"),
+            ("WEB_SEARCH_MCP_TOOL", "web.search"),
+        ])
+        .unwrap();
+        assert_eq!(search.mcp.api_key.unwrap().expose(), "k-2");
+        assert_eq!(search.mcp.url, "https://search.example/mcp");
+        assert_eq!(search.mcp.tool, "web.search");
+        // Chosen explicitly, whatever the key.
+        let search = with(&[
+            ("PULSARTEAM_WEBSEARCH_KEY", "k"),
+            ("WEB_SEARCH_PROVIDER", "Mistral"),
+        ]);
+        assert_eq!(search.unwrap().provider, WebSearchProvider::Mistral);
+        let search = with(&[("WEB_SEARCH_PROVIDER", "mcp")]).unwrap();
+        assert_eq!(search.provider, WebSearchProvider::Mcp);
+        assert!(search.mcp.api_key.is_none());
+        for bad in [
+            ("WEB_SEARCH_PROVIDER", "brave"),
+            ("WEB_SEARCH_MCP_URL", "file:///etc"),
+            ("WEB_SEARCH_MCP_TOOL", "search web"),
+        ] {
+            assert!(with(&[bad]).is_err(), "{bad:?}");
+        }
     }
 
     #[test]

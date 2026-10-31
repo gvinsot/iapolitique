@@ -121,8 +121,20 @@ export function MethodologyInForce({ methodology }: { methodology: Methodology }
   const fallbackRows: ModelRow[] = models.research_fallback
     ? [["Recherche web si ce modèle refuse l’outil de recherche", models.research_fallback]]
     : [];
+  const search = models.web_search;
+  const searchRows: ModelRow[] = search
+    ? [
+        [
+          "Service de recherche web",
+          search.provider === "mcp"
+            ? `outil ${search.tool ?? "?"} du serveur MCP ${search.server ?? "?"}, appelé par l’application`
+            : "outil web_search intégré de Mistral AI",
+        ],
+      ]
+    : [];
   const modelRows: ModelRow[] = [
     ...analysisRows,
+    ...searchRows,
     ...fallbackRows,
     ["Second avis et revue des signalements", models.review],
     ["Détection des doublons (embeddings)", models.embedding],

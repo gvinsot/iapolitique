@@ -105,6 +105,28 @@ describe("MethodologyPage", () => {
       "Recherche web si ce modèle refuse l’outil de recherchemistral-small-latest",
     );
     expect(models).not.toHaveTextContent("Analyse (recherche web, puis structuration)");
+    expect(models).not.toHaveTextContent("Service de recherche web");
+  });
+
+  it("names the search service of the web research", async () => {
+    stubFetch(
+      apiRoutes({
+        "GET /api/methodology": {
+          ...methodologyFixture,
+          models: {
+            ...methodologyFixture.models,
+            web_search: { provider: "mcp", server: "pulsarteam.io", tool: "search_web" },
+          },
+        },
+      }),
+    );
+    renderRoute("/methodologie");
+    const models = await screen.findByRole("region", {
+      name: "Modèles d’IA en vigueur (Mistral AI)",
+    });
+    expect(models).toHaveTextContent(
+      "Service de recherche weboutil search_web du serveur MCP pulsarteam.io, appelé par l’application",
+    );
   });
 
   it("explains in French when the texts cannot be loaded", async () => {

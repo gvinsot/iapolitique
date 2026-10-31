@@ -111,6 +111,9 @@ fn mistral_client(config: &Config) -> anyhow::Result<Option<MistralClient>> {
                 analysis_reasoning_effort = effort(mistral.analysis_reasoning_effort),
                 research_model = %mistral.research_model,
                 research_fallback_model = mistral.research_fallback_model.as_deref(),
+                web_search_provider = mistral.web_search.provider.as_str(),
+                web_search_mcp_url = %mistral.web_search.mcp.url,
+                web_search_mcp_key = mistral.web_search.mcp.api_key.is_some(),
                 review_model = %mistral.review_model,
                 review_reasoning_effort = effort(mistral.review_reasoning_effort),
                 "Mistral client ready"

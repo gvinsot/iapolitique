@@ -17,7 +17,7 @@ pub const CGU_VERSION: &str = "1.2";
 /// (`frontend/src/pages/legal`), and [`CGU_VERSION`] too when the clauses of `/regles` change.
 pub const LEGAL_PAGES_UPDATED_ON: LegalPagesDates = LegalPagesDates {
     mentions_legales: "2026-10-18",
-    confidentialite: "2026-10-19",
+    confidentialite: "2026-10-31",
     regles: "2026-10-19",
     licence: "2026-10-18",
 };

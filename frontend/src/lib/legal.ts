@@ -24,7 +24,7 @@ export const LEGAL_DETAILS_UNAVAILABLE = "coordonnées momentanément indisponib
  */
 export const LEGAL_TEXTS_DATES: Readonly<Record<LegalPageKey, string>> = {
   mentions_legales: "2026-10-18",
-  confidentialite: "2026-10-19",
+  confidentialite: "2026-10-31",
   regles: "2026-10-19",
   licence: "2026-10-18",
 };

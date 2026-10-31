@@ -103,12 +103,16 @@ describe("legal pages", () => {
     ).toHaveTextContent("1 an après l’escalade");
     expect(document.getElementById("conservation")).toBeInTheDocument();
     expect(screen.getByText(/retirés par leur auteur ou en attente/)).toBeInTheDocument();
+    // The search service of the web research, and what it receives.
+    expect(screen.getByText(/service de recherche de PulsarTeam/)).toHaveTextContent(
+      "Seules ces requêtes leur sont transmises",
+    );
   });
 
   it("keeps the date of the shipped text of each page when the API fails", async () => {
     stubFetch(legalApi({ error: { code: "server_error", message: "Erreur." } }, 500));
     renderRoute("/confidentialite");
-    expect(await screen.findByText("19 octobre 2026")).toHaveAttribute("datetime", "2026-10-19");
+    expect(await screen.findByText("31 octobre 2026")).toHaveAttribute("datetime", "2026-10-31");
   });
 
   it("refuses to name a party or an elected official, even neutrally, and explains withdrawal (D1, D2)", async () => {

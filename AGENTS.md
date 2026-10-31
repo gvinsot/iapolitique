@@ -481,7 +481,9 @@ version de prompt (l'admin peut relancer manuellement).
   `detail` résume le corps d'erreur (`ai::mistral::error_summary`) avec ses seuls champs d'erreur :
   `type`, `code`, `param`, `message` (chaîne) et, pour chaque erreur de champ (5 au plus), `loc`,
   `type`, `msg` ; jamais `input`, `ctx` ni `url`, qui recopient la requête (prompt, texte d'un
-  visiteur), ni un corps qui n'est pas du JSON (seule sa taille). Chaque valeur est coupée à
+  visiteur), ni un corps qui n'est pas du JSON (seule sa taille) ; un texte d'erreur qui recopie
+  une erreur pydantic (`'input'`, `"input"`, `input_value=`, `ctx`, `url`) est coupé avant
+  (`[request omitted]`). Chaque valeur est coupée à
   300 caractères, le résumé à 1 500, caractères de contrôle, bidi et invisibles remplacés par une
   espace. La ligne est copiée dans `job_logs` (modale « Logs » de l'admin, §14.6).
 - Mise en œuvre (job `analyze_idea`, `jobs/analysis.rs`, stockage `db/analyses.rs`) :

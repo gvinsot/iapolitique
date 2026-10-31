@@ -18,7 +18,8 @@
 //!
 //! Privacy (§7.5): requests carry the rendered prompts only (masked texts, internal ids), never
 //! an IP, a fingerprint or a token; conversations are created with `store: false`. Provider
-//! error bodies are never logged (they may quote the request).
+//! error bodies are never logged as such (they may quote the request): only their error fields,
+//! cut where they start quoting it ([`error_summary`]).
 //!
 //! `reasoning_effort` (§6.1) is documented for some models only. A call that sent it and gets
 //! HTTP 400 (or 422) whose error names the parameter is sent again at once without it; once a
@@ -491,6 +492,26 @@ fn error_summary(body: &[u8]) -> Option<String> {
     })
 }
 
+/// Markers after which an error text quotes the request: the `input`, `ctx` and `url` keys of a
+/// pydantic error written as a Python or JSON literal, or its `input_value=` text form.
+const ECHO_MARKERS: [&str; 7] = [
+    "'input'",
+    "\"input\"",
+    "input_value=",
+    "'ctx'",
+    "\"ctx\"",
+    "'url'",
+    "\"url\"",
+];
+
+/// `text` up to the first [`ECHO_MARKERS`] (none of the request it may quote is kept).
+fn without_echoed_request(text: &str) -> String {
+    match ECHO_MARKERS.iter().filter_map(|m| text.find(m)).min() {
+        Some(at) => format!("{}[request omitted]", &text[..at]),
+        None => text.to_owned(),
+    }
+}
+
 /// A string, number or boolean as text; `None` for null, arrays and objects.
 fn scalar_text(value: &Value) -> Option<String> {
     match value {
@@ -501,9 +522,11 @@ fn scalar_text(value: &Value) -> Option<String> {
     }
 }
 
-/// `text` cut to [`MAX_ERROR_FIELD_CHARS`], control, bidi and invisible characters replaced by
+/// `text` cut before any quote of the request ([`without_echoed_request`]), then to
+/// [`MAX_ERROR_FIELD_CHARS`], control, bidi and invisible characters replaced by
 /// a space (a log line stays one line and reads as it prints).
 fn clean_error_text(text: &str) -> String {
+    let text = &without_echoed_request(text);
     let invisible = |c: char| {
         c.is_control()
             || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}')
@@ -2919,7 +2942,9 @@ mod tests {
     fn reasoning_refusal() -> ResponseTemplate {
         ResponseTemplate::new(400).set_body_json(json!({
             "object": "error",
-            "message": "Extra inputs are not permitted: reasoning_effort (REQUETE-PRIVEE)",
+            "message": "Extra inputs are not permitted: [{'type': 'extra_forbidden', \
+                'loc': ('body', 'reasoning_effort'), 'msg': 'Extra inputs are not permitted', \
+                'input': 'REQUETE-PRIVEE'}]",
             "type": "invalid_request_error",
             "param": "reasoning_effort",
             "code": "3001"
@@ -2986,6 +3011,18 @@ mod tests {
             "non-JSON body (12 bytes)"
         );
         assert_eq!(error_summary(b""), None);
+        // Field errors written into the message as a literal: cut before the quoted request.
+        for message in [
+            "Bad: [{'type': 'x', 'msg': 'too long', 'input': 'texte secret', 'ctx': {}}]",
+            r#"Bad: [{"type": "x", "msg": "too long", "input": "texte secret"}]"#,
+            "1 validation error\nbody.inputs\n  too long [input_value='texte secret']",
+            "Bad: [{'type': 'x', 'url': 'https://errors.pydantic.dev/texte secret'}]",
+        ] {
+            let body = json!({ "message": message });
+            let summary = error_summary(body.to_string().as_bytes()).unwrap();
+            assert!(!summary.contains("secret"), "{summary}");
+            assert!(summary.contains("[request omitted]"), "{summary}");
+        }
         assert_eq!(
             error_summary(br#"{"input":"texte secret"}"#).unwrap(),
             "JSON body without error fields (24 bytes)"
@@ -3042,7 +3079,13 @@ mod tests {
         );
         assert!(
             !logs.contains("REQUETE-PRIVEE"),
-            "error bodies are never logged: {logs}"
+            "the request quoted by an error is never logged: {logs}"
+        );
+        // What Mistral said is logged, up to the quoted request.
+        assert!(
+            logs.contains("code=3001 param=reasoning_effort")
+                && logs.contains("'msg': 'Extra inputs are not permitted', [request omitted]"),
+            "{logs}"
         );
         // The effort really sent is recorded with each attempt.
         let recorded: Vec<(Value, Value, Value)> = calls(&pool)

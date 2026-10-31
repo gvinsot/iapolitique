@@ -347,6 +347,8 @@ struct Attempt<T> {
     retry_after: Option<Duration>,
     /// HTTP 400/422 whose error names `reasoning_effort` ([`mentions_reasoning`]).
     rejects_reasoning: bool,
+    /// Non-2xx status: what Mistral said, sanitized for the logs ([`error_summary`]).
+    error_detail: Option<String>,
     /// Research step: distinct citable pages of the answer (`ai_calls.consulted_pages`).
     consulted_pages: Option<u64>,
 }
@@ -366,6 +368,7 @@ impl<T> Attempt<T> {
             http_status: Some(http_status),
             retry_after: None,
             rejects_reasoning: false,
+            error_detail: None,
             consulted_pages: None,
         }
     }
@@ -391,7 +394,7 @@ const MAX_ERROR_BODY_BYTES: usize = 16 << 10;
 /// Whether a Mistral error body (`{ object, message, type, param, code }`, `message` possibly an
 /// object or a list of field errors) names `reasoning_effort`: `param`, `code`, `loc`, `msg` or
 /// the message mention `reasoning`. The `input` fields of validation errors, which echo the
-/// request, are not read. The body itself is never logged.
+/// request, are not read. The raw body is never logged ([`error_summary`] is).
 fn mentions_reasoning(body: &[u8]) -> bool {
     fn walk(value: &Value) -> bool {
         match value {
@@ -405,6 +408,115 @@ fn mentions_reasoning(body: &[u8]) -> bool {
         }
     }
     serde_json::from_slice::<Value>(body).is_ok_and(|value| walk(&value))
+}
+
+/// Longest value kept by [`error_summary`] for one field, and for the whole summary.
+const MAX_ERROR_FIELD_CHARS: usize = 300;
+const MAX_ERROR_SUMMARY_CHARS: usize = 1_500;
+/// Field errors of a validation error kept by [`error_summary`].
+const MAX_ERROR_DETAILS: usize = 5;
+
+/// What a Mistral error body says, for the logs: the fields of the error only (`type`, `code`,
+/// `param`, `message`, and for each field error `loc`, `type`, `msg`), never `input`, `ctx` or
+/// `url`, which echo the request (prompt, visitor text). Each value is cut to
+/// [`MAX_ERROR_FIELD_CHARS`] with control, bidi and invisible characters replaced; a body that is
+/// not JSON is only described by its size. `None` for an empty body.
+fn error_summary(body: &[u8]) -> Option<String> {
+    if body.is_empty() {
+        return None;
+    }
+    let Ok(value) = serde_json::from_slice::<Value>(body) else {
+        return Some(format!("non-JSON body ({} bytes)", body.len()));
+    };
+    let mut parts = Vec::new();
+    // `{ detail: [...] }` (FastAPI) or `{ message: { detail: [...] } }`, or the error itself.
+    let error = value
+        .get("error")
+        .filter(|e| e.is_object())
+        .unwrap_or(&value);
+    for key in ["type", "code", "param"] {
+        if let Some(text) = error.get(key).and_then(scalar_text) {
+            parts.push(format!("{key}={}", clean_error_text(&text)));
+        }
+    }
+    let message = error.get("message");
+    if let Some(text) = message.and_then(Value::as_str) {
+        parts.push(format!("message={:?}", clean_error_text(text)));
+    }
+    let details = [message.and_then(|m| m.get("detail")), error.get("detail")]
+        .into_iter()
+        .flatten()
+        .find_map(Value::as_array);
+    match error.get("detail").and_then(Value::as_str) {
+        Some(text) => parts.push(format!("detail={:?}", clean_error_text(text))),
+        None => {
+            for item in details.into_iter().flatten().take(MAX_ERROR_DETAILS) {
+                let loc = item.get("loc").and_then(Value::as_array).map(|loc| {
+                    loc.iter()
+                        .filter_map(scalar_text)
+                        .collect::<Vec<_>>()
+                        .join(".")
+                });
+                let mut detail = Vec::new();
+                if let Some(loc) = loc {
+                    detail.push(format!("loc={}", clean_error_text(&loc)));
+                }
+                if let Some(kind) = item.get("type").and_then(scalar_text) {
+                    detail.push(format!("type={}", clean_error_text(&kind)));
+                }
+                if let Some(msg) = item.get("msg").and_then(Value::as_str) {
+                    detail.push(format!("msg={:?}", clean_error_text(msg)));
+                }
+                if !detail.is_empty() {
+                    parts.push(format!("[{}]", detail.join(" ")));
+                }
+            }
+        }
+    }
+    if parts.is_empty() {
+        return Some(format!(
+            "JSON body without error fields ({} bytes)",
+            body.len()
+        ));
+    }
+    let summary = parts.join(" ");
+    Some(if summary.chars().count() > MAX_ERROR_SUMMARY_CHARS {
+        summary
+            .chars()
+            .take(MAX_ERROR_SUMMARY_CHARS)
+            .collect::<String>()
+            + "…"
+    } else {
+        summary
+    })
+}
+
+/// A string, number or boolean as text; `None` for null, arrays and objects.
+fn scalar_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(text) => Some(text.clone()),
+        Value::Number(number) => Some(number.to_string()),
+        Value::Bool(flag) => Some(flag.to_string()),
+        _ => None,
+    }
+}
+
+/// `text` cut to [`MAX_ERROR_FIELD_CHARS`], control, bidi and invisible characters replaced by
+/// a space (a log line stays one line and reads as it prints).
+fn clean_error_text(text: &str) -> String {
+    let invisible = |c: char| {
+        c.is_control()
+            || matches!(c, '\u{200B}'..='\u{200F}' | '\u{202A}'..='\u{202E}' | '\u{2060}'..='\u{206F}' | '\u{FEFF}')
+    };
+    let mut cleaned: String = text
+        .chars()
+        .take(MAX_ERROR_FIELD_CHARS)
+        .map(|c| if invisible(c) { ' ' } else { c })
+        .collect();
+    if text.chars().count() > MAX_ERROR_FIELD_CHARS {
+        cleaned.push('…');
+    }
+    cleaned
 }
 
 /// Client of the Mistral API.
@@ -837,7 +949,10 @@ impl MistralClient {
                     tracing::warn!(
                         purpose = ctx.purpose.as_str(),
                         attempt = attempt_number,
+                        model = %model,
+                        http_status = attempt.http_status,
                         error = %error.code(),
+                        detail = attempt.error_detail.as_deref(),
                         "Mistral call failed"
                     );
                     if effort.is_some() && attempt.rejects_reasoning {
@@ -928,16 +1043,19 @@ impl MistralClient {
                 .and_then(|v| v.to_str().ok())
                 .and_then(|v| v.trim().parse::<u64>().ok())
                 .map(Duration::from_secs);
-            // A refused request: does it refuse `reasoning_effort` (§6.1)? Read, never logged.
-            let rejects_reasoning = matches!(status, 400 | 422)
-                && super::read_capped(response, MAX_ERROR_BODY_BYTES)
-                    .await
-                    .is_ok_and(|body| mentions_reasoning(&body));
+            // A refused request: does it refuse `reasoning_effort` (§6.1)? The body itself is
+            // never logged, only its sanitized error fields.
+            let body = super::read_capped(response, MAX_ERROR_BODY_BYTES)
+                .await
+                .ok();
+            let rejects_reasoning =
+                matches!(status, 400 | 422) && body.as_deref().is_some_and(mentions_reasoning);
             return Err(Failure {
                 error: MistralError::Http { status },
                 http_status: Some(status),
                 retry_after,
                 rejects_reasoning,
+                error_detail: body.as_deref().and_then(error_summary),
             });
         }
         let failure = |error| Failure {
@@ -945,6 +1063,7 @@ impl MistralClient {
             http_status: Some(status),
             retry_after: None,
             rejects_reasoning: false,
+            error_detail: None,
         };
         let bytes = match super::read_capped(response, super::MAX_MISTRAL_RESPONSE_BYTES).await {
             Ok(bytes) => bytes,
@@ -973,6 +1092,7 @@ struct Failure {
     http_status: Option<u16>,
     retry_after: Option<Duration>,
     rejects_reasoning: bool,
+    error_detail: Option<String>,
 }
 
 impl Failure {
@@ -982,6 +1102,7 @@ impl Failure {
             http_status: None,
             retry_after: None,
             rejects_reasoning: false,
+            error_detail: None,
         }
     }
 }
@@ -995,6 +1116,7 @@ impl<T> From<Failure> for Attempt<T> {
             http_status: failure.http_status,
             retry_after: failure.retry_after,
             rejects_reasoning: failure.rejects_reasoning,
+            error_detail: failure.error_detail,
             consulted_pages: None,
         }
     }
@@ -2837,6 +2959,52 @@ mod tests {
             assert!(!mentions_reasoning(body.to_string().as_bytes()), "{body}");
         }
         assert!(!mentions_reasoning(b"reasoning_effort not JSON"));
+    }
+
+    #[test]
+    fn error_summary_keeps_the_error_fields_never_the_echoed_request() {
+        let body = json!({ "object": "error", "message": "Invalid model: mistral-large-9",
+            "type": "invalid_model", "param": null, "code": "1500" });
+        assert_eq!(
+            error_summary(body.to_string().as_bytes()).unwrap(),
+            r#"type=invalid_model code=1500 message="Invalid model: mistral-large-9""#
+        );
+        // Validation errors: `loc`, `type` and `msg` only, never `input` nor `ctx`.
+        let body = json!({ "object": "error", "type": "invalid_request_error",
+            "message": { "detail": [{ "type": "extra_forbidden",
+                "loc": ["body", "inputs", 0, "foo"], "msg": "Extra inputs are not permitted",
+                "input": "texte secret du visiteur", "ctx": { "x": "texte secret" } }] } });
+        let summary = error_summary(body.to_string().as_bytes()).unwrap();
+        assert_eq!(
+            summary,
+            r#"type=invalid_request_error [loc=body.inputs.0.foo type=extra_forbidden msg="Extra inputs are not permitted"]"#
+        );
+        assert!(!summary.contains("secret"));
+        // A body that is not JSON is never copied.
+        assert_eq!(
+            error_summary(b"texte secret").unwrap(),
+            "non-JSON body (12 bytes)"
+        );
+        assert_eq!(error_summary(b""), None);
+        assert_eq!(
+            error_summary(br#"{"input":"texte secret"}"#).unwrap(),
+            "JSON body without error fields (24 bytes)"
+        );
+    }
+
+    #[test]
+    fn error_summary_is_bounded_and_on_one_line() {
+        let body = json!({ "message": format!("a\nb\u{202E}c{}", "x".repeat(1_000)) });
+        let summary = error_summary(body.to_string().as_bytes()).unwrap();
+        assert!(summary.starts_with(r#"message="a b c"#), "{summary}");
+        assert!(!summary.contains('\n') && !summary.contains('\u{202E}'));
+        assert!(summary.chars().count() <= MAX_ERROR_FIELD_CHARS + 20);
+        let details: Vec<Value> = (0..20)
+            .map(|i| json!({ "loc": ["body", i], "msg": "y".repeat(400) }))
+            .collect();
+        let summary = error_summary(json!({ "detail": details }).to_string().as_bytes()).unwrap();
+        assert_eq!(summary.matches("[loc=").count(), MAX_ERROR_DETAILS);
+        assert!(summary.chars().count() <= MAX_ERROR_SUMMARY_CHARS + 1);
     }
 
     #[sqlx::test(migrator = "crate::db::MIGRATOR")]

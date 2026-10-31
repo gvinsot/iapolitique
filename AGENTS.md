@@ -401,7 +401,7 @@ version de prompt (l'admin peut relancer manuellement).
   `mistral-large-latest` peut le refuser). **Repli** (`ai::mistral`) : un appel qui l'a envoyé
   et reçoit HTTP 400 (ou 422) dont l'erreur le nomme (champs `message`, `param`, `code`, `loc`,
   `msg` du corps `{ object, message, type, param, code }` contenant `reasoning` ; jamais les
-  `input` qui recopient la requête ; corps jamais journalisé) est renvoyé aussitôt sans le
+  `input` qui recopient la requête ; corps brut jamais journalisé) est renvoyé aussitôt sans le
   paramètre (hors des 3 tentatives) ; si ce second envoi reçoit une réponse (2xx), le modèle est
   retenu en mémoire pour la vie du processus (ses appels suivants partent directement sans le
   paramètre, un seul `WARN` par modèle et par processus : « model X rejects reasoning_effort,
@@ -476,6 +476,14 @@ version de prompt (l'admin peut relancer manuellement).
   (0 sans recherche web comptée : le modèle n'a pas cherché ; 0 avec recherches : forme non lue,
   à lire dans `execution_info_shape`).
 - 429 / 5xx : retry avec backoff ; ne jamais boucler sans limite.
+- **Erreurs journalisées** : tout appel en échec donne une ligne `WARN` « Mistral call failed »
+  (usage, tentative, modèle, statut HTTP, code d'erreur) ; sur une réponse non 2xx, le champ
+  `detail` résume le corps d'erreur (`ai::mistral::error_summary`) avec ses seuls champs d'erreur :
+  `type`, `code`, `param`, `message` (chaîne) et, pour chaque erreur de champ (5 au plus), `loc`,
+  `type`, `msg` ; jamais `input`, `ctx` ni `url`, qui recopient la requête (prompt, texte d'un
+  visiteur), ni un corps qui n'est pas du JSON (seule sa taille). Chaque valeur est coupée à
+  300 caractères, le résumé à 1 500, caractères de contrôle, bidi et invisibles remplacés par une
+  espace. La ligne est copiée dans `job_logs` (modale « Logs » de l'admin, §14.6).
 - Mise en œuvre (job `analyze_idea`, `jobs/analysis.rs`, stockage `db/analyses.rs`) :
   - première analyse : `queued_analysis → analyzing → published` (slug tiré du titre, suffixe
     `-2`, `-3`… en cas de collision, jamais modifié ensuite) ; sortie encore invalide après les

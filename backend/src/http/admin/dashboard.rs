@@ -135,11 +135,13 @@ pub fn reasoning_alert(
     let effort =
         |model: &str, effort: Option<ReasoningEffort>| effort.filter(|_| model == refusal.model);
     let analysis = effort(&config.analysis_model, config.analysis_reasoning_effort);
+    let research = effort(&config.research_model, config.analysis_reasoning_effort);
     let review = effort(&config.review_model, config.review_reasoning_effort);
-    let (variable, configured) = match (analysis, review) {
-        (Some(analysis), _) => ("MISTRAL_ANALYSIS_MODEL", analysis),
-        (None, Some(review)) => ("MISTRAL_REVIEW_MODEL", review),
-        (None, None) => return None,
+    let (variable, configured) = match (analysis, research, review) {
+        (Some(analysis), _, _) => ("MISTRAL_ANALYSIS_MODEL", analysis),
+        (None, Some(research), _) => ("MISTRAL_RESEARCH_MODEL", research),
+        (None, None, Some(review)) => ("MISTRAL_REVIEW_MODEL", review),
+        (None, None, None) => return None,
     };
     Some(AdminAlert {
         code: provider_alerts::MISTRAL_REASONING_UNSUPPORTED.to_owned(),

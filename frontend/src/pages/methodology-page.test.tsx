@@ -73,6 +73,40 @@ describe("MethodologyPage", () => {
     );
   });
 
+  it("shows the research model and its fallback apart from the structuring model", async () => {
+    stubFetch(
+      apiRoutes({
+        "GET /api/methodology": {
+          ...methodologyFixture,
+          models: {
+            ...methodologyFixture.models,
+            analysis: {
+              model: "mistral-large-4",
+              reasoning_effort: "high",
+              configured_reasoning_effort: "high",
+            },
+            research: {
+              model: "mistral-medium-latest",
+              reasoning_effort: "high",
+              configured_reasoning_effort: "high",
+            },
+            research_fallback: "mistral-small-latest",
+          },
+        },
+      }),
+    );
+    renderRoute("/methodologie");
+    const models = await screen.findByRole("region", {
+      name: "Modèles d’IA en vigueur (Mistral AI)",
+    });
+    expect(models).toHaveTextContent("Analyse : recherche web (étape 1)mistral-medium-latest");
+    expect(models).toHaveTextContent("Analyse : structuration (étape 2)mistral-large-4");
+    expect(models).toHaveTextContent(
+      "Recherche web si ce modèle refuse l’outil de recherchemistral-small-latest",
+    );
+    expect(models).not.toHaveTextContent("Analyse (recherche web, puis structuration)");
+  });
+
   it("explains in French when the texts cannot be loaded", async () => {
     stubFetch(
       apiRoutes({

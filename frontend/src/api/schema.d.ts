@@ -2162,8 +2162,18 @@ export interface components {
         };
         /** @description The Mistral models configured in production (§6.1). */
         MethodologyModels: {
-            /** @description Both steps of an analysis: web research, then structuring. */
+            /**
+             * @description Structuring of an analysis (step 2), and its web research unless `research` names
+             *     another model.
+             */
             analysis: components["schemas"]["MethodologyModel"];
+            research?: components["schemas"]["MethodologyModel"] | null;
+            /**
+             * @description Research model used if `research` refuses the built-in connectors (`web_search`);
+             *     `null` without fallback. Optional in the spec, like `research`.
+             * @example mistral-medium-latest
+             */
+            research_fallback?: string | null;
             /** @description Second opinion on the gray zone and review of reports. */
             review: components["schemas"]["MethodologyModel"];
             /**

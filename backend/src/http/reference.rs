@@ -146,8 +146,17 @@ impl MethodologyModel {
 /// The Mistral models configured in production (§6.1).
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, ToSchema)]
 pub struct MethodologyModels {
-    /// Both steps of an analysis: web research, then structuring.
+    /// Structuring of an analysis (step 2), and its web research unless `research` names
+    /// another model.
     pub analysis: MethodologyModel,
+    /// Web research of an analysis (step 1, `web_search` tool). Always sent; declared optional
+    /// so that clients built before it keep compiling.
+    #[schema(required = false)]
+    pub research: Option<MethodologyModel>,
+    /// Research model used if `research` refuses the built-in connectors (`web_search`);
+    /// `null` without fallback. Optional in the spec, like `research`.
+    #[schema(required = false, example = "mistral-medium-latest")]
+    pub research_fallback: Option<String>,
     /// Second opinion on the gray zone and review of reports.
     pub review: MethodologyModel,
     /// Embeddings of the duplicate detection (no reasoning).
@@ -170,6 +179,12 @@ impl MethodologyModels {
                 config.review_reasoning_effort,
                 refused,
             ),
+            research: Some(MethodologyModel::new(
+                &config.research_model,
+                config.analysis_reasoning_effort,
+                refused,
+            )),
+            research_fallback: config.research_fallback_model.clone(),
             embedding: config.embed_model.clone(),
         }
     }
@@ -668,6 +683,9 @@ mod tests {
                               "configured_reasoning_effort": "high" },
                 "review": { "model": "mistral-large-latest", "reasoning_effort": "none",
                             "configured_reasoning_effort": "none" },
+                "research": { "model": "mistral-large-latest", "reasoning_effort": "high",
+                              "configured_reasoning_effort": "high" },
+                "research_fallback": "mistral-medium-latest",
                 "embedding": "mistral-embed"
             })
         );
@@ -700,6 +718,8 @@ mod tests {
             json!({ "model": "mistral-medium-3-5", "reasoning_effort": "high",
                     "configured_reasoning_effort": "high" })
         );
+        // The research model is the analysis one by default, with the same effort.
+        assert_eq!(body["models"]["research"], body["models"]["analysis"]);
         // Omitted by configuration.
         let app = TestApp::new(
             app.pool.clone(),

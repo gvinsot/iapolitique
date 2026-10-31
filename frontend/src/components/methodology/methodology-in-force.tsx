@@ -111,8 +111,19 @@ function CriterionRow({ criterion, index }: { criterion: ScreeningCriterion; ind
 export function MethodologyInForce({ methodology }: { methodology: Methodology }) {
   const labels = useTaxonomyLabels();
   const { models, scoring, screening } = methodology;
-  const modelRows: [string, MethodologyModel | string][] = [
-    ["Analyse (recherche web, puis structuration)", models.analysis],
+  type ModelRow = [string, MethodologyModel | string];
+  const analysisRows: ModelRow[] = models.research
+    ? [
+        ["Analyse : recherche web (étape 1)", models.research],
+        ["Analyse : structuration (étape 2)", models.analysis],
+      ]
+    : [["Analyse (recherche web, puis structuration)", models.analysis]];
+  const fallbackRows: ModelRow[] = models.research_fallback
+    ? [["Recherche web si ce modèle refuse l’outil de recherche", models.research_fallback]]
+    : [];
+  const modelRows: ModelRow[] = [
+    ...analysisRows,
+    ...fallbackRows,
     ["Second avis et revue des signalements", models.review],
     ["Détection des doublons (embeddings)", models.embedding],
   ];

@@ -196,6 +196,10 @@ impl DecisionServiceConfig {
     }
 }
 
+/// Research model used when the configured one refuses the built-in connectors: the model of
+/// Mistral's web search examples (<https://docs.mistral.ai/agents/tools/built-in/websearch>).
+pub const DEFAULT_RESEARCH_FALLBACK_MODEL: &str = "mistral-medium-latest";
+
 #[derive(Debug, Clone)]
 pub struct MistralConfig {
     /// Optional: without it the worker leaves AI jobs queued and logs a warning.
@@ -203,6 +207,12 @@ pub struct MistralConfig {
     pub base_url: String,
     pub analysis_model: String,
     pub review_model: String,
+    /// `MISTRAL_RESEARCH_MODEL`: web research of an analysis (step 1), the analysis model by
+    /// default.
+    pub research_model: String,
+    /// `MISTRAL_RESEARCH_FALLBACK_MODEL`: research model used once `research_model` refused
+    /// the built-in connectors (`web_search`); `None` when it is the research model itself.
+    pub research_fallback_model: Option<String>,
     pub embed_model: String,
     /// `MISTRAL_ANALYSIS_REASONING_EFFORT`: research and structuring of analyses (§6.1). `None`:
     /// the parameter is omitted (Mistral's default, undocumented).
@@ -346,6 +356,12 @@ impl Config {
 
         let analysis_model = env.string("MISTRAL_ANALYSIS_MODEL", "mistral-large-latest");
         let review_model = env.string("MISTRAL_REVIEW_MODEL", &analysis_model);
+        let research_model = env.string("MISTRAL_RESEARCH_MODEL", &analysis_model);
+        let research_fallback_model = Some(env.string(
+            "MISTRAL_RESEARCH_FALLBACK_MODEL",
+            DEFAULT_RESEARCH_FALLBACK_MODEL,
+        ))
+        .filter(|fallback| *fallback != research_model);
         let analysis_input = env.eur("MISTRAL_ANALYSIS_INPUT_EUR_PER_MTOK", "2");
         let analysis_output = env.eur("MISTRAL_ANALYSIS_OUTPUT_EUR_PER_MTOK", "6");
         let prices = MistralPrices {
@@ -362,6 +378,8 @@ impl Config {
             base_url: env.url("MISTRAL_API_BASE_URL", "https://api.mistral.ai"),
             analysis_model,
             review_model,
+            research_model,
+            research_fallback_model,
             embed_model: env.string("MISTRAL_EMBED_MODEL", "mistral-embed"),
             analysis_reasoning_effort: env
                 .reasoning_effort("MISTRAL_ANALYSIS_REASONING_EFFORT", ReasoningEffort::High),
@@ -738,6 +756,11 @@ mod tests {
         assert_eq!(config.prompts_dir, PathBuf::from("/app/prompts"));
         assert_eq!(config.mistral.analysis_model, "mistral-large-latest");
         assert_eq!(config.mistral.review_model, "mistral-large-latest");
+        assert_eq!(config.mistral.research_model, "mistral-large-latest");
+        assert_eq!(
+            config.mistral.research_fallback_model.as_deref(),
+            Some("mistral-medium-latest")
+        );
         assert_eq!(config.mistral.embed_model, "mistral-embed");
         assert_eq!(config.mistral.daily_budget, MicroEur(5_000_000));
         assert_eq!(

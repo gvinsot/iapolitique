@@ -350,6 +350,9 @@ struct Attempt<T> {
     rejects_reasoning: bool,
     /// Non-2xx status: what Mistral said, sanitized for the logs ([`error_summary`]).
     error_detail: Option<String>,
+    /// HTTP 400/422 saying the model does not take built-in connectors (`web_search`,
+    /// [`rejects_connectors`]).
+    rejects_connectors: bool,
     /// Research step: distinct citable pages of the answer (`ai_calls.consulted_pages`).
     consulted_pages: Option<u64>,
 }
@@ -370,6 +373,7 @@ impl<T> Attempt<T> {
             retry_after: None,
             rejects_reasoning: false,
             error_detail: None,
+            rejects_connectors: false,
             consulted_pages: None,
         }
     }
@@ -383,6 +387,9 @@ struct ReasoningSupport {
     refused: Mutex<HashSet<String>>,
     /// Models that took it since the start (a refusal recorded earlier is forgotten).
     accepted: Mutex<HashSet<String>>,
+    /// Research models that refused the built-in connectors (`web_search`): the research goes
+    /// to `MISTRAL_RESEARCH_FALLBACK_MODEL` for the life of the process.
+    connectors_refused: Mutex<HashSet<String>>,
 }
 
 fn lock(set: &Mutex<HashSet<String>>) -> std::sync::MutexGuard<'_, HashSet<String>> {
@@ -409,6 +416,32 @@ fn mentions_reasoning(body: &[u8]) -> bool {
         }
     }
     serde_json::from_slice::<Value>(body).is_ok_and(|value| walk(&value))
+}
+
+/// Mistral's error code for a model that does not take built-in connectors (`web_search`):
+/// « Model X currently does not support builtin connectors. » (HTTP 400, seen on 2026-10-31
+/// with `mistral-large-4`).
+const CONNECTORS_UNSUPPORTED_CODE: &str = "3004";
+
+/// Whether a Mistral error body says the model does not take built-in connectors: its `code`
+/// is [`CONNECTORS_UNSUPPORTED_CODE`], or its message (never the echoed `input`) mentions
+/// `builtin connectors`.
+fn rejects_connectors(body: &[u8]) -> bool {
+    let Ok(value) = serde_json::from_slice::<Value>(body) else {
+        return false;
+    };
+    let error = value
+        .get("error")
+        .filter(|e| e.is_object())
+        .unwrap_or(&value);
+    let code = error.get("code").and_then(scalar_text);
+    let message = error
+        .get("message")
+        .and_then(Value::as_str)
+        .map(|m| without_echoed_request(m).to_ascii_lowercase());
+    code.as_deref() == Some(CONNECTORS_UNSUPPORTED_CODE)
+        || message
+            .is_some_and(|m| m.contains("builtin connector") || m.contains("built-in connector"))
 }
 
 /// Longest value kept by [`error_summary`] for one field, and for the whole summary.
@@ -550,6 +583,8 @@ pub struct MistralClient {
     api_key: Secret,
     analysis_model: String,
     review_model: String,
+    research_model: String,
+    research_fallback_model: Option<String>,
     embed_model: String,
     analysis_effort: Option<ReasoningEffort>,
     review_effort: Option<ReasoningEffort>,
@@ -571,6 +606,11 @@ impl MistralClient {
             api_key,
             analysis_model: config.analysis_model.clone(),
             review_model: config.review_model.clone(),
+            research_model: config.research_model.clone(),
+            research_fallback_model: config
+                .research_fallback_model
+                .clone()
+                .filter(|fallback| *fallback != config.research_model),
             embed_model: config.embed_model.clone(),
             analysis_effort: config.analysis_reasoning_effort,
             review_effort: config.review_reasoning_effort,
@@ -598,6 +638,19 @@ impl MistralClient {
         }
     }
 
+    /// Model of the web research (step 1 of an analysis): `MISTRAL_RESEARCH_MODEL`, or
+    /// `MISTRAL_RESEARCH_FALLBACK_MODEL` once the former refused the built-in connectors.
+    pub fn research_model(&self) -> &str {
+        match &self.research_fallback_model {
+            Some(fallback)
+                if lock(&self.reasoning.connectors_refused).contains(&self.research_model) =>
+            {
+                fallback
+            }
+            _ => &self.research_model,
+        }
+    }
+
     /// `reasoning_effort` configured for the calls of `tier`; `None`: omitted (Mistral's
     /// default).
     pub fn reasoning_effort(&self, tier: ModelTier) -> Option<ReasoningEffort> {
@@ -610,8 +663,25 @@ impl MistralClient {
     /// `reasoning_effort` really sent with the calls of `tier`: the configured one, unless the
     /// model refused it since the process started.
     pub fn effective_reasoning_effort(&self, tier: ModelTier) -> Option<ReasoningEffort> {
+        self.effort_for(tier, self.model(tier))
+    }
+
+    /// `reasoning_effort` of `tier` sent to `model`: `None` if `model` refused it.
+    fn effort_for(&self, tier: ModelTier, model: &str) -> Option<ReasoningEffort> {
         self.reasoning_effort(tier)
-            .filter(|_| !lock(&self.reasoning.refused).contains(self.model(tier)))
+            .filter(|_| !lock(&self.reasoning.refused).contains(model))
+    }
+
+    /// The research model refused the built-in connectors: its research goes to the fallback
+    /// model for the process (one WARN per model).
+    fn remember_connectors_refusal(&self, model: &str, fallback: &str) {
+        if lock(&self.reasoning.connectors_refused).insert(model.to_owned()) {
+            tracing::warn!(
+                model,
+                fallback,
+                "model {model} does not support web_search, researching with {fallback}"
+            );
+        }
     }
 
     /// `model` refused `reasoning_effort` and answered the same call without it: remembered for
@@ -713,46 +783,55 @@ impl MistralClient {
             "stream": false,
         });
         let (base, check, feedback) = (&base, &check, &feedback);
-        self.run(pool, ctx, Some(tier), move |effort| async move {
-            let mut body = base.clone();
-            let correction = feedback
-                .lock()
-                .unwrap_or_else(|poisoned| poisoned.into_inner())
-                .clone();
-            if let Some(correction) = correction {
-                body["messages"][1]["content"] = json!(format!("{}\n\n{correction}", prompt.user));
-            }
-            // A top-level field of chat completions.
-            if let Some(effort) = effort {
-                body["reasoning_effort"] = json!(effort.as_str());
-            }
-            let (response, http_status) = match self
-                .post("/v1/chat/completions", &body, self.timeouts.chat(effort))
-                .await
-            {
-                Ok(ok) => ok,
-                Err(failure) => return failure.into(),
-            };
-            let parsed = parse_chat(&response);
-            let result = parsed.content.and_then(|content| {
-                let value: Value = serde_json::from_str(&content)
-                    .map_err(|_| MistralError::InvalidOutput("answer is not JSON".into()))?;
-                schema
-                    .validate(&value)
-                    .map_err(|err| MistralError::InvalidOutput(err.to_string()))?;
-                let typed: T = serde_json::from_value(value).map_err(|err| {
-                    MistralError::InvalidOutput(format!("unexpected shape: {err}"))
-                })?;
-                check(&typed).map_err(|rejection| {
-                    *feedback
-                        .lock()
-                        .unwrap_or_else(|poisoned| poisoned.into_inner()) = rejection.feedback;
-                    MistralError::InvalidOutput(rejection.problem)
-                })?;
-                Ok(typed)
-            });
-            Attempt::answered(result, parsed.usage, parsed.model, http_status)
-        })
+        let model = self.model(tier).to_owned();
+        self.run(
+            pool,
+            ctx,
+            Some(tier),
+            model,
+            None,
+            move |effort, _| async move {
+                let mut body = base.clone();
+                let correction = feedback
+                    .lock()
+                    .unwrap_or_else(|poisoned| poisoned.into_inner())
+                    .clone();
+                if let Some(correction) = correction {
+                    body["messages"][1]["content"] =
+                        json!(format!("{}\n\n{correction}", prompt.user));
+                }
+                // A top-level field of chat completions.
+                if let Some(effort) = effort {
+                    body["reasoning_effort"] = json!(effort.as_str());
+                }
+                let (response, http_status) = match self
+                    .post("/v1/chat/completions", &body, self.timeouts.chat(effort))
+                    .await
+                {
+                    Ok(ok) => ok,
+                    Err(failure) => return failure.into(),
+                };
+                let parsed = parse_chat(&response);
+                let result = parsed.content.and_then(|content| {
+                    let value: Value = serde_json::from_str(&content)
+                        .map_err(|_| MistralError::InvalidOutput("answer is not JSON".into()))?;
+                    schema
+                        .validate(&value)
+                        .map_err(|err| MistralError::InvalidOutput(err.to_string()))?;
+                    let typed: T = serde_json::from_value(value).map_err(|err| {
+                        MistralError::InvalidOutput(format!("unexpected shape: {err}"))
+                    })?;
+                    check(&typed).map_err(|rejection| {
+                        *feedback
+                            .lock()
+                            .unwrap_or_else(|poisoned| poisoned.into_inner()) = rejection.feedback;
+                        MistralError::InvalidOutput(rejection.problem)
+                    })?;
+                    Ok(typed)
+                });
+                Attempt::answered(result, parsed.usage, parsed.model, http_status)
+            },
+        )
         .await
     }
 
@@ -766,7 +845,6 @@ impl MistralClient {
         prompt: &RenderedPrompt,
     ) -> Result<Completion<Research>, MistralError> {
         let base = json!({
-            "model": self.model(tier),
             "instructions": prompt.system,
             "inputs": prompt.user,
             "tools": [{ "type": "web_search" }],
@@ -775,52 +853,65 @@ impl MistralClient {
             "stream": false,
         });
         let base = &base;
-        self.run(pool, ctx, Some(tier), move |effort| async move {
-            let mut body = base.clone();
-            // Conversations take it among the completion arguments.
-            if let Some(effort) = effort {
-                body["completion_args"]["reasoning_effort"] = json!(effort.as_str());
-            }
-            let (response, http_status) = match self
-                .post(
-                    "/v1/conversations",
-                    &body,
-                    self.timeouts.conversation(effort),
-                )
-                .await
-            {
-                Ok(ok) => ok,
-                Err(failure) => return failure.into(),
-            };
-            let parsed = parse_conversation(&response);
-            let shape = &parsed.shape;
-            // Structure only (§14.6): never a text, a title or a URL.
-            tracing::info!(
-                purpose = ctx.purpose.as_str(),
-                model = parsed.model.as_deref().unwrap_or(self.model(tier)),
-                reasoning_effort = effort.map_or("omitted", ReasoningEffort::as_str),
-                message_outputs = shape.message_outputs,
-                string_contents = shape.string_contents,
-                tool_executions = shape.tool_executions,
-                other_entries = shape.other_entries,
-                text_chunks = shape.text_chunks,
-                thinking_chunks = shape.thinking_chunks,
-                tool_references = shape.tool_references,
-                tool_references_in_thinking = shape.tool_references_in_thinking,
-                reference_chunks = shape.reference_chunks,
-                other_chunks = shape.other_chunks,
-                consulted_pages = shape.consulted_pages,
-                search_result_pages = shape.search_result_pages,
-                web_searches = parsed.usage.web_searches,
-                execution_info_keys = shape.execution_info_keys.join(","),
-                execution_info_shape = shape.execution_info_shape.as_str(),
-                "web research answer structure"
-            );
-            let mut attempt =
-                Attempt::answered(parsed.research, parsed.usage, parsed.model, http_status);
-            attempt.consulted_pages = Some(u64::from(shape.consulted_pages));
-            attempt
-        })
+        let model = self.research_model().to_owned();
+        let fallback = self
+            .research_fallback_model
+            .clone()
+            .filter(|fallback| *fallback != model);
+        self.run(
+            pool,
+            ctx,
+            Some(tier),
+            model,
+            fallback,
+            move |effort, model| async move {
+                let mut body = base.clone();
+                body["model"] = json!(model);
+                // Conversations take it among the completion arguments.
+                if let Some(effort) = effort {
+                    body["completion_args"]["reasoning_effort"] = json!(effort.as_str());
+                }
+                let (response, http_status) = match self
+                    .post(
+                        "/v1/conversations",
+                        &body,
+                        self.timeouts.conversation(effort),
+                    )
+                    .await
+                {
+                    Ok(ok) => ok,
+                    Err(failure) => return failure.into(),
+                };
+                let parsed = parse_conversation(&response);
+                let shape = &parsed.shape;
+                // Structure only (§14.6): never a text, a title or a URL.
+                tracing::info!(
+                    purpose = ctx.purpose.as_str(),
+                    model = parsed.model.as_deref().unwrap_or(&model),
+                    reasoning_effort = effort.map_or("omitted", ReasoningEffort::as_str),
+                    message_outputs = shape.message_outputs,
+                    string_contents = shape.string_contents,
+                    tool_executions = shape.tool_executions,
+                    other_entries = shape.other_entries,
+                    text_chunks = shape.text_chunks,
+                    thinking_chunks = shape.thinking_chunks,
+                    tool_references = shape.tool_references,
+                    tool_references_in_thinking = shape.tool_references_in_thinking,
+                    reference_chunks = shape.reference_chunks,
+                    other_chunks = shape.other_chunks,
+                    consulted_pages = shape.consulted_pages,
+                    search_result_pages = shape.search_result_pages,
+                    web_searches = parsed.usage.web_searches,
+                    execution_info_keys = shape.execution_info_keys.join(","),
+                    execution_info_shape = shape.execution_info_shape.as_str(),
+                    "web research answer structure"
+                );
+                let mut attempt =
+                    Attempt::answered(parsed.research, parsed.usage, parsed.model, http_status);
+                attempt.consulted_pages = Some(u64::from(shape.consulted_pages));
+                attempt
+            },
+        )
         .await
     }
 
@@ -835,7 +926,8 @@ impl MistralClient {
         let body = json!({ "model": self.embed_model, "input": texts });
         let body = &body;
         // No reasoning for embeddings: the effort given is always `None` (no tier).
-        self.run(pool, ctx, None, move |_| async move {
+        let model = self.embed_model.clone();
+        self.run(pool, ctx, None, model, None, move |_, _| async move {
             let (response, http_status) = match self
                 .post("/v1/embeddings", body, self.timeouts.embedding)
                 .await
@@ -872,22 +964,23 @@ impl MistralClient {
     /// Runs the attempts of a call, records each of them and sums usage and cost.
     /// `attempt_fn` sends the request with the `reasoning_effort` it is given; a refusal of the
     /// parameter is followed at once by the same request without it (not one of the retries).
+    /// `attempt_fn` is also given the model to call: `model`, or `fallback` at once (not one of
+    /// the retries either) once `model` refused the built-in connectors.
     async fn run<T, F, Fut>(
         &self,
         pool: &PgPool,
         ctx: &CallContext,
         tier: Option<ModelTier>,
+        model: String,
+        mut fallback: Option<String>,
         attempt_fn: F,
     ) -> Result<Completion<T>, MistralError>
     where
-        F: Fn(Option<ReasoningEffort>) -> Fut,
+        F: Fn(Option<ReasoningEffort>, String) -> Fut,
         Fut: std::future::Future<Output = Attempt<T>>,
     {
-        let default_model = match tier {
-            Some(tier) => self.model(tier).to_owned(),
-            None => self.embed_model.clone(),
-        };
-        let mut effort = tier.and_then(|tier| self.effective_reasoning_effort(tier));
+        let mut default_model = model;
+        let mut effort = tier.and_then(|tier| self.effort_for(tier, &default_model));
         let mut max_attempts = self.retry.max_attempts;
         // HTTP status of a refusal of `reasoning_effort`, until the call without it is answered.
         let mut refusal: Option<u16> = None;
@@ -905,7 +998,7 @@ impl MistralClient {
                 "Mistral call started"
             );
             let started = Instant::now();
-            let attempt = attempt_fn(effort).await;
+            let attempt = attempt_fn(effort, default_model.clone()).await;
             let latency = started.elapsed();
             let cost = self.cost(tier, attempt.usage);
             total.add(attempt.usage);
@@ -978,6 +1071,17 @@ impl MistralClient {
                         detail = attempt.error_detail.as_deref(),
                         "Mistral call failed"
                     );
+                    if attempt.rejects_connectors
+                        && let Some(next) = fallback.take()
+                    {
+                        // Same call at once with a model that takes `web_search`.
+                        self.remember_connectors_refusal(&default_model, &next);
+                        refusal = None;
+                        effort = tier.and_then(|tier| self.effort_for(tier, &next));
+                        default_model = next;
+                        max_attempts += 1;
+                        continue;
+                    }
                     if effort.is_some() && attempt.rejects_reasoning {
                         // Same call at once without the parameter (§6.1).
                         refusal = attempt.http_status;
@@ -1073,12 +1177,15 @@ impl MistralClient {
                 .ok();
             let rejects_reasoning =
                 matches!(status, 400 | 422) && body.as_deref().is_some_and(mentions_reasoning);
+            let rejects_connectors =
+                matches!(status, 400 | 422) && body.as_deref().is_some_and(rejects_connectors);
             return Err(Failure {
                 error: MistralError::Http { status },
                 http_status: Some(status),
                 retry_after,
                 rejects_reasoning,
                 error_detail: body.as_deref().and_then(error_summary),
+                rejects_connectors,
             });
         }
         let failure = |error| Failure {
@@ -1087,6 +1194,7 @@ impl MistralClient {
             retry_after: None,
             rejects_reasoning: false,
             error_detail: None,
+            rejects_connectors: false,
         };
         let bytes = match super::read_capped(response, super::MAX_MISTRAL_RESPONSE_BYTES).await {
             Ok(bytes) => bytes,
@@ -1116,6 +1224,7 @@ struct Failure {
     retry_after: Option<Duration>,
     rejects_reasoning: bool,
     error_detail: Option<String>,
+    rejects_connectors: bool,
 }
 
 impl Failure {
@@ -1126,6 +1235,7 @@ impl Failure {
             retry_after: None,
             rejects_reasoning: false,
             error_detail: None,
+            rejects_connectors: false,
         }
     }
 }
@@ -1140,6 +1250,7 @@ impl<T> From<Failure> for Attempt<T> {
             retry_after: failure.retry_after,
             rejects_reasoning: failure.rejects_reasoning,
             error_detail: failure.error_detail,
+            rejects_connectors: failure.rejects_connectors,
             consulted_pages: None,
         }
     }
@@ -2191,6 +2302,143 @@ mod tests {
         assert_eq!(calls[0]["web_search_count"], 2);
         assert_eq!(calls[0]["purpose"], "analysis_research");
         assert_eq!(calls[0]["reasoning_effort"], "high");
+    }
+
+    /// Mistral's answer to `web_search` on a model without built-in connectors (production,
+    /// 2026-10-31).
+    fn connectors_refusal() -> ResponseTemplate {
+        ResponseTemplate::new(400).set_body_json(json!({
+            "object": "error",
+            "message": "Model mistral-large-4 currently does not support builtin connectors.",
+            "type": "invalid_request_error",
+            "param": null,
+            "code": "3004"
+        }))
+    }
+
+    #[test]
+    fn connector_refusals_are_recognised() {
+        let body = |v: Value| v.to_string().into_bytes();
+        assert!(rejects_connectors(&body(
+            json!({ "code": "3004", "message": "?" })
+        )));
+        assert!(rejects_connectors(&body(json!({ "code": 3004 }))));
+        assert!(rejects_connectors(&body(json!({
+            "message": "Model x currently does not support builtin connectors."
+        }))));
+        assert!(rejects_connectors(&body(json!({
+            "error": { "message": "Built-in connectors are not available" }
+        }))));
+        // Another 400, or a request quoting the words, is not a refusal of the tool.
+        assert!(!rejects_connectors(&body(
+            json!({ "code": "3001", "message": "bad" })
+        )));
+        assert!(!rejects_connectors(&body(json!({
+            "message": "Bad: [{'msg': 'x', 'input': 'builtin connectors'}]"
+        }))));
+        assert!(!rejects_connectors(b"builtin connectors"));
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn research_falls_back_when_the_model_refuses_web_search(pool: PgPool) {
+        let server = MockServer::start().await;
+        Mock::given(path("/v1/conversations"))
+            .and(body_partial_json(json!({ "model": "mistral-large-4" })))
+            .respond_with(connectors_refusal())
+            .expect(1)
+            .mount(&server)
+            .await;
+        Mock::given(path("/v1/conversations"))
+            .and(body_partial_json(json!({
+                "model": "mistral-medium-latest",
+                "tools": [{ "type": "web_search" }],
+                "completion_args": { "reasoning_effort": "high" },
+            })))
+            .respond_with(ResponseTemplate::new(200).set_body_json(conversation_response()))
+            .expect(2)
+            .mount(&server)
+            .await;
+        let client = client_with(&server, &[("MISTRAL_ANALYSIS_MODEL", "mistral-large-4")]);
+        assert_eq!(client.research_model(), "mistral-large-4");
+        let prompt = test_prompts()
+            .analysis_research
+            .render(
+                &PromptVars::new()
+                    .set("today", "2026-10-31")
+                    .set("idea_text", "Idée"),
+            )
+            .unwrap();
+        let ctx = CallContext::new(AiPurpose::AnalysisResearch);
+        let (completion, logs) = crate::http::security_tests::capture_logs(client.research(
+            &pool,
+            &ctx,
+            ModelTier::Analysis,
+            &prompt,
+        ))
+        .await;
+        let completion = completion.unwrap();
+        assert_eq!(completion.attempts, 2);
+        assert!(
+            logs.contains(
+                "model mistral-large-4 does not support web_search, researching with \
+                 mistral-medium-latest"
+            ),
+            "{logs}"
+        );
+        // Remembered: the next research goes to the fallback at once, the structuring model
+        // is unchanged.
+        assert_eq!(client.research_model(), "mistral-medium-latest");
+        assert_eq!(client.model(ModelTier::Analysis), "mistral-large-4");
+        client
+            .research(&pool, &ctx, ModelTier::Analysis, &prompt)
+            .await
+            .unwrap();
+        let recorded: Vec<(Value, Value)> = calls(&pool)
+            .await
+            .iter()
+            .map(|c| (c["model"].clone(), c["error_code"].clone()))
+            .collect();
+        assert_eq!(
+            recorded,
+            [
+                (json!("mistral-large-4"), json!("http_400")),
+                (json!("mistral-large-2512"), Value::Null),
+                (json!("mistral-large-2512"), Value::Null),
+            ]
+        );
+    }
+
+    #[sqlx::test(migrator = "crate::db::MIGRATOR")]
+    async fn a_refused_web_search_without_fallback_fails(pool: PgPool) {
+        let server = MockServer::start().await;
+        Mock::given(path("/v1/conversations"))
+            .respond_with(connectors_refusal())
+            .expect(1)
+            .mount(&server)
+            .await;
+        // A fallback equal to the research model: no fallback.
+        let client = client_with(
+            &server,
+            &[
+                ("MISTRAL_RESEARCH_MODEL", "mistral-large-4"),
+                ("MISTRAL_RESEARCH_FALLBACK_MODEL", "mistral-large-4"),
+            ],
+        );
+        let prompt = test_prompts()
+            .analysis_research
+            .render(
+                &PromptVars::new()
+                    .set("today", "2026-10-31")
+                    .set("idea_text", "Idée"),
+            )
+            .unwrap();
+        let ctx = CallContext::new(AiPurpose::AnalysisResearch);
+        let error = client
+            .research(&pool, &ctx, ModelTier::Analysis, &prompt)
+            .await
+            .unwrap_err();
+        assert!(matches!(error, MistralError::Http { status: 400 }));
+        assert_eq!(client.research_model(), "mistral-large-4");
     }
 
     #[test]

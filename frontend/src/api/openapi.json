@@ -6641,7 +6641,26 @@
         "properties": {
           "analysis": {
             "$ref": "#/components/schemas/MethodologyModel",
-            "description": "Both steps of an analysis: web research, then structuring."
+            "description": "Structuring of an analysis (step 2), and its web research unless `research` names\nanother model."
+          },
+          "research": {
+            "oneOf": [
+              {
+                "$ref": "#/components/schemas/MethodologyModel",
+                "description": "Web research of an analysis (step 1, `web_search` tool). Always sent; declared optional\nso that clients built before it keep compiling."
+              },
+              {
+                "type": "null"
+              }
+            ]
+          },
+          "research_fallback": {
+            "type": [
+              "string",
+              "null"
+            ],
+            "description": "Research model used if `research` refuses the built-in connectors (`web_search`);\n`null` without fallback. Optional in the spec, like `research`.",
+            "example": "mistral-medium-latest"
           },
           "review": {
             "$ref": "#/components/schemas/MethodologyModel",

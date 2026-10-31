@@ -109,6 +109,8 @@ fn mistral_client(config: &Config) -> anyhow::Result<Option<MistralClient>> {
             tracing::info!(
                 analysis_model = %mistral.analysis_model,
                 analysis_reasoning_effort = effort(mistral.analysis_reasoning_effort),
+                research_model = %mistral.research_model,
+                research_fallback_model = mistral.research_fallback_model.as_deref(),
                 review_model = %mistral.review_model,
                 review_reasoning_effort = effort(mistral.review_reasoning_effort),
                 "Mistral client ready"

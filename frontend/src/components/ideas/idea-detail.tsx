@@ -29,6 +29,7 @@ import { ImpactGrid } from "./impact-grid";
 import { OriginalContribution } from "./original-contribution";
 import { RightOfReply } from "./right-of-reply";
 import { ScoreBreakdown } from "./score-breakdown";
+import { ShareButtons } from "./share-buttons";
 import { SourcesList } from "./sources-list";
 
 const linkClass = "font-medium text-primary underline underline-offset-4 hover:no-underline";
@@ -119,6 +120,7 @@ function IdeaHeader({ idea }: { idea: IdeaDetail }) {
         <LegalVehicleBadge vehicle={idea.analysis.legal_vehicle} />
       </div>
       <h1 className="text-3xl font-semibold text-pretty sm:text-4xl">{idea.title}</h1>
+      <ShareButtons url={idea.canonical_url} title={idea.title} />
       <p className="text-lg text-pretty text-muted-foreground">{idea.summary}</p>
       <ul className="flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
         {idea.published_on ? <li>Publiée le {formatDate(idea.published_on)}</li> : null}

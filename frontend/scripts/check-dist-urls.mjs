@@ -22,6 +22,18 @@ export const ALLOWED_HOSTS = new Map([
   ["creativecommons.org", "CC BY 4.0 compatibility link of /licence"],
   ["www.cnil.fr", "complaint channel linked from /confidentialite"],
   ["www.internet-signalement.gouv.fr", "PHAROS, linked from the admin escalations"],
+  [
+    "www.facebook.com",
+    "share link of an idea page, opened only on click (no script, lib/share.ts)",
+  ],
+  ["x.com", "share link of an idea page, opened only on click (no script, lib/share.ts)"],
+  [
+    "www.linkedin.com",
+    "share link of an idea page, opened only on click (no script, lib/share.ts)",
+  ],
+  ["bsky.app", "share link of an idea page, opened only on click (no script, lib/share.ts)"],
+  ["wa.me", "share link of an idea page, opened only on click (no script, lib/share.ts)"],
+  ["t.me", "share link of an idea page, opened only on click (no script, lib/share.ts)"],
   ["react.dev", "links in React's minified error messages"],
   ["reactrouter.com", "links in React Router's warnings"],
   ["github.com", "links in library error messages"],

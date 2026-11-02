@@ -188,6 +188,13 @@ iapolitique/
 - **Aucune ressource tierce** : pas de CDN, pas de Google Fonts, pas de captcha tiers. Polices et
   assets auto-hébergés. Pas de cookie (le suivi passe par un lien). Seule exception : la mesure
   d'audience Umami auto-hébergée de l'éditeur (§7.6).
+- **Partage** (demande de l'éditeur du 2026-11-02) : sous le titre de la fiche d'une idée, des
+  liens de partage simples (`frontend/src/lib/share.ts` : Facebook, X, LinkedIn, Bluesky,
+  WhatsApp, Telegram, e-mail), le partage natif du navigateur s'il existe et « Copier le lien ».
+  Ce sont de simples `<a>` vers l'adresse de partage publique de chaque réseau (URL canonique et
+  titre neutre seulement), ouverts en nouvel onglet avec `rel="noopener noreferrer nofollow"` :
+  aucun script, widget, pixel ni icône de réseau n'est chargé, rien ne part avant le clic. Les
+  domaines figurent dans `scripts/check-dist-urls.mjs`.
 - Mobile first.
 
 ### 4.3 Données

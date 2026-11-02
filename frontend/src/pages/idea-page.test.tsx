@@ -51,6 +51,27 @@ describe("IdeaPage", () => {
     expect(screen.getByRole("heading", { level: 2, name: "Sources" })).toBeInTheDocument();
   });
 
+  it("offers share links right after the title, without third-party script", async () => {
+    stubFetch(detailRoutes());
+    const { container } = renderRoute(PATH);
+    const title = await screen.findByRole("heading", { level: 1, name: ideaDetailFixture.title });
+
+    const share = screen.getByRole("navigation", { name: "Partager cette idée" });
+    expect(title.nextElementSibling).toBe(share);
+    const facebook = within(share).getByRole("link", { name: /Facebook/ });
+    expect(facebook).toHaveAttribute(
+      "href",
+      `https://www.facebook.com/sharer/sharer.php?u=${encodeURIComponent(ideaDetailFixture.canonical_url)}`,
+    );
+    expect(facebook).toHaveAttribute("target", "_blank");
+    expect(facebook.getAttribute("rel")).toContain("noreferrer");
+    for (const name of [/^X/, /LinkedIn/, /Bluesky/, /WhatsApp/, /Telegram/, /E-mail/]) {
+      expect(within(share).getByRole("link", { name })).toBeInTheDocument();
+    }
+    expect(within(share).getByRole("button", { name: "Copier le lien" })).toBeInTheDocument();
+    expect(container.querySelector("script[src], iframe")).toBeNull();
+  });
+
   it("has no detectable accessibility violation", async () => {
     stubFetch(detailRoutes());
     renderRoute(PATH);

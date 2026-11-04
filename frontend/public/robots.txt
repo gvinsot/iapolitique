@@ -1,3 +1,5 @@
+# Private pages: the tracking page (its token lives in the URL fragment) and the administration.
+# /api/ stays crawlable: search engines render the pages with it.
 User-agent: *
 Disallow: /admin
-Disallow: /suivi/
+Disallow: /suivi

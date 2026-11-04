@@ -8,7 +8,7 @@ import { ErrorState, ListSkeleton } from "@/components/common/states";
 import { Container } from "@/components/layout/container";
 import { MethodologyInForce } from "@/components/methodology/methodology-in-force";
 import { useDocumentTitle } from "@/hooks/use-document-title";
-import { usePageDescription } from "@/hooks/use-page-meta";
+import { useCanonicalPath, usePageDescription } from "@/hooks/use-page-meta";
 import { RULES_SCORE_ANCHOR } from "@/lib/rules";
 
 const tableOfContents = [
@@ -40,6 +40,7 @@ function TextsInForce() {
 
 export function MethodologyPage() {
   useDocumentTitle("Méthodologie");
+  useCanonicalPath(paths.methodology);
   usePageDescription(
     "Prompts, grille de filtrage, seuils et formule du score d’iapolitique, tels qu’utilisés en production et versionnés.",
   );

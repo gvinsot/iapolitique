@@ -57,7 +57,8 @@ COPY frontend/nginx.conf /etc/nginx/nginx.conf
 # system is read-only (devops/docker-compose.swarm.yml).
 ENV NGINX_ENVSUBST_OUTPUT_DIR=/run/nginx-generated
 COPY frontend/nginx/.well-known/security.txt.template /etc/nginx/templates/.well-known/
-COPY --chmod=0755 frontend/nginx/16-security-txt.envsh /docker-entrypoint.d/
+COPY --chmod=0755 frontend/nginx/16-security-txt.envsh frontend/nginx/17-robots-txt.envsh \
+     /docker-entrypoint.d/
 COPY --from=build /app/dist /usr/share/nginx/html
 RUN nginx -t
 EXPOSE 80

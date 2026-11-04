@@ -1,12 +1,21 @@
 import type { ReactNode } from "react";
 
+import { paths } from "@/app/paths";
 import { PageHeader } from "@/components/common/page-header";
 import { LegalDetailsUnavailable } from "@/components/legal/legal-details";
 import { Container } from "@/components/layout/container";
 import { useDocumentTitle } from "@/hooks/use-document-title";
-import { usePageDescription } from "@/hooks/use-page-meta";
+import { useCanonicalPath, usePageDescription } from "@/hooks/use-page-meta";
 import { type LegalDetails } from "@/hooks/use-legal-info";
 import { formatLegalDate, LEGAL_TEXTS_DATES, type LegalPageKey } from "@/lib/legal";
+
+/** Address of each legal page (canonical link). */
+const LEGAL_PAGE_PATHS: Readonly<Record<LegalPageKey, string>> = {
+  mentions_legales: paths.legalNotice,
+  confidentialite: paths.privacy,
+  regles: paths.terms,
+  licence: paths.licence,
+};
 
 export interface TocEntry {
   anchor: string;
@@ -30,6 +39,7 @@ interface LegalPageProps {
 export function LegalPage({ title, description, pageKey, details, toc, children }: LegalPageProps) {
   useDocumentTitle(title);
   usePageDescription(description);
+  useCanonicalPath(LEGAL_PAGE_PATHS[pageKey]);
   const updatedAt = details.info?.pages[pageKey] ?? LEGAL_TEXTS_DATES[pageKey];
 
   return (

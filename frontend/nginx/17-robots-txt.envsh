@@ -1,0 +1,34 @@
+#!/bin/sh
+# Sourced by the nginx image's /docker-entrypoint.sh: renders /robots.txt into
+# $NGINX_ENVSUBST_OUTPUT_DIR from the built one (public/robots.txt) and TRAEFIK_HOST
+# (AGENTS.md §4.2, SEO):
+#
+# - production host: the built rules plus `Sitemap: https://<host>/api/sitemap.xml` (an absolute
+#   URL is required; a sitemap announced by robots.txt may list URLs outside /api/);
+# - QA host (qa.…): `Disallow: /` only, so that the QA copy is never indexed;
+# - host missing or invalid: no file is rendered and nginx serves the built robots.txt.
+# Sourced with `set -e` by the entrypoint: no command here may fail.
+
+robots_txt_host="${TRAEFIK_HOST:-}"
+robots_txt_dir="${NGINX_ENVSUBST_OUTPUT_DIR:-/run/nginx-generated}"
+case "$robots_txt_host" in
+    "" | *[!A-Za-z0-9.-]* | .* | *. | *..*) robots_txt_host="" ;;
+esac
+
+if [ -n "$robots_txt_host" ] && mkdir -p "$robots_txt_dir"; then
+    case "$robots_txt_host" in
+        qa.*)
+            printf '# QA copy of the site: never indexed.\nUser-agent: *\nDisallow: /\n' \
+                >"$robots_txt_dir/robots.txt" || true
+            ;;
+        *)
+            { cat /usr/share/nginx/html/robots.txt &&
+                printf '\nSitemap: https://%s/api/sitemap.xml\n' "$robots_txt_host"; } \
+                >"$robots_txt_dir/robots.txt" || true
+            ;;
+    esac
+    entrypoint_log "17-robots-txt.envsh: robots.txt rendered for $robots_txt_host"
+else
+    entrypoint_log "17-robots-txt.envsh: TRAEFIK_HOST missing or invalid: built robots.txt served"
+fi
+unset robots_txt_host robots_txt_dir

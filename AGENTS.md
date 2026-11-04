@@ -133,7 +133,7 @@ iapolitique/
 ├── frontend/
 │   ├── Dockerfile          # build Vite puis nginx
 │   ├── nginx.conf          # en-têtes de sécurité, CSP, cache (§14.2)
-│   ├── nginx/              # gabarit et script de démarrage de /.well-known/security.txt
+│   ├── nginx/              # scripts de démarrage de /.well-known/security.txt et /robots.txt
 │   └── src/
 │       ├── api/            # client généré depuis l'OpenAPI + hooks TanStack Query
 │       ├── components/     # dont components/ui (shadcn)
@@ -196,6 +196,17 @@ iapolitique/
   aucun script, widget, pixel ni icône de réseau n'est chargé, rien ne part avant le clic. Les
   domaines figurent dans `scripts/check-dist-urls.mjs`.
 - Mobile first.
+- **Référencement (SEO)** : chaque page publique pose son titre (`useDocumentTitle`, repris en
+  `og:title`), sa description (`usePageDescription`, aussi `og:description`) et son lien
+  canonique (`useCanonicalPath` : origine courante + chemin, sans paramètres ni fragment ; idée :
+  `canonical_url` de l'API), avec `og:url` (`src/hooks/use-page-meta.ts`). `index.html` porte les
+  valeurs par défaut lues par les robots sans JavaScript (Open Graph, carte `summary_large_image`,
+  image `public/og-image.png` 1200×630 à l'adresse `https://iapolitique.fr/og-image.png`, contenu
+  `<noscript>` avec liens). `/robots.txt` interdit `/admin` et `/suivi` et annonce
+  `https://<TRAEFIK_HOST>/api/sitemap.xml` (§13.2) ; il est généré au démarrage du conteneur par
+  `frontend/nginx/17-robots-txt.envsh`, qui interdit tout le site sur un hôte `qa.…` (la QA n'est
+  jamais indexée) et laisse le fichier du build si `TRAEFIK_HOST` manque. Les pages privées
+  (`/suivi`, `/admin`) et les 404 restent `noindex`.
 
 ### 4.3 Données
 
@@ -1058,7 +1069,7 @@ décidée par l'humain.
 - Coordonnées légales (non secrètes mais hors git) : `LEGAL_PUBLISHER_NAME`,
   `LEGAL_PUBLISHER_ADDRESS`, `LEGAL_PUBLISHER_PHONE`, `LEGAL_CONTACT_EMAIL`, `LEGAL_PRIVACY_EMAIL`.
   `LEGAL_CONTACT_EMAIL` et `TRAEFIK_HOST` sont aussi transmises au frontend, qui en tire
-  `/.well-known/security.txt` (§14.2).
+  `/.well-known/security.txt` (§14.2) et `/robots.txt` (§4.2).
 - Variables non sensibles : `TRAEFIK_HOST`, `ADMIN_HOST`, `LLM_NETWORK`, `DECISION_SERVICE_URL`,
   `DECISION_SERVICE_TIMEOUT_SECS`, `DECISION_SERVICE_JOB_TIMEOUT_SECS`, `MISTRAL_API_BASE_URL`,
   `MISTRAL_ANALYSIS_MODEL`, `MISTRAL_REVIEW_MODEL`, `MISTRAL_RESEARCH_MODEL`,

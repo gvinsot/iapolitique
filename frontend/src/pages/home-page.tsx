@@ -10,11 +10,12 @@ import { Container } from "@/components/layout/container";
 import { Button } from "@/components/ui/button";
 import { useDocumentTitle } from "@/hooks/use-document-title";
 import { useIdeaFilters } from "@/hooks/use-idea-filters";
-import { usePageDescription } from "@/hooks/use-page-meta";
+import { useCanonicalPath, usePageDescription } from "@/hooks/use-page-meta";
 import { useTaxonomyLabels } from "@/hooks/use-taxonomy";
 
 export function HomePage() {
   useDocumentTitle();
+  useCanonicalPath(paths.home);
   usePageDescription(
     "Propositions citoyennes et anonymes pour réduire les dépenses ou augmenter les recettes publiques, analysées et chiffrées par IA avec leurs sources, classées par rentabilité.",
   );

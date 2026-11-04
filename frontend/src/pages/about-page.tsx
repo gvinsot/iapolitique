@@ -15,7 +15,7 @@ import { PublicStats } from "@/components/ideas/public-stats";
 import { Container } from "@/components/layout/container";
 import { Button } from "@/components/ui/button";
 import { useDocumentTitle } from "@/hooks/use-document-title";
-import { usePageDescription } from "@/hooks/use-page-meta";
+import { useCanonicalPath, usePageDescription } from "@/hooks/use-page-meta";
 
 interface Principle {
   icon: LucideIcon;
@@ -53,6 +53,7 @@ const principles: readonly Principle[] = [
 
 export function AboutPage() {
   useDocumentTitle("À propos");
+  useCanonicalPath(paths.about);
   usePageDescription(
     "Comment fonctionne iapolitique : dépôt anonyme, filtrage par IA, analyse et chiffrage par Mistral AI, classement par rentabilité, sans parti pris.",
   );

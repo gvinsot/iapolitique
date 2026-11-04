@@ -84,7 +84,8 @@ RUN --mount=type=bind,from=alpine-secdb,target=/tmp/secdb \
 ENV NGINX_ENVSUBST_OUTPUT_DIR=/run/nginx-generated
 COPY frontend/nginx.conf /etc/nginx/nginx.conf
 COPY frontend/nginx/.well-known/security.txt.template /etc/nginx/templates/.well-known/
-COPY --chmod=0755 frontend/nginx/16-security-txt.envsh /docker-entrypoint.d/
+COPY --chmod=0755 frontend/nginx/16-security-txt.envsh frontend/nginx/17-robots-txt.envsh \
+     /docker-entrypoint.d/
 COPY --from=frontend-check /app/dist /usr/share/nginx/html
 COPY --chmod=0755 devops/check_frontend_headers.sh /usr/local/bin/check-frontend-headers
 # The entrypoint renders security.txt, then nginx daemonizes (no "daemon off" in nginx.conf).
@@ -92,12 +93,12 @@ RUN set -eu; \
     stop_nginx() { nginx -s stop; while [ -f /run/nginx.pid ]; do sleep 0.1; done; }; \
     LEGAL_CONTACT_EMAIL=securite@example.org TRAEFIK_HOST=iapolitique.fr \
         NGINX_ENTRYPOINT_QUIET_LOGS=1 /docker-entrypoint.sh nginx; \
-    check-frontend-headers http://127.0.0.1 securite@example.org; \
+    ROBOTS_HOST=iapolitique.fr check-frontend-headers http://127.0.0.1 securite@example.org; \
     stop_nginx; \
     rm -rf /run/nginx-generated; \
-    LEGAL_CONTACT_EMAIL= TRAEFIK_HOST=iapolitique.fr \
+    LEGAL_CONTACT_EMAIL= TRAEFIK_HOST=qa.iapolitique.fr \
         NGINX_ENTRYPOINT_QUIET_LOGS=1 /docker-entrypoint.sh nginx; \
-    check-frontend-headers http://127.0.0.1; \
+    ROBOTS_HOST=qa.iapolitique.fr check-frontend-headers http://127.0.0.1; \
     stop_nginx; \
     touch /frontend-headers-ok
 

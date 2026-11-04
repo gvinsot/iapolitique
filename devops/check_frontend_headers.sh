@@ -7,6 +7,9 @@
 # Usage: check_frontend_headers.sh BASE_URL [CONTACT_EMAIL]
 #   CONTACT_EMAIL given: /.well-known/security.txt must exist and name it;
 #   absent or empty:     /.well-known/security.txt must answer 404.
+# ROBOTS_HOST (environment, optional): the TRAEFIK_HOST of the container. A production host must
+# get a robots.txt announcing https://<host>/api/sitemap.xml, a QA host (qa.…) one that
+# disallows the whole site; unset: only the built rules are checked.
 set -eu
 
 base="${1:?usage: check_frontend_headers.sh BASE_URL [CONTACT_EMAIL]}"
@@ -189,8 +192,30 @@ else
     expect_status "GET /.well-known/security.txt (no contact configured)" 404
 fi
 
+# --- robots.txt (17-robots-txt.envsh) ----------------------------------------------------------
+robots_host="${ROBOTS_HOST:-}"
+fetch GET /robots.txt
+expect_status "GET /robots.txt" 200
+common_headers "GET /robots.txt"
+expect_header "GET /robots.txt" content-type "text/plain; charset=utf-8"
+case "$robots_host" in
+    qa.*)
+        grep -qx 'Disallow: /' "$work/b" || fail "robots.txt: QA host $robots_host not disallowed"
+        if grep -q '^Sitemap:' "$work/b"; then fail "robots.txt: Sitemap announced on QA"; fi
+        ;;
+    *)
+        grep -qx 'Disallow: /suivi' "$work/b" || fail "robots.txt: /suivi not disallowed"
+        grep -qx 'Disallow: /admin' "$work/b" || fail "robots.txt: /admin not disallowed"
+        if grep -qx 'Disallow: /' "$work/b"; then fail "robots.txt: whole site disallowed"; fi
+        if [ -n "$robots_host" ]; then
+            grep -qx "Sitemap: https://$robots_host/api/sitemap.xml" "$work/b" ||
+                fail "robots.txt: no Sitemap for $robots_host"
+        fi
+        ;;
+esac
+
 if [ "$failures" -gt 0 ]; then
     echo "$failures frontend header check(s) failed" >&2
     exit 1
 fi
-echo "ok    frontend headers, caching, methods, dotfiles and security.txt ($base)"
+echo "ok    frontend headers, caching, methods, dotfiles, security.txt and robots.txt ($base)"

@@ -34,6 +34,7 @@ pub mod openapi;
 pub mod pagination;
 pub mod reference;
 pub mod security;
+pub mod sitemap;
 pub mod submissions;
 pub mod tracking;
 
@@ -117,6 +118,7 @@ pub fn public_router(state: AppState) -> Router {
         .route("/api/methodology", get(reference::methodology))
         .route("/api/taxonomy", get(reference::taxonomy))
         .route("/api/stats", get(reference::stats))
+        .route("/api/sitemap.xml", get(sitemap::sitemap))
         .route("/api/track", post(tracking::track))
         .route("/api/track/delete", post(tracking::delete))
         .route("/api/track/review-request", post(tracking::request_review))

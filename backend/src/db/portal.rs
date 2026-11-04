@@ -354,6 +354,30 @@ pub async fn replies(pool: &PgPool, idea_id: Uuid) -> sqlx::Result<Vec<Published
     .await
 }
 
+/// Most URLs a sitemap file may list (sitemaps.org protocol).
+pub const SITEMAP_MAX_IDEAS: i64 = 49_000;
+
+/// A published idea in the sitemap: slug and day (Europe/Paris) of its current analysis.
+#[derive(Debug, Clone, PartialEq, Eq, sqlx::FromRow)]
+pub struct SitemapIdea {
+    pub slug: String,
+    pub updated_on: NaiveDate,
+}
+
+/// Published ideas for `GET /api/sitemap.xml`, most recently published first.
+pub async fn sitemap_ideas(pool: &PgPool) -> sqlx::Result<Vec<SitemapIdea>> {
+    sqlx::query_as(
+        "SELECT i.slug, (a.created_at AT TIME ZONE 'Europe/Paris')::date AS updated_on
+         FROM ideas i JOIN analyses a ON a.id = i.current_analysis_id
+         WHERE i.status = 'published' AND i.slug IS NOT NULL
+         ORDER BY i.published_at DESC, i.id
+         LIMIT $1",
+    )
+    .bind(SITEMAP_MAX_IDEAS)
+    .fetch_all(pool)
+    .await
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

@@ -54,6 +54,7 @@ use super::reference::{
     ScreeningCriterion, ScreeningMethod, ScreeningSection, TaxonomyItem, TaxonomyResponse,
     YesNoLabels,
 };
+use super::sitemap;
 use super::submissions::{
     self, ContributionSubmission, ContributionSubmissionKind, IdeaSubmission, ReportSubmission,
     SubmissionResponse,
@@ -101,6 +102,7 @@ pub const ADMIN_PREFIX: &str = "/api/admin";
         reference::methodology,
         reference::taxonomy,
         reference::stats,
+        sitemap::sitemap,
         submissions::submit_idea,
         submissions::submit_contribution,
         submissions::submit_report,

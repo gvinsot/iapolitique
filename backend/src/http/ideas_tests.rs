@@ -480,3 +480,49 @@ async fn public_dates_are_day_precise(pool: PgPool) {
         assert_eq!(value, json!("2026-10-18T22:00:00Z"));
     }
 }
+
+#[sqlx::test(migrator = "crate::db::MIGRATOR")]
+async fn sitemap_lists_published_ideas_only(pool: PgPool) {
+    use axum::body::Body;
+    use axum::http::Request;
+    use http_body_util::BodyExt;
+    use tower::ServiceExt;
+
+    catalogue(&pool).await;
+    let app = app(pool).await;
+    let response = app
+        .router
+        .clone()
+        .oneshot(
+            Request::get("/api/sitemap.xml")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers()[header::CONTENT_TYPE],
+        "application/xml; charset=utf-8"
+    );
+    assert_eq!(
+        response.headers()[header::CACHE_CONTROL],
+        "public, max-age=300"
+    );
+    let bytes = response.into_body().collect().await.unwrap().to_bytes();
+    let xml = String::from_utf8(bytes.to_vec()).unwrap();
+    assert!(xml.contains("<loc>https://iapolitique.example/</loc>"));
+    for slug in [
+        "mutualiser-les-achats",
+        "eclairage-public-nocturne",
+        "taxe-sur-les-residences-secondaires",
+    ] {
+        assert!(
+            xml.contains(&format!(
+                "<loc>https://iapolitique.example/idees/{slug}</loc>"
+            )),
+            "{slug}"
+        );
+    }
+    assert!(!xml.contains("idee-masquee"));
+}

@@ -3045,6 +3045,26 @@
         }
       }
     },
+    "/api/sitemap.xml": {
+      "get": {
+        "tags": [
+          "reference"
+        ],
+        "operationId": "getSitemap",
+        "responses": {
+          "200": {
+            "description": "Plan du site (protocole sitemaps.org) : pages publiques et idées publiées.",
+            "content": {
+              "application/xml": {
+                "schema": {
+                  "type": "string"
+                }
+              }
+            }
+          }
+        }
+      }
+    },
     "/api/stats": {
       "get": {
         "tags": [
